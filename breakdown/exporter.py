@@ -178,9 +178,11 @@ def _index_text(
     paths: dict[str, str],
     title_field: str,
     summary_field: str,
+    *,
+    banner: str | None = None,
 ) -> str:
     lines = [
-        BANNER.format(name="tree"),
+        banner if banner is not None else BANNER.format(name="tree"),
         "",
         f"# View {view.ref}",
         "",

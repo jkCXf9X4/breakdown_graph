@@ -32,6 +32,8 @@ from .ops import new_node as _new_node
 from .ops import promote as _promote
 from .ops import retire_version as _retire_version
 from .ops import versions as _versions
+from .work import WorkEntry, WorkResult
+from .work import work as _work
 
 __all__ = [
     "load",
@@ -46,6 +48,7 @@ __all__ = [
     "retire_version",
     "diff",
     "new_node",
+    "work",
     "parse_ref",
     "parse_filename",
     "ref_of",
@@ -61,6 +64,8 @@ __all__ = [
     "ExportResult",
     "ReconcileChange",
     "StaleEdge",
+    "WorkEntry",
+    "WorkResult",
     "BreakdownError",
     "ExportError",
 ]
@@ -173,4 +178,32 @@ def new_node(
         fields=fields,
         body=body,
         links=links,
+    )
+
+
+def work(
+    root: str | Path,
+    ref: str | int | None = None,
+    out: str | Path | None = None,
+    *,
+    path_template: str | None = None,
+    title_field: str = "title",
+    summary_field: str = "summary",
+    force: bool = False,
+    clean: bool = False,
+    status: bool = False,
+    writeback: bool = False,
+) -> WorkResult:
+    """Build, inspect or write back a view's tree of symlinks to node files."""
+    return _work(
+        root,
+        ref,
+        out,
+        path_template=path_template,
+        title_field=title_field,
+        summary_field=summary_field,
+        force=force,
+        clean=clean,
+        status=status,
+        writeback=writeback,
     )

@@ -91,6 +91,41 @@ def _cmd_view(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_work(args: argparse.Namespace) -> int:
+    root = _find_root(args.root)
+    ref = args.ref or main_root(api.load(root))
+    result = api.work(
+        root,
+        ref,
+        Path(args.out) if args.out else None,
+        force=args.force,
+        clean=args.clean,
+        status=args.status,
+        writeback=args.writeback,
+        **_display_opts(args),
+    )
+    if args.status or args.writeback:
+        for entry in result.entries:
+            if entry.status == "ok":
+                continue
+            where = f" ({entry.ref})" if entry.ref else ""
+            print(f"{entry.status}: {entry.path}{where}")
+        if args.writeback:
+            print(f"{result.written} files written back and re-linked")
+        ok = sum(1 for entry in result.entries if entry.status == "ok")
+        print(
+            f"{ok} ok, {len(result.entries) - ok} not ok "
+            f"-> {result.out} (view {result.ref})"
+        )
+        return 0 if result.ok else 1
+    print(f"work -> {result.out}")
+    print(
+        f"{result.nodes} nodes, {result.symlinks} symlinks, "
+        f"{len(result.files)} generated files (view {result.ref})"
+    )
+    return 0
+
+
 def _cmd_export(args: argparse.Namespace) -> int:
     opts: dict[str, object] = {}
     if args.view_name in ("tree", "context"):
@@ -324,6 +359,32 @@ def build_parser() -> argparse.ArgumentParser:
     view.add_argument("--force", action="store_true", help="write into a non-empty dir")
     _add_display(view)
     view.set_defaults(func=_cmd_view)
+
+    work = sub.add_parser(
+        "work", help="materialize a view as a tree of symlinks to node files"
+    )
+    _add_root(work)
+    work.add_argument(
+        "ref", nargs="?", default=None, help="view root ref (default: main root)"
+    )
+    work.add_argument(
+        "--out",
+        default=None,
+        help="output directory (default: <store>/build/work/<ref>)",
+    )
+    _add_display(work)
+    work.add_argument("--force", action="store_true", help="write into a non-empty dir")
+    work.add_argument("--clean", action="store_true", help="remove the output first")
+    work_mode = work.add_mutually_exclusive_group()
+    work_mode.add_argument(
+        "--status", action="store_true", help="report the state of the work tree"
+    )
+    work_mode.add_argument(
+        "--writeback",
+        action="store_true",
+        help="copy detached files back into the store and re-link them",
+    )
+    work.set_defaults(func=_cmd_work)
 
     export = sub.add_parser("export", help="write a derived view")
     export_sub = export.add_subparsers(dest="view_name", required=True)
