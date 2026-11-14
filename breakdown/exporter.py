@@ -63,7 +63,7 @@ EDGE_COLORS: tuple[str, ...] = (
     "#8a6d3b",
     "#555555",
 )
-EDGE_STYLES: tuple[str, ...] = ("solid", "dashed", "dotted")
+EDGE_LINESTYLES: tuple[str, ...] = ("solid", "dashed", "dotted")
 
 
 def exporter(name: str) -> Callable[[Exporter], Exporter]:
@@ -417,7 +417,7 @@ def export_dot(
         )
     for edge in edges:
         index = edge_style.get(edge.type, 0)
-        style = EDGE_STYLES[index % len(EDGE_STYLES)] if edge_types else DEFAULT_EDGE[0]
+        style = EDGE_LINESTYLES[index % len(EDGE_LINESTYLES)] if edge_types else DEFAULT_EDGE[0]
         colour = (
             EDGE_COLORS[index % len(EDGE_COLORS)] if edge_types else DEFAULT_EDGE[1]
         )
