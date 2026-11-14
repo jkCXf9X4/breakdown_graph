@@ -1,0 +1,39 @@
+---
+id: INT-001
+type: intent
+layer: intent
+home: intent/purpose.md
+title: Why does the licentiate exist, and what problem does it address?
+summary: A simulation result supports a decision, credibility for that decision is
+  not established model by model, and conformance proves interoperability only
+date: 2026-11-11
+status: current
+---
+
+# Why does the licentiate exist, and what problem does it address?
+
+A simulation result supports a decision, but credibility for that decision is not established model by model.
+
+- **Objective:** Credibility is made explicit, auditable and traceable through standardized artifacts.
+  - The results mix physics-based, software, electrical and data-driven models.
+- **Standards:** the standards with the widest tool support govern interoperability, not the semantics behind it.
+- **Conformance:** conformance only proves interoperability, never accuracy, stability, or validity.
+
+- **Definition gap:** simulation artifacts are hand-derived from the system architecture.
+- **Intended-use gap:** intended use is missing or not transferable, so models are reused outside justified conditions.
+- **Evidence gap:** verification workflow evidence cannot be reproduced or audited at scale.
+
+**Owns:**
+
+- The reason the licentiate exists and its objective: make credibility explicit, auditable and traceable through standardized artifacts, not raise accuracy.
+- The one-line topic framing: heterogeneous sub-models, standardized interfaces, orchestrator execution.
+- The problem statement, the premise, and the conformance claim that an interface standard proves interoperability only.
+- Each gap named at the handover where it occurs, not at the stage that answers it.
+
+**Excludes:**
+
+- `ARG-002` for which handover each gap occurs at; `ARG-001` for the premise-versus-clause arithmetic; `ARG-003` for which paper closes it.
+- `ARG-007` for the definition-gap mechanism, FMI and SSP representation scope, and OD versus DoV.
+- `ARG-006` for the credibility definition the gaps are judged against.
+- `CLM-001` for the claim these gaps support; `ARG-009` for how strong that claim is.
+- `CLM-002` for the refusals that bound the reason; `INT-004` for what a wrong judgement costs.

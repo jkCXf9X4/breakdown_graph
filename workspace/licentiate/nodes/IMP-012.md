@@ -1,0 +1,42 @@
+---
+id: IMP-012
+type: imp
+layer: evolution
+home: evolution/selected/assign-paper-iv-doi-and-venue.md
+title: Assign the Paper IV DOI and published venue
+summary: Paper IV is in press with no DOI and no published venue; the DOI and venue
+  are assigned at publication
+date: 2026-11-11
+status: selected
+---
+
+# Assign the Paper IV DOI and published venue
+
+Paper IV (`paper4_purpose_driven_modelling`, repo `papers/2026_purpose_driven_modelling`) is in press and carries no DOI yet, so its bibliographic record is incomplete.
+
+**Evidence:**
+
+- `operation/release-and-submission.md:30` records Paper IV DOI and published venue still missing, the paper in press.
+- `operation/submodule-workflow.md:40` records Paper IV pin final at `101c21f` with only the DOI and venue waiting on publication.
+- `manuscript/included-papers.md:33` lists the Paper IV DOI and venue as still open.
+- `evolution/implemented/fix-paper-6-pin-and-metadata.md:40`, `:60` track the DOI and venue assigned at publication; Crossref and OpenAlex had no record as of 2026-10-30 (`:25`).
+
+**Change:**
+
+- `thesis/papers.bib` carries a DOI and the published venue for `paper4_purpose_driven_modelling`; the paper card and board row record them (`OPS-005`).
+- The Included Papers list carries the assigned DOI (`MS-013`).
+
+**Risk:**
+
+- Low: assignment waits on the publisher; no prose edit is needed, only metadata.
+- Blast radius is `thesis/papers.bib` and the paper board.
+
+**Acceptance:**
+
+- `thesis/papers.bib` names a DOI and a published venue for Paper IV, resolvable on Crossref or OpenAlex.
+- The paper card and board row record the DOI and venue.
+- `operation/release-and-submission.md:30` and `operation/submodule-workflow.md:40` no longer list the DOI and venue as missing.
+
+**Out of scope:**
+
+- The pin, confirmed final at `101c21f` (`OPS-005`, `IMP-004`).

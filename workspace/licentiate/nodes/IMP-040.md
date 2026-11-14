@@ -1,0 +1,35 @@
+---
+id: IMP-040
+type: imp
+layer: evolution
+home: evolution/implemented/cut-cosimulation-mechanics-to-the-delimitation.md
+title: Cut the co-simulation mechanics to the delimitation
+summary: Chapter 2 carries one co-simulation paragraph instead of six mechanics subsections
+date: 2026-11-05
+status: implemented
+---
+
+# Cut the co-simulation mechanics to the delimitation
+
+Six co-simulation subsections in Chapter 2 carried execution mechanics.
+The objective names none of them (`INT-001`), and the contract clauses do not include execution (`ARG-006`).
+Execution is a delimitation rather than a loss (`ARG-006`), stated as a text obligation in `MS-015`.
+No chapter referenced the subsections: `sec:schedule-standards` had no referencing site and the five `ch:background` references point at the contract and the credibility scales.
+`MS-003` now contracts one paragraph in their place.
+The section keeps the two definitions `ARG-008` locates there: orchestration and weakly coupled.
+**Outcome:**
+
+- `thesis/chapters/03_background.tex:110-113` holds the section as two paragraphs with no subsections and no `sec:schedule-standards` label.
+- The standards clause is narrowed: standards express timing, but the executed setting is not carried with the result.
+- The delimitation sentence required by `MS-015` survives at `thesis/chapters/03_background.tex:113`.
+**Evidence:**
+
+- `thesis/chapters/03_background.tex:113` states the no-slot claim and the delimitation.
+- `docs/breakdown/manuscript/kappa-structure.md:19` records the one-paragraph contract.
+- The cut was already requested: `evolution/investigations/review-2026-11/source-audits/structure-front.md:22` (S-08) and `evolution/investigations/review-2026-11/major-structure-sections.md:22` (R-082).
+- `python3 thesis/build.py` exits 0 with no undefined citation.
+**Out of scope:**
+
+- The chapter's section set (`MS-003`).
+- The delimitation stance itself (`INT-002`).
+- The glossary wording for execution terms (`ARG-008`).

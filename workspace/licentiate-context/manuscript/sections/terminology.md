@@ -1,0 +1,23 @@
+---
+id: MS-001
+type: manuscript
+layer: manuscript
+home: manuscript/sections/terminology.md
+title: What do the Terminology and Acronyms chapters deliver?
+summary: Two unnumbered chapters print the glossary and the acronym list; the terminology
+  chapter is the single terminology authority
+date: 2026-11-11
+status: current
+---
+
+# What do the Terminology and Acronyms chapters deliver?
+
+The book opens with two unnumbered chapters, Terminology and Acronyms, so every later chapter can resolve a term or acronym to a definition the reader has already met.
+
+- **Purpose:** print the glossary and the acronym list before any argument reads them; resolve `se`, `OD`, `DoV` and every contract term.
+- **Order:** first in the book, before the introduction (`thesis/thesis.tex`).
+- **Content:** the glossary and the acronym list are generated surfaces (`OPS-003`); the terminology chapter is the single terminology authority, which is why Paper I's paper-local Terminology section is omitted from the appended paper.
+- **Claims:** none of its own; it defines the terms the claims use (`ARG-008`).
+- **Presentation:** two unnumbered chapters with running heads, consuming no chapter number; entered in the table of contents.
+- **Artifact anchor:** `thesis/chapters/01_terminology.tex#ch:terminology`, `thesis/chapters/01_terminology.tex#ch:acronyms`.
+- **Position contract:** its place in the front matter is fixed by `MS-010`.

@@ -1,0 +1,32 @@
+---
+id: INFO-031
+type: info
+layer: evolution
+home: evolution/investigations/review-2026-11/major-grounding-ch02.md
+title: Kappa review — grounding, ch02
+summary: Introduction claims that exceed or misstate their source
+date: 2026-11-01
+status: current
+---
+
+# Kappa review — grounding, ch02
+
+Part of `INFO-029`. Severity key and crosswalk are in `R-register.md`.
+Verified by grepping the cited `text.md` for distinctive keywords, then reading only the hit region.
+
+| R-ID | Location | Defect | Fix | Effort | Source |
+|---|---|---|---|---|---|
+| R-029 | `02_introduction.tex:9` | "credibility … becomes an end-to-end property" — "end-to-end" appears zero times in both cited sources; ahmann supplies a minimum rule over process steps, not an end-to-end property claim. | Mark as the thesis's own contribution, or cite the aggregation rule and argue the step from it. | 20 min | CIB-F-A09 |
+| R-030 | `02_introduction.tex:5` | "data-driven components" appears in neither cited source (`data.driven` = 0 hits in both). | Cite a source that names data-driven models, or drop the item. | 10 min | CIB-F-A06, CIB-F-A37 |
+| R-031 | `02_introduction.tex:3` | "during early design, during verification and validation, and during operation" — the V&V life-cycle phase is not in either source. | Soften to the phases the sources name. | 10 min | CIB-F-A02 |
+| R-032 | `02_introduction.tex:13` | "scheduling" and "delay" are absent from schierz, and "orchestrat"/"step size" absent from rosenlund2024, so the three-item list is only one-third grounded. | Split the citation per item. | 15 min | CIB-F-A16 |
+| R-051 | `02_introduction.tex:10` | The model→decision pivot ("is the result credible enough for this decision?") is the load-bearing framing and is uncited. | Add `rosenlundObjectivelyDefinedIntended2024` L9. | 5 min | CIB-F-A10 |
+| R-052 | `02_introduction.tex:19` | "Mixing models through standardized interfaces makes this contract easier to break and more costly to maintain" is a load-bearing causal claim with no citation. | Add `ahmannContinuousSimulationCredibility2022` L53-58. | 5 min | CIB-F-A18 |
+
+## Owns
+- The ch02 rows where an Introduction claim exceeds or misstates its cited source.
+## Excludes
+- `INFO-036` and `INFO-037` for ch03 grounding, and `INFO-038` for ch04–ch07: the siblings split by chapter.
+- `INFO-029` for the severity key and crosswalk; `INFO-028` for the index; `INFO-043` for the verdict.
+- `IMP-020`–`IMP-035` for the repairs, chiefly `IMP-034`.
+- `OPS-001`, `OPS-003`–`OPS-005`, `VER-001`–`VER-004`, `ARG-004` for the chapter text, library and citation gate under review.

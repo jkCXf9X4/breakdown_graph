@@ -1,0 +1,157 @@
+from __future__ import annotations
+
+import pytest
+
+from breakdown.api import export_view
+from breakdown.errors import ExportError
+
+
+def test_tree_view_writes_nodes_and_one_index(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], title="Root intent", home="intent/purpose.md")
+    write(nodes, 2, type="claim", layer="claims", title="Thesis", home="claims/thesis.md")
+    out = tmp_path / "tree"
+    result = export_view("tree", tmp_path, "1", out)
+    assert result.nodes == 2
+    assert len(result.files) == 3
+    index = (out / "INDEX.md").read_text(encoding="utf-8")
+    assert "GENERATED FILE" in index
+    assert "[Root intent](intent/purpose.md)" in index
+    assert "[Thesis](claims/thesis.md)" in index
+    assert (out / "intent" / "purpose.md").is_file()
+    assert (out / "claims" / "thesis.md").is_file()
+    assert not (out / "claims" / "INDEX.md").exists()
+
+
+def test_tree_refuses_non_empty_unless_force_or_clean(write, tmp_path):
+    write(tmp_path / "nodes", 1)
+    out = tmp_path / "tree"
+    export_view("tree", tmp_path, "1", out)
+    (out / "stray.txt").write_text("x", encoding="utf-8")
+    with pytest.raises(ExportError, match="refusing"):
+        export_view("tree", tmp_path, "1", out)
+    export_view("tree", tmp_path, "1", out, force=True)
+    assert (out / "stray.txt").exists()
+    export_view("tree", tmp_path, "1", out, clean=True)
+    assert not (out / "stray.txt").exists()
+
+
+def test_version_view_exports_only_that_closure(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2, contains=["3"])
+    write(nodes, 3)
+    write(nodes, 3, version=1, home="evidence/three-v1.md")
+    write(nodes, 2, version=1, contains=["3-1"], home="claims/two-v1.md")
+    out = tmp_path / "view"
+    result = export_view("tree", tmp_path, "2-1", out)
+    assert result.nodes == 2
+    assert (out / "claims" / "two-v1.md").is_file()
+    assert (out / "evidence" / "three-v1.md").is_file()
+    assert not (out / "claims" / "two.md").exists()
+
+
+def test_context_excludes_stale_nodes(write, tmp_path, pin):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3"])
+    write(nodes, 2, type="claim", layer="claims", body="v1\n")
+    write(
+        nodes,
+        3,
+        type="claim",
+        layer="claims",
+        links=[{"to": "2", "type": "serves", "pinned": pin("v1\n")}],
+        body="stale dependent\n",
+    )
+    write(nodes, 2, type="claim", layer="claims", body="v2\n")
+    out = tmp_path / "context"
+    result = export_view("context", tmp_path, "1", out)
+    assert result.nodes == 2
+    assert not (out / "claims" / "3.md").exists()
+    stale = (out / "STALE.md").read_text(encoding="utf-8")
+    assert "`2`" in stale
+    assert (out / "AGENTS.md").is_file()
+
+
+def test_dot_export(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2, links=[{"to": "1", "type": "supports"}])
+    out = tmp_path / "graph.dot"
+    result = export_view("dot", tmp_path, "1", out)
+    assert result.nodes == 2
+    text = out.read_text(encoding="utf-8")
+    assert "digraph breakdown" in text
+    assert '"2" -> "1" [label="supports"' in text
+    assert 'label="1\\nTitle of 1"' in text
+
+
+def test_generic_store_without_layer_type_or_home(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3"], phase="intent", audience="all", order=1, title="Objective")
+    write(nodes, 2, contains=["4"], phase="build", audience="team", order=2, title="Build")
+    write(nodes, 3, phase="review", audience="team", order=3, title="Review")
+    write(nodes, 4, phase="build", audience="dev", order=4, title="Detail")
+
+    from breakdown.api import check
+
+    result = check(tmp_path)
+    assert result.ok
+    assert not any(issue.code in ("missing-field", "bad-home") for issue in result.issues)
+
+    out = tmp_path / "generic-tree"
+    exported = export_view(
+        "tree",
+        tmp_path,
+        "1",
+        out,
+        path_template="{phase}/{ref}.md",
+        title_field="phase",
+        summary_field="audience",
+    )
+    assert exported.nodes == 4
+    assert (out / "intent" / "1.md").is_file()
+    assert (out / "build" / "2.md").is_file()
+    assert (out / "build" / "4.md").is_file()
+    index = (out / "INDEX.md").read_text(encoding="utf-8")
+    assert "[build](build/2.md) — team" in index
+    assert index.index("[build](build/2.md)") < index.index("[review](review/3.md)")
+
+    import yaml
+
+    front = (out / "build" / "4.md").read_text(encoding="utf-8").split("---")[1]
+    data = yaml.safe_load(front)
+    assert data["phase"] == "build"
+    assert data["audience"] == "dev"
+    assert data["order"] == 4
+    assert "layer" not in data and "type" not in data and "home" not in data
+
+
+def test_default_path_falls_back_to_ref_when_home_is_absent(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], layer="intent")
+    write(nodes, 2)  # no home anywhere -> {ref}.md for every node
+    out = tmp_path / "fallback"
+    export_view("tree", tmp_path, "1", out)
+    assert (out / "1.md").is_file()
+    assert (out / "2.md").is_file()
+
+
+def test_dot_color_and_shape_by_arbitrary_fields(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], phase="intent", audience="all")
+    write(nodes, 2, contains=["3"], phase="build", audience="team")
+    write(nodes, 3, phase="build", audience="dev")
+    out = tmp_path / "graph.dot"
+    export_view("dot", tmp_path, "1", out, color_by="phase", shape_by="audience")
+    text = out.read_text(encoding="utf-8")
+    assert "shape=ellipse" in text and "shape=diamond" in text
+    colours = [
+        line.split("fillcolor=")[1].split(",")[0]
+        for line in text.splitlines()
+        if "fillcolor=" in line
+    ]
+    assert len(colours) == 3
+    # same phase -> same stable colour
+    assert colours[1] == colours[2]
+    assert colours[0] != colours[1]

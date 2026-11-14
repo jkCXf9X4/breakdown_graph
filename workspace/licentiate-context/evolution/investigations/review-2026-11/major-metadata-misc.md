@@ -1,0 +1,36 @@
+---
+id: INFO-042
+type: info
+layer: evolution
+home: evolution/investigations/review-2026-11/major-metadata-misc.md
+title: Kappa review — metadata, misc
+summary: Terminology chapter, glossary, appendices and breakdown leaves
+date: 2026-11-01
+status: current
+---
+
+# Kappa review — metadata, misc
+
+Part of `INFO-029`. Severity key and crosswalk are in `R-register.md`.
+
+| R-ID | Location | Defect | Fix | Effort | Source |
+|---|---|---|---|---|---|
+| R-121 | `paper-appendices.tex:16`, `:21` | `app:paper2` and `app:paper3` are referenced zero times anywhere in the repo, so the book never sends a reader to its own appendix. | Add one `\Cref` per appendix from ch06. | 15 min | SB-S-03, SB-S-04 |
+| R-122 | `liuthesis.cls:1162-1163` | No list of listings exists, although the appendix is entirely four listings and the papers point to "Listing A.1" and "Listing B.3". | Add `\listoflistings`, or give each listing a `\section`. | 30 min | SB-S-28 |
+| R-123 | `02_introduction.tex:55`, `:52-57` | The Thesis outline omits the front matter that precedes it, does not say the contract is defined in a glossary, and describes ch07 only as "walks the argument across the papers" — omitting the retrospective application. | Add one clause on the glossary and name the retrospective application in the ch07 description. | 15 min | SF-S-19, SB-S-26 |
+| R-124 | `02_introduction.tex:57` | "That order is used in every enumeration of the papers and in the appendix" — the appendix enumerates only Papers II and III. | Drop "and in the appendix", or qualify it. | 5 min | SB-S-27 |
+| R-125 | `01_terminology.tex:12` | `\glsaddall` prints every glossary entry, including three of nine main entries the kappa never uses; the two most important domain terms (OD, DoV) are defined and then never named in the argument that depends on them. | Remove `\glsaddall`, or accept the full list deliberately and say so. | 20 min | SF-S-20 |
+| R-126 | `glossary.tex:25-28` vs `03:80` | Two authoritative definitions of the thesis's central term, differing in wording, with the prose one deferring to the glossary; the "not a competing scale" point is made three times (`02:18`, `03:76`, `glossary.tex:27`). | Keep the glossary authoritative and cut `03:80` to the four clauses plus a pointer, or invert. Do not maintain both. | 45 min | SF-S-21 |
+| R-128 | `02_introduction.tex:19` vs `04:20` vs ARG-001 | Three names for one gap (motivation / practice / motivation-practice) across three documents. | Settle on one label. | 15 min | SF-S-03 |
+| R-133 | `03_background.tex:90-108` | Three thin sections (414 words total) each gesture at one paper's motivation and each is too short to do so. | Merge into one section, "Development context and model exploration". | 45 min | SF-S-27 |
+| R-171 | `docs/breakdown/02-architecture/paper-set-and-roles.md:12,17,21` | The declared architecture is stale in three places: Paper I called a "journal manuscript" (it is published), its title hyphenated where the real title has a colon, and Paper V's title abbreviated. | Correct the design doc, not the thesis. | 15 min | SB-S-41, PM-contract-note |
+| R-172 | `docs/breakdown/02-architecture/kappa-structure.md:16`; `01-product/front-matter-and-included-papers.md:15-24` | The front-matter order contract omits the dedication page the build emits, so the contract cannot verify the front matter it claims to govern. | Add "Dedication (optional)" to both. | 10 min | PM-11 |
+| R-173 | `liuthesis.cls:1164`; `01-product/front-matter-and-included-papers.md:35` | "The book prints no list of listings" holds only by accident of package loading: the guard is `\ifdef{\listoftodos}` and `todonotes` is not loaded. | Note the dependency in the contract, or remove the branch. | 10 min | PM-12 |
+
+## Owns
+- The terminology chapter, glossary, appendix and design-doc rows (R-121–R-133, R-171–R-173).
+## Excludes
+- `INFO-039`–`INFO-041` for front matter, the papers and the synthesis account of them.
+- `INFO-029` for the severity key and crosswalk; `INFO-028` for the index; `INFO-043` for the verdict.
+- `IMP-020`–`IMP-035` for the repairs, chiefly `IMP-028` and `IMP-031`.
+- `OPS-003`, `VER-004` and `ARG-004` for the glossary pipeline, terminology checks and trace under review.

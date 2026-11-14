@@ -1,0 +1,58 @@
+---
+id: OPS-004
+type: operation
+layer: operation
+home: operation/bibliography-pipeline.md
+title: Bibliography pipeline
+summary: Citekeys to generated references.bib, plus one merged paper list
+date: 2026-11-11
+status: current
+---
+
+# Bibliography pipeline
+
+`thesis/references.bib` is generated; `thesis/papers.bib` is hand-kept.
+Both are declared to biblatex at `thesis/settings.tex:135-136`.
+`temp/papers/papers_combined.bib` is generated and declared at line 139.
+
+- **Citekey source:** `thesis/references.yml` lists the kappa citekeys under a `references:` key; it holds 61 keys.
+- **Coverage:** the credibility frameworks (NASA CAS, Rigor Scale, PCMM, V&V and predictive uncertainty), the credibility scales and the two Hallqvist intended-use works, the FMI and SSP specifications, system scale, co-simulation orchestration, synchronization semantics, survey and case-study method, and reproducibility.
+- **Retired own-paper keys:** the two co-simulation papers leave the kappa bibliography; their library records serve their own repositories (`INT-002`).
+- **Subcommands:** `thesis/references.sh` exposes `update`, `check`, `verify`, and `status`.
+- **Render:** `update` renders `thesis/references.bib` through `refs --library 3rd_party/references subset <yml> -o <out>`; `--library` pins the submodule, so `REFS_LIBRARY` cannot swap it.
+- **Library:** the `3rd_party/references` papis submodule, on branch `main`; the script exits 1 when it is not checked out.
+- **`check`:** it re-renders to a temp file and diffs it against the committed bib, and fails when a cited key is missing from `references.yml`.
+- **`check` scope:** it exempts keys defined in `thesis/papers.bib`, read from that file rather than guessed by prefix, and scans `thesis/` only, skipping `temp/`, `3rd_party/`, and `template/`.
+- **`verify`:** it checks the used citekeys against Crossref/OpenAlex, one key per `refs verify` call, report only; the report lands under `<library>/.refs/reports/` and is deleted before committing.
+- **`status`:** it prints the pinned library commit and document count, and warns on stderr when the library working tree is dirty.
+- **Rendered output:** `references.bib` holds 61 rendered entries; the library stands at `dcba044` with 797 documents.
+- **Intake form:** the two intaken papers are filed from their final manuscripts with a `.meta.yaml` sidecar.
+- **Text coverage:** every key cited by the kappa resolves to a library document with extracted text; the one textless candidate, the SSP Traceability specification, is therefore not cited for content (`IMP-016`).
+- **Cache:** the papis cache at `~/.cache/papis/database` must be dropped after any library write, or a new key renders as unknown in `refs subset`.
+- **Record fields:** the library record `anderssonVariabilityCustomizationSimulator2012` exports `number` and the version-of-record `note`.
+- **Paper entries:** `thesis/papers.bib` holds four hand-kept entries, one per appended paper, with the ordered keys `paper1_simulation_and_models` to `paper4_purpose_driven_modelling`; the `cited_*` keys left with the two co-simulation papers (`INT-002`).
+- **Label doubling:** each paper key doubles as the `\includearticle` label; the entries carry no `abstract`, `keywords`, or library metadata.
+- **Merge:** `thesis/build.py` merges the paper bibliographies into `temp/papers/papers_combined.bib`.
+- **Sources:** `sn-bibliography.bib` in Paper I, `sample.bib` in Papers II-III, `references.bib` in Paper IV. Each serves citations inside its own paper; no other paper bibliography merges into the union.
+- **Merge size:** the merge holds 1261 unique entries; Paper 1 contributes 324 of its 325 entries, because the kappa bibliography already owns `anderssonVariabilityCustomizationSimulator2012`.
+- **Skip rule:** keys owned by `thesis/references.bib` or `thesis/papers.bib` are skipped.
+- **Body ownership:** the first source to define a key owns its body; a duplicate key with a differing body prints a build warning, and no shared key differs.
+- **Namespace:** keys from the four appended papers share one namespace; the merge file is generated on every build and never edited.
+- **Single data source:** biblatex loads once for the whole book, so every imported paper draws on one data source.
+- **No refsection:** `\includearticletex` opens no `refsection`, so no paper renders its own list (`OPS-001`).
+- **Print site:** `\printbibliography` at `thesis/thesis.tex:63` prints the one list after the paper block; it covers the kappa chapters and the four appended papers.
+- **Paper I:** it prints no reference section of its own; its entries merge into the union and its cover keeps the `\fullcite` entry.
+
+**Owns:**
+
+- The citekey list, the render command, and the generated bib output.
+- The hand-kept paper entries and their key naming contract.
+- The merged paper bibliography and the single printed list.
+
+**Excludes:**
+
+- Citation and bibliography gate criteria: `VER-003`.
+- Reference intake into the library: `OPS-008`.
+- Paper staging under the same keys: `OPS-005`.
+- The house style of the printed list: `OPS-002`.
+- The entry-point wiring of the bib files: `OPS-001`.
