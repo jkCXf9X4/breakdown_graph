@@ -14,6 +14,17 @@ from pathlib import Path
 
 from . import api
 from .errors import BreakdownError
+from .navigate import (
+    NavigationError,
+    main_root,
+    parse_ref_depth,
+    parse_where,
+    render_find,
+    render_ls,
+    render_path,
+    render_show,
+    render_tree,
+)
 
 
 def _find_root(explicit: str | None) -> Path:
@@ -195,6 +206,107 @@ def _cmd_new(args: argparse.Namespace) -> int:
     return 0
 
 
+def _field_list(text: str | None) -> list[str] | None:
+    if text is None:
+        return None
+    fields = [item.strip() for item in text.split(",") if item.strip()]
+    if not fields:
+        raise NavigationError("--fields needs at least one field name")
+    return fields
+
+
+def _cmd_show(args: argparse.Namespace) -> int:
+    store = api.load(_find_root(args.root))
+    parsed = parse_ref_depth(args.ref, args.depth)
+    depth = 0 if parsed.depth is None else parsed.depth
+    print(
+        render_show(
+            store,
+            parsed.ref,
+            depth=depth,
+            fields=_field_list(args.fields),
+            no_body=args.no_body,
+            max_chars=args.max_chars,
+            show_path=args.path,
+        )
+    )
+    return 0
+
+
+def _cmd_tree(args: argparse.Namespace) -> int:
+    store = api.load(_find_root(args.root))
+    parsed = parse_ref_depth(args.ref or main_root(store), args.depth)
+    depth = 2 if parsed.depth is None else parsed.depth
+    print(
+        render_tree(
+            store,
+            parsed.ref,
+            depth=depth,
+            summary=args.summary,
+            fields=_field_list(args.fields),
+        )
+    )
+    return 0
+
+
+def _cmd_ls(args: argparse.Namespace) -> int:
+    store = api.load(_find_root(args.root))
+    parsed = parse_ref_depth(args.ref or main_root(store), args.depth)
+    depth = 1 if parsed.depth is None else parsed.depth
+    print(
+        render_ls(
+            store,
+            parsed.ref,
+            depth=depth,
+            columns=_field_list(args.columns),
+            max_chars=args.max_chars,
+        )
+    )
+    return 0
+
+
+def _cmd_find(args: argparse.Namespace) -> int:
+    if args.limit < 0:
+        raise NavigationError("--limit must be non-negative")
+    store = api.load(_find_root(args.root))
+    output = render_find(
+        store,
+        args.query,
+        field=args.field,
+        regex=args.regex,
+        where=parse_where(args.where),
+        limit=args.limit,
+    )
+    if output:
+        print(output)
+    return 0
+
+
+def _cmd_grep(args: argparse.Namespace) -> int:
+    if args.limit < 0:
+        raise NavigationError("--limit must be non-negative")
+    store = api.load(_find_root(args.root))
+    output = render_find(
+        store,
+        args.query,
+        field=args.field,
+        regex=True,
+        where=parse_where(args.where),
+        limit=args.limit,
+    )
+    if output:
+        print(output)
+    return 0
+
+
+def _cmd_path(args: argparse.Namespace) -> int:
+    store = api.load(_find_root(args.root))
+    parsed = parse_ref_depth(args.ref)
+    print(render_path(store, parsed.ref))
+    return 0
+
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bd",
@@ -318,6 +430,94 @@ def build_parser() -> argparse.ArgumentParser:
     new.add_argument("--body", default="", help="markdown body after the front matter")
     new.set_defaults(func=_cmd_new)
 
+    show = sub.add_parser("show", help="print a node and its descendants")
+    _add_root(show)
+    show.add_argument("ref", help="ref, optionally with +DEPTH (e.g. 5-1+2)")
+    show.add_argument(
+        "--depth", type=int, default=None, help="descendant levels (default 0)"
+    )
+    show.add_argument(
+        "--max-chars",
+        type=int,
+        default=0,
+        help="truncate each body at N chars (default 0: full)",
+    )
+    show.add_argument("--no-body", action="store_true", help="headings only")
+    show.add_argument(
+        "--fields",
+        default=None,
+        metavar="F,F",
+        help="header fields to print (default: all non-reserved fields)",
+    )
+    show.add_argument("--path", action="store_true", help="prepend the breadcrumb")
+    show.set_defaults(func=_cmd_show)
+
+    tree = sub.add_parser("tree", help="print the containment outline")
+    _add_root(tree)
+    tree.add_argument("ref", nargs="?", default=None, help="root ref (default: main root)")
+    tree.add_argument(
+        "--depth", type=int, default=None, help="levels (default 2, 0: unlimited)"
+    )
+    tree.add_argument("--summary", action="store_true", help="append node summaries")
+    tree.add_argument(
+        "--fields", default=None, metavar="F,F", help="append selected field values"
+    )
+    tree.set_defaults(func=_cmd_tree)
+
+    ls = sub.add_parser("ls", help="list descendants in columns")
+    _add_root(ls)
+    ls.add_argument("ref", nargs="?", default=None, help="root ref (default: main root)")
+    ls.add_argument(
+        "--depth", type=int, default=None, help="levels (default 1)"
+    )
+    ls.add_argument(
+        "--columns",
+        default=None,
+        metavar="F,F",
+        help="columns to print (default ref,title,summary)",
+    )
+    ls.add_argument(
+        "--max-chars",
+        type=int,
+        default=100,
+        help="truncate each cell at N chars (default 100)",
+    )
+    ls.set_defaults(func=_cmd_ls)
+
+    find = sub.add_parser("find", help="search titles, summaries, bodies and fields")
+    _add_root(find)
+    find.add_argument("query")
+    find.add_argument("--field", default=None, help="restrict to one field (body is body)")
+    find.add_argument("--regex", action="store_true", help="use Python regular expressions")
+    find.add_argument(
+        "--where",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="exact field filter (repeatable)",
+    )
+    find.add_argument("--limit", type=int, default=20, help="maximum nodes (default 20)")
+    find.set_defaults(func=_cmd_find)
+
+    grep = sub.add_parser("grep", help="find with regular expressions on by default")
+    _add_root(grep)
+    grep.add_argument("query")
+    grep.add_argument("--field", default=None, help="restrict to one field (body is body)")
+    grep.add_argument(
+        "--where",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="exact field filter (repeatable)",
+    )
+    grep.add_argument("--limit", type=int, default=20, help="maximum nodes (default 20)")
+    grep.set_defaults(func=_cmd_grep)
+
+    path = sub.add_parser("path", help="print the ancestry of a ref")
+    _add_root(path)
+    path.add_argument("ref")
+    path.set_defaults(func=_cmd_path)
+
     return parser
 
 
@@ -326,6 +526,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.func(args))
+    except NavigationError as exc:
+        print(f"bd: {exc}", file=sys.stderr)
+        return 1
     except BreakdownError as exc:
         print(f"bd: {exc}", file=sys.stderr)
         return 2
