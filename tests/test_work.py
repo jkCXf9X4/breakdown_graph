@@ -409,3 +409,20 @@ def test_force_overwrites_a_detached_file(write, tmp_path):
     assert dest.is_symlink()
     assert dest.read_text(encoding="utf-8") == store_before
     assert api.work(tmp_path, "1", out, status=True).ok
+
+
+def test_writeback_refuses_a_detached_file_without_frontmatter(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1", out)
+    dest = out / "claims" / "2.md"
+    dest.unlink()
+    dest.write_text("body only\n", encoding="utf-8")
+    before = (tmp_path / "nodes" / "2.md").read_text(encoding="utf-8")
+
+    result = api.work(tmp_path, "1", out, writeback=True)
+
+    assert result.written == 0
+    assert result.invalid == ["claims/2.md"]
+    assert (tmp_path / "nodes" / "2.md").read_text(encoding="utf-8") == before
+    assert not dest.is_symlink()

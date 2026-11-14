@@ -114,6 +114,8 @@ def _cmd_work(args: argparse.Namespace) -> int:
                 continue
             where = f" ({entry.ref})" if entry.ref else ""
             print(f"{entry.status}: {entry.path}{where}")
+        for path in result.invalid:
+            print(f"invalid: {path} (missing or mismatched front matter)")
         if args.writeback:
             print(f"{result.written} files written back and re-linked")
         ok = sum(1 for entry in result.entries if entry.status == "ok")

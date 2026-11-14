@@ -20,6 +20,7 @@ from pathlib import Path
 
 from .errors import BreakdownError, ExportError
 from .exporter import _build_paths, _index_text, _prepare_out
+from .frontmatter import FrontMatterError, parse_document
 from .loader import load, load_view
 from .model import Node, View
 
@@ -59,6 +60,7 @@ class WorkResult:
     files: list[Path] = field(default_factory=list)
     entries: list[WorkEntry] = field(default_factory=list)
     written: int = 0
+    invalid: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -311,6 +313,7 @@ def _validate_target(target: Path, nodes_dir: Path) -> None:
 def _writeback(view: View, out: Path, path_template: str | None) -> WorkResult:
     nodes_dir = (view.root / "nodes").resolve()
     written = 0
+    invalid: list[str] = []
     for entry in _inspect(view, out, path_template):
         if entry.status != STATUS_DETACHED or entry.ref is None:
             continue
@@ -318,7 +321,17 @@ def _writeback(view: View, out: Path, path_template: str | None) -> WorkResult:
         target = node.path
         _validate_target(target, nodes_dir)
         dest = out / entry.path
-        target.write_bytes(dest.read_bytes())
+        text = dest.read_text(encoding="utf-8")
+        try:
+            document = parse_document(text)
+        except (OSError, FrontMatterError):
+            invalid.append(entry.path)
+            continue
+        declared = document.meta.get("id")
+        if declared is not None and str(declared) != str(node.id):
+            invalid.append(entry.path)
+            continue
+        target.write_text(text, encoding="utf-8", newline="")
         _link(dest, target)
         written += 1
 
@@ -330,6 +343,7 @@ def _writeback(view: View, out: Path, path_template: str | None) -> WorkResult:
         symlinks=sum(1 for entry in entries if entry.status == STATUS_OK),
         entries=entries,
         written=written,
+        invalid=invalid,
     )
 
 
