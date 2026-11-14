@@ -1,9 +1,11 @@
 """Materialize one containment view as a tree of per-file symlinks.
 
-The work directory mirrors the templated paths of ``bd export tree``, but every
-``.md`` entry is a symlink back to its original ``nodes/<ref>.md`` file.  Editing
-a file in the work tree therefore edits the store directly: there is no sync
-layer, no state file and no copied content.
+The work directory is the primary editing interface: it mirrors the templated
+paths of ``bd export tree``, but every ``.md`` entry is a symlink back to its
+original ``nodes/<ref>.md`` file.  Editing a file in the work tree therefore
+edits the store directly: there is no sync layer, no state file and no copied
+content.  Different work directories may show different views of the same
+nodes, and an edit through one is visible through all of them.
 
 Three regular files are generated: ``INDEX.md`` and ``REFS.md`` (navigation) and
 ``AGENTS.md`` (instructions for a human or agent browsing the tree).
@@ -36,6 +38,7 @@ STATUS_STALE = "stale-ref"
 _REF_ROW = re.compile(
     r"^\|\s*`(?P<path>[^`]+)`\s*\|\s*(?P<ref>\d+(?:-\d+)?)\s*\|"
 )
+_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 @dataclass(frozen=True)
@@ -196,19 +199,47 @@ def _agents_text(view: View) -> str:
     lines = [
         f"# Working set — view `{ref}`",
         "",
-        f"This directory is a working set for containment view `{ref}`.",
+        "This work directory is the primary editing interface for the store.",
         "",
-        "- Each view `.md` file is a symlink to its original node under `nodes/`. "
-        "Editing a file here edits the original node.",
+        (
+            "- Every `.md` file here is a symlink to its node under `nodes/`; "
+            "editing it edits the store directly."
+        ),
+        (
+            "- Other work directories may show different views of the same nodes. "
+            "An edit here is visible in every view that includes the node."
+        ),
         "- Create new nodes with `bd new` or `bd fork`, never by adding files here.",
         "- `INDEX.md`, `AGENTS.md` and `REFS.md` are generated; do not edit them.",
-        f"- If an editor replaces a symlink with a regular file, run "
-        f"`bd work {ref} --status`, then `bd work {ref} --writeback`.",
+        (
+            f"- `bd work {ref} --status` and `bd work {ref} --writeback` are the "
+            "repair path if an editor replaces a symlink with a regular file."
+        ),
         "",
         f"Nodes in this view: {len(view.nodes)}.",
         "",
     ]
     return "\n".join(lines)
+
+
+def _refresh_guard(view: View, out: Path, path_template: str | None) -> list[WorkEntry]:
+    """Inspect before a plain refresh; refuse if manual edits would be lost."""
+    if out.exists() and not out.is_dir():
+        raise ExportError(f"output '{out}' exists and is not a directory")
+    entries = _inspect(view, out, path_template)
+    blocking = [
+        entry
+        for entry in entries
+        if entry.status in (STATUS_DETACHED, STATUS_STRAY)
+    ]
+    if blocking:
+        raise ExportError(
+            f"refusing to refresh '{out}': {len(blocking)} detached or stray "
+            f"file(s); run `bd work {view.ref} --status` to inspect, "
+            f"`bd work {view.ref} --writeback` to keep the edits, "
+            f"or `bd work {view.ref} --clean` to discard them"
+        )
+    return entries
 
 
 def _build(
@@ -221,7 +252,23 @@ def _build(
     force: bool,
     clean: bool,
 ) -> WorkResult:
-    _prepare_out(out, force=force, clean=clean)
+    if clean:
+        _prepare_out(out, force=True, clean=True)
+        entries: list[WorkEntry] = []
+    else:
+        if force:
+            _prepare_out(out, force=True, clean=False)
+            entries = _inspect(view, out, path_template)
+        else:
+            entries = _refresh_guard(view, out, path_template)
+            out.mkdir(parents=True, exist_ok=True)
+        for entry in entries:
+            if entry.status != STATUS_STALE:
+                continue
+            stale = out / entry.path
+            if stale.is_symlink():
+                stale.unlink()
+
     paths = _expected(view, path_template)
     files: list[Path] = []
     for ref in _sorted_refs(view):
@@ -291,6 +338,7 @@ def work(
     ref: str | int | None = None,
     out: str | Path | None = None,
     *,
+    name: str | None = None,
     path_template: str | None = None,
     title_field: str = "title",
     summary_field: str = "summary",
@@ -299,14 +347,23 @@ def work(
     status: bool = False,
     writeback: bool = False,
 ) -> WorkResult:
-    """Build, inspect or write back one view's symlink work tree."""
+    """Build, refresh, inspect or write back one view's symlink work tree."""
     if status and writeback:
         raise BreakdownError("--status and --writeback are mutually exclusive")
+    if out is not None and name is not None:
+        raise BreakdownError("--out and --name are mutually exclusive")
+    if name is not None and not _NAME.fullmatch(name):
+        raise BreakdownError(
+            f"invalid --name {name!r}: use letters, digits, '.', '_' or '-' "
+            "and start with a letter or digit"
+        )
 
     view = _resolve_view(root, ref)
-    out_path = (
-        view.root / "build" / "work" / view.ref if out is None else Path(out)
-    ).resolve()
+    if out is not None:
+        out_path = Path(out).resolve()
+    else:
+        dirname = view.ref if name is None else f"{view.ref}-{name}"
+        out_path = (view.root / "build" / "work" / dirname).resolve()
 
     if status:
         entries = _inspect(view, out_path, path_template)

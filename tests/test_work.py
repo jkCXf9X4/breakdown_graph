@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from breakdown import api
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -206,4 +208,204 @@ def test_status_and_writeback_use_refs_manifest_when_home_changes(write, tmp_pat
         "new body\n"
     )
     assert dest.is_symlink()
+    assert api.work(tmp_path, "1", out, status=True).ok
+
+
+def _link_count(out):
+    return sum(1 for path in out.rglob("*.md") if path.is_symlink())
+
+
+def test_two_work_dirs_share_the_same_nodes(write, tmp_path):
+    _tree(write, tmp_path)
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    api.work(tmp_path, "1", a)
+    api.work(tmp_path, "2", b)
+
+    through_b = b / "claims" / "2.md"
+    through_a = a / "claims" / "2.md"
+    assert through_b.is_symlink() and through_a.is_symlink()
+    through_b.write_text("edited through b\n", encoding="utf-8")
+
+    assert through_a.read_text(encoding="utf-8") == "edited through b\n"
+    assert (tmp_path / "nodes" / "2.md").read_text(encoding="utf-8") == (
+        "edited through b\n"
+    )
+
+
+def test_plain_refresh_is_idempotent(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1", out)
+    before = _link_count(out)
+
+    result = api.work(tmp_path, "1", out)
+
+    assert result.symlinks == 4
+    assert _link_count(out) == before
+    assert api.work(tmp_path, "1", out, status=True).ok
+
+
+def test_refresh_repairs_missing_and_wrong_target_links(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1", out)
+
+    (out / "claims" / "2.md").unlink()
+    wrong = out / "evidence" / "4.md"
+    wrong.unlink()
+    wrong.symlink_to(os.path.relpath(tmp_path / "nodes" / "3.md", wrong.parent))
+
+    result = api.work(tmp_path, "1", out)
+
+    assert result.symlinks == 4
+    assert (out / "claims" / "2.md").is_symlink()
+    assert (out / "evidence" / "4.md").resolve() == (
+        tmp_path / "nodes" / "4.md"
+    ).resolve()
+    assert api.work(tmp_path, "1", out, status=True).ok
+
+
+def test_refresh_removes_stale_ref_links(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1", out)
+
+    result = api.work(tmp_path, "2", out)
+
+    assert result.ref == "2"
+    assert not (out / "intent" / "1.md").exists()
+    assert not (out / "review" / "3.md").exists()
+    assert (out / "claims" / "2.md").is_symlink()
+    assert api.work(tmp_path, "2", out, status=True).ok
+
+
+def test_detached_file_blocks_refresh_until_writeback(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1", out)
+    dest = out / "claims" / "2.md"
+    original = dest.read_text(encoding="utf-8")
+    dest.unlink()
+    dest.write_text(original + "detached edit\n", encoding="utf-8")
+    from breakdown.cli import main
+
+    assert main(["work", "1", "--root", str(tmp_path), "--out", str(out)]) == 2
+    assert not dest.is_symlink()
+    assert dest.read_text(encoding="utf-8") == original + "detached edit\n"
+
+    assert (
+        main(
+            [
+                "work",
+                "1",
+                "--root",
+                str(tmp_path),
+                "--out",
+                str(out),
+                "--writeback",
+            ]
+        )
+        == 0
+    )
+    assert dest.is_symlink()
+    assert (tmp_path / "nodes" / "2.md").read_text(encoding="utf-8") == (
+        original + "detached edit\n"
+    )
+    assert main(["work", "1", "--root", str(tmp_path), "--out", str(out)]) == 0
+
+
+def test_stray_blocks_refresh_and_clean_discards(write, tmp_path):
+    from breakdown.errors import ExportError
+
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1", out)
+    stray = out / "stray.md"
+    stray.write_text("not a view node\n", encoding="utf-8")
+
+    with pytest.raises(ExportError):
+        api.work(tmp_path, "1", out)
+    assert stray.is_file()
+    assert api.work(tmp_path, "1", out, status=True).ok is False
+
+    api.work(tmp_path, "1", out, clean=True)
+    assert not stray.exists()
+    assert api.work(tmp_path, "1", out, status=True).ok
+
+
+def test_name_suffixes_the_default_directory(write, tmp_path):
+    _tree(write, tmp_path)
+    result = api.work(tmp_path, "1", name="scratch")
+    expected = (tmp_path / "build" / "work" / "1-scratch").resolve()
+    assert result.out == expected
+    assert expected.is_dir()
+
+
+def test_out_and_name_are_mutually_exclusive(write, tmp_path, capsys):
+    _tree(write, tmp_path)
+    from breakdown.cli import main
+
+    code = main(
+        [
+            "work",
+            "1",
+            "--root",
+            str(tmp_path),
+            "--out",
+            str(tmp_path / "x"),
+            "--name",
+            "y",
+        ]
+    )
+    assert code == 2
+    assert "--name" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("name", ["", ".hidden", "-dash", "bad/name", "a b"])
+def test_invalid_name_is_rejected(write, tmp_path, name):
+    _tree(write, tmp_path)
+    from breakdown.cli import main
+
+    assert (
+        main(["work", "1", "--root", str(tmp_path), f"--name={name}"]) == 2
+    )
+
+
+def test_print_outputs_only_the_directory(write, tmp_path, capsys):
+    _tree(write, tmp_path)
+    out = tmp_path / "printed"
+    from breakdown.cli import main
+
+    argv = ["work", "1", "--root", str(tmp_path), "--out", str(out), "--print"]
+    assert main(argv) == 0
+    captured = capsys.readouterr()
+    assert captured.out == f"{out.resolve()}\n"
+    assert captured.err == ""
+    assert main(argv) == 0
+    assert capsys.readouterr().out == f"{out.resolve()}\n"
+
+
+def test_print_is_mutually_exclusive_with_status(write, tmp_path):
+    _tree(write, tmp_path)
+    from breakdown.cli import main
+
+    with pytest.raises(SystemExit):
+        main(["work", "1", "--root", str(tmp_path), "--print", "--status"])
+
+
+def test_force_overwrites_a_detached_file(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1", out)
+    store_before = (tmp_path / "nodes" / "2.md").read_text(encoding="utf-8")
+    dest = out / "claims" / "2.md"
+    dest.unlink()
+    dest.write_text("detached edit\n", encoding="utf-8")
+
+    result = api.work(tmp_path, "1", out, force=True)
+
+    assert result.symlinks == 4
+    assert dest.is_symlink()
+    assert dest.read_text(encoding="utf-8") == store_before
     assert api.work(tmp_path, "1", out, status=True).ok

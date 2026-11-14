@@ -186,6 +186,7 @@ def work(
     ref: str | int | None = None,
     out: str | Path | None = None,
     *,
+    name: str | None = None,
     path_template: str | None = None,
     title_field: str = "title",
     summary_field: str = "summary",
@@ -194,11 +195,12 @@ def work(
     status: bool = False,
     writeback: bool = False,
 ) -> WorkResult:
-    """Build, inspect or write back a view's tree of symlinks to node files."""
+    """Build, refresh, inspect or write back a view's tree of symlinks."""
     return _work(
         root,
         ref,
         out,
+        name=name,
         path_template=path_template,
         title_field=title_field,
         summary_field=summary_field,

@@ -98,12 +98,16 @@ def _cmd_work(args: argparse.Namespace) -> int:
         root,
         ref,
         Path(args.out) if args.out else None,
+        name=args.name,
         force=args.force,
         clean=args.clean,
         status=args.status,
         writeback=args.writeback,
         **_display_opts(args),
     )
+    if args.print_path:
+        print(result.out)
+        return 0
     if args.status or args.writeback:
         for entry in result.entries:
             if entry.status == "ok":
@@ -348,10 +352,16 @@ def build_parser() -> argparse.ArgumentParser:
         description="Numeric markdown information graph with containment views. "
         "Front-matter fields are arbitrary; only id, legacy, contains, links "
         "and home have built-in meaning.",
+        epilog="Start with `bd work`: it builds a writable symlink tree over the "
+        "store and is the primary editing interface.\n"
+        "Edit through the symlinks; every .md file there is the node itself.\n"
+        "`bd view` and `bd export` are read-only projections of the same nodes.\n"
+        "Repair a work tree with `bd work REF --status` or `--writeback`.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    view = sub.add_parser("view", help="export the tree of one containment view")
+    view = sub.add_parser("view", help="read-only copy of one view")
     _add_root(view)
     view.add_argument("ref", help="view root ref (e.g. 1 or 5-1)")
     view.add_argument("--out", required=True)
@@ -361,7 +371,7 @@ def build_parser() -> argparse.ArgumentParser:
     view.set_defaults(func=_cmd_view)
 
     work = sub.add_parser(
-        "work", help="materialize a view as a tree of symlinks to node files"
+        "work", help="primary interface: writable symlink tree over the store"
     )
     _add_root(work)
     work.add_argument(
@@ -372,8 +382,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="output directory (default: <store>/build/work/<ref>)",
     )
+    work.add_argument(
+        "--name",
+        default=None,
+        help="suffix for the default output directory: "
+        "<store>/build/work/<ref>-<name>",
+    )
     _add_display(work)
-    work.add_argument("--force", action="store_true", help="write into a non-empty dir")
+    work.add_argument("--force", action="store_true", help="overwrite detached files")
     work.add_argument("--clean", action="store_true", help="remove the output first")
     work_mode = work.add_mutually_exclusive_group()
     work_mode.add_argument(
@@ -384,9 +400,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="copy detached files back into the store and re-link them",
     )
+    work_mode.add_argument(
+        "--print",
+        dest="print_path",
+        action="store_true",
+        help='print only the resolved work directory (for cd "$(bd work 1 --print)")',
+    )
     work.set_defaults(func=_cmd_work)
 
-    export = sub.add_parser("export", help="write a derived view")
+    export = sub.add_parser("export", help="read-only derived artifacts")
     export_sub = export.add_subparsers(dest="view_name", required=True)
     for name, help_text in (
         ("tree", "nodes at templated paths plus one generated INDEX.md"),
