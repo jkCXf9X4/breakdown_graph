@@ -58,14 +58,16 @@ export BD_ROOT=workspace/licentiate-n
 where every `.md` file is a symlink. Open it and edit normally; the write lands in
 `nodes/<ref>.md` and `git status` reports the node, not the layout.
 
-A second solution is a second worktree:
+A second solution is a second worktree; `bd solution` wraps the git command:
 
 ```sh
-git worktree add ../info_graph-sol-a -b sol-a
-cd ../info_graph-sol-a
-export BD_ROOT=workspace/licentiate-n
-bd work 1
+bd solution new sol-a
+cd ../sol-a
+BD_ROOT=workspace/licentiate-n bd work 1
 ```
+
+Git still owns branches and worktrees, and the new checkout gets no layout until
+you run `bd work`.
 
 ## Model
 
@@ -107,6 +109,24 @@ bd path REF
 
 `bd tree 1 --depth 2` is the map. `bd show 5+2` is the detail: node 5 plus two
 levels of descendant bodies.
+
+### Solutions (git boundary)
+
+A solution is a git branch checked out in a worktree. `bd solution` wraps the
+git worktree commands and keeps no state of its own.
+
+```
+bd solution new NAME [--path PATH] [--from REF]
+bd solution list
+bd solution remove NAME|PATH [--force]
+```
+
+- `new` creates the branch if missing, defaults to a sibling of the repository
+  root, and prints the new path plus the `cd` and `bd work` lines to run next.
+- `list` shows path, branch, short HEAD, and marks the primary worktree and every
+  checkout that contains this store.
+- `remove` deletes the worktree and keeps the branch.
+- A new worktree has no layout; build one inside it with `bd work`.
 
 ### Work folders (layout interface)
 
@@ -192,7 +212,7 @@ arbitrary fields.
 
 1. Browse with `tree`, `show`, `ls`, `find`, `path`.
 2. Make a solution boundary with git:
-   `git worktree add ../sol-a -b sol-a`.
+   `bd solution new sol-a` (or `git worktree add ../sol-a -b sol-a`).
 3. Inside the checkout, make a layout: `bd work REF` or `bd work 5 --name subtree`.
 4. Edit through the layout, or edit `nodes/<ref>.md` directly.
 5. Change structure with `bd contain`, `bd uncontain`, `bd link`, `bd unlink`;
@@ -215,6 +235,7 @@ breakdown/                 Python package
   freshness.py             pins, stale edges, reconcile
   navigate.py              show/tree/ls/find/grep/path
   work.py                  symlink work trees, status, writeback
+  solutions.py             git worktree lifecycle (solution boundary)
   ops.py                   versions, fork, promote, diff, new, structural edits
   cli.py, api.py           command line and public API
 tests/                     pytest suite
@@ -225,7 +246,7 @@ workspace/licentiate-n/    numeric corpus, 128 nodes, derived containment
 
 ## Status
 
-- 143 tests pass (`python3 -m pytest -q`).
+- 150 tests pass (`python3 -m pytest -q`).
 - The 128-node evaluation corpus passes `bd check` with one size warning.
 - Migration body gate: 0 mismatches; every node reachable from root `1`.
 - No JSON, TOML, lock, or state data files. Derived output is gitignored.

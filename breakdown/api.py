@@ -36,6 +36,10 @@ from .ops import retire_version as _retire_version
 from .ops import uncontain as _uncontain
 from .ops import unlink as _unlink
 from .ops import versions as _versions
+from .solutions import SolutionEntry, SolutionResult
+from .solutions import listing as _solution_list
+from .solutions import new as _solution_new
+from .solutions import remove as _solution_remove
 from .work import GitContext, WorkEntry, WorkResult
 from .work import work as _work
 
@@ -57,6 +61,9 @@ __all__ = [
     "link",
     "unlink",
     "work",
+    "solution_new",
+    "solution_list",
+    "solution_remove",
     "parse_ref",
     "parse_filename",
     "ref_of",
@@ -75,6 +82,8 @@ __all__ = [
     "WorkEntry",
     "WorkResult",
     "GitContext",
+    "SolutionEntry",
+    "SolutionResult",
     "BreakdownError",
     "ExportError",
 ]
@@ -228,6 +237,29 @@ def unlink(
 ) -> Path:
     """Remove matching link edges between two refs."""
     return _unlink(root, source, target, link_type=link_type)
+
+
+def solution_new(
+    root: str | Path,
+    name: str,
+    *,
+    path: str | Path | None = None,
+    from_ref: str | None = None,
+) -> SolutionResult:
+    """Create a git worktree for a solution; git owns branch semantics."""
+    return _solution_new(root, name, path=path, from_ref=from_ref)
+
+
+def solution_list(root: str | Path) -> list[SolutionEntry]:
+    """List the repository's worktrees with branch, HEAD and store markers."""
+    return _solution_list(root)
+
+
+def solution_remove(
+    root: str | Path, target: str, *, force: bool = False
+) -> SolutionEntry:
+    """Remove one worktree by branch name or path, keeping the branch."""
+    return _solution_remove(root, target, force=force)
 
 
 def work(

@@ -207,6 +207,11 @@ The decision is deliberate: a writable view would need path→ref resolution,
 new/deleted/moved-file semantics, conflict handling, and a second source of truth.
 Symlinks avoid all of it.
 
+`bd solution` is a thin lifecycle wrapper over `git worktree` (`new`, `list`,
+`remove`). It stores no state and creates no layout: git remains authoritative for
+which branch is checked out where, and `bd work` remains the layout inside one
+checkout.
+
 ## 6. Schema-agnostic by construction
 
 Nothing in the tool knows the article layers. `layer` is a field like any other.

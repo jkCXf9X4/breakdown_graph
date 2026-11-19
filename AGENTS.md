@@ -27,7 +27,8 @@ short operating protocol.
 
 ## Where to work
 
-- Solutions: `git worktree add ../NAME -b NAME`; one worktree per solution.
+- Solutions: `bd solution new NAME` (thin wrapper over
+  `git worktree add ../NAME -b NAME`); one worktree per solution.
 - Writable layout: `bd work REF` creates `build/work/<ref>`; edit through symlinks.
 - Read-only views: `bd view REF --out DIR` or `bd export ...`.
 - Never edit `workspace/licentiate/` directly. It is the legacy typed-id source for
@@ -47,6 +48,7 @@ python3 -m pytest -q
 ./bin/bd contain 1 5 --after 6
 ./bin/bd link 5 9 --type supports
 ./bin/bd work 1 --print
+./bin/bd solution list
 ```
 
 When changing behaviour:

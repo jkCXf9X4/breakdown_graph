@@ -134,6 +134,48 @@ def _cmd_work(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_solution_new(args: argparse.Namespace) -> int:
+    result = api.solution_new(
+        _find_root(args.root),
+        args.name,
+        path=args.path,
+        from_ref=args.from_ref,
+    )
+    print(f"worktree {result.path}")
+    print(f"branch {result.branch}")
+    print(f"store {result.store}")
+    print(f"cd {result.path}")
+    print(f"BD_ROOT={result.store} bd work 1")
+    return 0
+
+
+def _cmd_solution_list(args: argparse.Namespace) -> int:
+    entries = api.solution_list(_find_root(args.root))
+    path_width = max(len(str(entry.path)) for entry in entries)
+    branch_width = max(len(entry.label) for entry in entries)
+    print(f"{'path':<{path_width}}  {'branch':<{branch_width}}  head     notes")
+    for entry in entries:
+        markers = []
+        if entry.primary:
+            markers.append("main")
+        if entry.store:
+            markers.append("store")
+        line = (
+            f"{entry.path!s:<{path_width}}  {entry.label:<{branch_width}}  "
+            f"{entry.head[:7]:<7}  {' '.join(markers)}"
+        )
+        print(line.rstrip())
+    return 0
+
+
+def _cmd_solution_remove(args: argparse.Namespace) -> int:
+    entry = api.solution_remove(
+        _find_root(args.root), args.target, force=args.force
+    )
+    print(f"removed {entry.path} (branch {entry.label})")
+    return 0
+
+
 def _cmd_export(args: argparse.Namespace) -> int:
     opts: dict[str, object] = {}
     if args.view_name in ("tree", "context"):
@@ -402,6 +444,7 @@ def build_parser() -> argparse.ArgumentParser:
         "store and is the primary editing interface.\n"
         "Edit through the symlinks; every .md file there is the node itself.\n"
         "`bd view` and `bd export` are read-only projections of the same nodes.\n"
+        "Solutions are git worktrees (`bd solution`); layouts inside one are `bd work`.\n"
         "Repair a work tree with `bd work REF --status` or `--writeback`.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -453,6 +496,48 @@ def build_parser() -> argparse.ArgumentParser:
         help='print only the resolved work directory (for cd "$(bd work 1 --print)")',
     )
     work.set_defaults(func=_cmd_work)
+
+    solution = sub.add_parser(
+        "solution",
+        help="manage solution worktrees (the git boundary)",
+        description="A solution is a git worktree. A layout inside one is `bd work`.",
+    )
+    solution_sub = solution.add_subparsers(dest="solution_command", required=True)
+
+    solution_new = solution_sub.add_parser(
+        "new", help="create a worktree for a solution branch"
+    )
+    _add_root(solution_new)
+    solution_new.add_argument("name", help="solution name, also the branch name")
+    solution_new.add_argument(
+        "--path",
+        default=None,
+        help="worktree path (default: sibling of the repository root)",
+    )
+    solution_new.add_argument(
+        "--from",
+        dest="from_ref",
+        default=None,
+        metavar="REF",
+        help="commit to start a new branch at (default: HEAD)",
+    )
+    solution_new.set_defaults(func=_cmd_solution_new)
+
+    solution_list = solution_sub.add_parser(
+        "list", help="list worktrees and which checkouts contain this store"
+    )
+    _add_root(solution_list)
+    solution_list.set_defaults(func=_cmd_solution_list)
+
+    solution_remove = solution_sub.add_parser(
+        "remove", help="remove a worktree, keeping its branch"
+    )
+    _add_root(solution_remove)
+    solution_remove.add_argument("target", metavar="NAME|PATH")
+    solution_remove.add_argument(
+        "--force", action="store_true", help="remove even with modifications"
+    )
+    solution_remove.set_defaults(func=_cmd_solution_remove)
 
     export = sub.add_parser("export", help="read-only derived artifacts")
     export_sub = export.add_subparsers(dest="view_name", required=True)

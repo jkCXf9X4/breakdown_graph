@@ -9,18 +9,14 @@ Ordered by leverage. Each item names the problem it removes.
   inside one checkout. Work folders record branch, commit, and worktree.
 - Browsing: `bd tree`, `show`, `ls`, `find`, `grep`, `path`.
 - Symlink work folders with `--status` and `--writeback`.
+- `bd solution new|list|remove`: a thin wrapper over `git worktree` so creating a
+  solution branch does not depend on remembering the git syntax. It never
+  reimplements branch, merge, or checkout semantics.
 
-## P0 — solution ergonomics
+## P0 — none
 
-- `bd solution new NAME [--from REF]` wraps
-  `git worktree add ../NAME -b NAME` and then `bd work REF`.
-- `bd solution list` shows `git worktree list` plus store root, branch, and node
-  count.
-- `bd solution remove NAME` wraps `git worktree remove`.
-
-Why: worktrees are the solution boundary, and path mistakes are the common failure.
-The wrapper must stay thin. Do not reimplement branch, merge, or checkout
-semantics.
+The solution boundary and the layout layer are both in place. Remaining work is
+below.
 
 ## P1 — work folder ergonomics
 
