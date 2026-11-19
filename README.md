@@ -1,29 +1,16 @@
 # info_graph — `bd`
 
-A flat markdown store for layered project information, with running numeric refs,
-per-node versions, containment views, and writable symlink work trees.
+A flat markdown store for layered project information, with a git solution
+boundary, typed dependency edges, and custom symlink work folders.
 
-The store is the data. Work folders are disposable layouts over it. Agents read
-views; edits go straight to the node files. Git owns the solution boundary; the
-flat store is the merge unit; `bd work` is the layout lens.
+- **Store** — one markdown file per node, keyed by a running integer.
+- **Structure** — an ordered `contains` list defines the tree; paths do not.
+- **Solutions** — git branches and worktrees.
+- **Layout** — `bd work` renders a view as symlinks into the store.
+- **Freshness** — typed links record what depends on what and whether it still holds.
 
-## Why this exists
-
-Layered breakdown documents (intent → claims → argument → evidence → manuscript →
-verification → operation, or any other layering) describe one realization of a
-solution. Exploring another realization by editing the tree in place leaves old
-lower-layer nodes in the working tree, and an AI agent reading the repository picks
-them up as current. Git branches and worktrees isolate a solution, but they do
-not make stale lower-layer nodes disappear from the branch. Isolation and
-invalidation are different jobs.
-
-`bd` separates four things that file trees usually conflate:
-
-1. **Identity** — a node is a file named by a running integer (`5.md`).
-2. **Version** — `5-1.md`, `5-2.md` are alternative realizations of node 5.
-3. **Containment** — `contains:` defines the tree for a view.
-4. **Projection** — a view is a containment closure; a work folder is that closure
-   materialized as symlinks to the same files.
+The store is the data. Work folders are disposable layouts. Agents read views;
+edits go straight to the node files.
 
 ## Two axes
 
@@ -39,189 +26,129 @@ These are deliberately separate:
 Git answers what changed. `contains` and `links` answer what belongs and what
 depends. Pins answer whether it still holds.
 
-## Quick start
+## Install
 
-Requirements: Python 3.10+, PyYAML, pytest (tests), Graphviz `dot` (optional dot
-export). No packaging step; the CLI is `bin/bd` or `python -m breakdown`.
+Requirements: Python 3.10+, PyYAML, pytest for the test suite, Graphviz `dot` only
+for dot export. There is no packaging step.
+
+```sh
+git clone https://github.com/jkCXf9X4/info_graph
+cd info_graph
+python3 -m pytest -q          # 155 tests
+export PATH="$PWD/bin:$PATH"
+bd --help
+```
+
+`bin/bd` runs from any working directory. If you prefer not to change `PATH`, use
+`./bin/bd` in every example.
+
+## Five-minute tour
+
+The repository ships a 128-node evaluation corpus. Read it first; do not edit it.
 
 ```sh
 export BD_ROOT=workspace/licentiate-n
-./bin/bd check
-./bin/bd tree 1 --depth 1
-./bin/bd show 1+1 --max-chars 400
-./bin/bd find credibility --limit 3
-./bin/bd work 1 --print
-./bin/bd work 1
+
+bd check                       # 128 nodes, 0 errors, 1 size warning
+bd tree 1 --depth 1            # outline of the root view
+bd show 1+1 --max-chars 300    # body plus one level
+bd ls 1                        # children as a table
+bd find credibility --limit 3
+bd path 65                     # ancestor chain to a leaf
 ```
 
-`bd work 1` creates `workspace/licentiate-n/build/work/1`, a tree-shaped directory
-where every `.md` file is a symlink. Open it and edit normally; the write lands in
-`nodes/<ref>.md` and `git status` reports the node, not the layout.
-
-A second solution is a second worktree; `bd solution` wraps the git command:
+Then make a work folder:
 
 ```sh
-bd solution new sol-a
-cd ../sol-a
-BD_ROOT=workspace/licentiate-n bd work 1
+bd work 1 --print              # path only, for cd
+bd work 1
+cd "$(bd work 1 --print)"
+# every .md here is a symlink; editing it edits nodes/<ref>.md
 ```
 
-Git still owns branches and worktrees, and the new checkout gets no layout until
-you run `bd work`.
+## Create a store
 
-## Model
-
+```sh
+mkdir my-graph && cd my-graph
+bd init
+bd new --parent 1 --field title="What is true?" --field layer=claims
+bd new --parent 1 --field title="Why does this exist?" --field layer=intent
+bd tree 1
+bd work 1
 ```
-nodes/<id>.md              main version
-nodes/<id>-<version>.md    alternative version
-nodes/<id>-<version>.md    another alternative
-```
 
-A ref is `5` (main) or `5-1` (version 1). Filenames carry identity and version;
-front matter carries everything else.
+`bd init` creates `nodes/1.md` and prints the next commands. Front matter is
+arbitrary: use `layer`, `phase`, `status`, `audience`, or anything else.
 
-Reserved front-matter keys:
+## Where is my store?
 
-| Key | Meaning |
+`bd` finds the store by walking up from the current directory for a `nodes/`
+directory.
+
+- If `nodes/` is at your repo root, run `bd` from anywhere inside the repo.
+- If the store is nested, set `BD_ROOT=path/to/store` or pass `--root`.
+- One store per checkout. A git worktree has its own `nodes/`.
+
+This repository is the nested case: the corpus lives at
+`workspace/licentiate-n`, hence `BD_ROOT` in the tour.
+
+## Choose your path
+
+| I want to… | Read |
 | --- | --- |
-| `id` | Logical integer id; optional, must match the filename |
-| `legacy` | Original identifier from an imported tree |
-| `contains` | Ordered child refs; missing on a version inherits main |
-| `links` | Semantic edges `{to, type, pinned?, propagates?}` |
-| `home` | Optional presentation path inside a view |
+| Set up and use a store for the first time | [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) |
+| Look up a command quickly | [`docs/CHEATSHEET.md`](docs/CHEATSHEET.md) |
+| Understand the model and decisions | [`docs/DESIGN.md`](docs/DESIGN.md) |
+| Change the tool itself | [`docs/DEVELOPING.md`](docs/DEVELOPING.md) |
+| Work safely as an agent | [`AGENTS.md`](AGENTS.md) |
+| See what is next | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
 
-Everything else is arbitrary user metadata (`layer`, `type`, `status`, `phase`,
-`audience`, `order`, …) and is preserved on export. There is no fixed schema and
-no fixed layer vocabulary.
+## Command map
 
-## Commands
-
-### Browse
+Inspect:
 
 ```
-bd tree [REF] [--depth N] [--summary] [--fields F,F]
-bd show REF[+DEPTH] [--depth N] [--max-chars N] [--no-body] [--fields F,F] [--path]
-bd ls [REF] [--depth N] [--columns F,F] [--max-chars N]
-bd find QUERY [--field F] [--regex] [--where KEY=VALUE ...] [--limit N]
-bd grep PATTERN [--field F] [--where KEY=VALUE ...] [--limit N]
-bd path REF
+bd check | bd tree | bd show | bd ls | bd find | bd grep | bd path
 ```
 
-`bd tree 1 --depth 2` is the map. `bd show 5+2` is the detail: node 5 plus two
-levels of descendant bodies.
-
-### Solutions (git boundary)
-
-A solution is a git branch checked out in a worktree. `bd solution` wraps the
-git worktree commands and keeps no state of its own.
+Edit and structure:
 
 ```
-bd solution new NAME [--path PATH] [--from REF]
-bd solution list
-bd solution remove NAME|PATH [--force]
+bd init | bd new | bd contain | bd uncontain | bd link | bd unlink
 ```
 
-- `new` creates the branch if missing, defaults to a sibling of the repository
-  root, and prints the new path plus the `cd` and `bd work` lines to run next.
-- `list` shows path, branch, short HEAD, and marks the primary worktree and every
-  checkout that contains this store.
-- `remove` deletes the worktree and keeps the branch.
-- A new worktree has no layout; build one inside it with `bd work`.
-
-### Work folders (layout interface)
-
-A work folder is a custom layout of one view inside the current checkout. It is
-not a branch and not a copy; edits write through to `nodes/`.
+Layout:
 
 ```
-bd work [REF] [--out DIR] [--name NAME] [--path-template T]
-        [--title-field F] [--summary-field F]
-        [--status] [--writeback] [--clean] [--force] [--print]
+bd work [REF] [--name N] [--path-template T] [--status] [--writeback] [--print]
 ```
 
-- Default directory: `<store>/build/work/<ref>`.
-- `--name` gives `<store>/build/work/<ref>-<name>`, so several representations of
-  the same root can coexist.
-- Every node is a relative symlink to `nodes/<ref>.md`. There is no copy and no
-  sync. Edits are visible through every work tree that contains the node.
-- Re-running `bd work REF` refreshes a healthy tree without `--clean`.
-- A detached or stray file blocks refresh. Use `--status` to inspect and
-  `--writeback` to keep edits made through an editor that replaced the symlink.
-- `--print` emits only the directory, for `cd "$(bd work 1 --print)"`.
-- Generated files in a work tree: `INDEX.md`, `REFS.md` (path ↔ ref map),
-  `AGENTS.md`.
-- Inside a git checkout, `AGENTS.md` records the current branch, short commit and
-  worktree, and the build output adds a `branch NAME` line. Outside git those
-  fields are omitted.
-- `--writeback` refuses detached files without valid front matter or with a
-  mismatched `id`; a body-only replacement cannot silently erase `contains`.
-
-### Versions
+Solutions:
 
 ```
-bd versions ID
-bd fork ID [--version N]
-bd promote REF [--keep]
-bd retire-version REF
-bd diff REF1 REF2
+bd solution new | bd solution list | bd solution remove
 ```
 
-`5.md` is the mutable main version. Versions are snapshots by convention.
-`promote 5-2` copies a version onto main; `--keep` retains the version file.
-
-Versions are **node-local** alternatives inside one branch. They are not the
-solution boundary. A solution-level alternative is a git branch and worktree;
-mixing solutions is a merge or cherry-pick, not a version selector. If a version
-and a branch express the same thing, prefer the branch.
-
-### Structure and freshness
+Versions (node-local alternatives inside one branch):
 
 ```
-bd check [--root-ref REF] [--view REF] [--require FIELD] [--max-lines N] [--max-chars N]
-bd stale [--view REF]
-bd reconcile [--all | REF ...] [--view REF]
-bd new --parent REF [--field KEY=VALUE ...] [--body TEXT]
-bd contain PARENT CHILD [--before REF | --after REF]
-bd uncontain PARENT CHILD
-bd link FROM TO --type TYPE [--propagates]
-bd unlink FROM TO [--type TYPE]
+bd versions | bd fork | bd promote | bd retire-version | bd diff
 ```
 
-`links` are arbitrary typed edges. A link participates in freshness only when it
-has `propagates: true` (or already has a `pinned` hash). `bd stale` reports edges
-whose pinned target body changed; `bd reconcile` rewrites the pins.
-`bd link --propagates` pins the target immediately, so a new edge starts fresh.
-
-`bd contain` and `bd uncontain` edit one parent's effective list, materialising it
-explicitly when it was inherited from a version's main. They never touch the
-child file. `bd unlink` removes matching edges and never deletes nodes.
-
-### Read-only projections
+Freshness:
 
 ```
-bd view REF --out DIR [--path-template T] [--clean]
-bd export tree|context|dot --view REF --out PATH [...]
+bd stale | bd reconcile
 ```
 
-`bd view` writes a read-only copy of a containment view. `bd export context`
-writes fresh node bodies plus `STALE.md` and `AGENTS.md` for an agent that should
-not write. `bd export dot` writes Graphviz; colour and shape are chosen by
-arbitrary fields.
+Read-only projections:
 
-## Workflow
+```
+bd view REF --out DIR
+bd export tree|context|dot --view REF --out PATH
+```
 
-1. Browse with `tree`, `show`, `ls`, `find`, `path`.
-2. Make a solution boundary with git:
-   `bd solution new sol-a` (or `git worktree add ../sol-a -b sol-a`).
-3. Inside the checkout, make a layout: `bd work REF` or `bd work 5 --name subtree`.
-4. Edit through the layout, or edit `nodes/<ref>.md` directly.
-5. Change structure with `bd contain`, `bd uncontain`, `bd link`, `bd unlink`;
-   add nodes with `bd new`.
-6. Validate with `bd check`; inspect freshness with `bd stale`.
-7. Commit the node files. Compare solutions with `git diff`, `bd diff`, or two
-   worktrees side by side.
-8. Produce a read-only view only when publishing, reviewing, or feeding an agent
-   that must not write.
+Full syntax: [`docs/CHEATSHEET.md`](docs/CHEATSHEET.md) or `bd <command> --help`.
 
 ## Repository layout
 
@@ -234,42 +161,37 @@ breakdown/                 Python package
   exporter.py              tree/context/dot projections
   freshness.py             pins, stale edges, reconcile
   navigate.py              show/tree/ls/find/grep/path
-  work.py                  symlink work trees, status, writeback
-  solutions.py             git worktree lifecycle (solution boundary)
-  ops.py                   versions, fork, promote, diff, new, structural edits
+  work.py                  symlink work folders, status, writeback
+  solutions.py             git worktree wrapper
+  ops.py                   init, new, structural edits, versions, diff
   cli.py, api.py           command line and public API
 tests/                     pytest suite
 tools/migrate_licentiate.py  one-off typed-id → numeric migration
 workspace/licentiate/      legacy typed-id corpus, read-only evaluation source
 workspace/licentiate-n/    numeric corpus, 128 nodes, derived containment
+docs/                      user, developer, design, roadmap
 ```
 
 ## Status
 
-- 150 tests pass (`python3 -m pytest -q`).
+- 155 tests pass (`python3 -m pytest -q`).
 - The 128-node evaluation corpus passes `bd check` with one size warning.
 - Migration body gate: 0 mismatches; every node reachable from root `1`.
 - No JSON, TOML, lock, or state data files. Derived output is gitignored.
+- Structural edits, git-aware work folders, and the `bd solution` wrapper are in
+  place.
 
 ## Known limits
 
 - Node-local versions do not sync across branches. Use git merges for solutions;
   versions are for alternatives inside one branch.
-- There is no automatic three-way merge between node versions; promotion is a
-  copy, and synthesis is manual.
-- One worktree per solution. Switching branches inside one worktree leaves the
-  symlink layout pointing at paths that may not exist on the new branch; rebuild
-  with `bd work REF --clean` and run `--status`.
-- No locking. Concurrent editors can race on the same node file; git is the
-  conflict detector.
-- Some editors replace symlinks instead of writing through them. `--status` and
-  `--writeback` exist for that case.
-- Work trees rely on symlinks; Windows needs developer mode or elevated rights.
-- Migration from the typed-id corpus is a one-off, domain-specific script.
-
-## Further reading
-
-- [`docs/DESIGN.md`](docs/DESIGN.md) — established model, decisions, invariants,
-  rejected alternatives, migration details.
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — next work.
-- [`AGENTS.md`](AGENTS.md) — operating rules for future agent sessions.
+- No three-way merge between node versions. Promotion is a copy; synthesis is
+  manual.
+- One worktree per solution. Switching branches inside one worktree can leave a
+  layout pointing at paths absent from the new branch; rebuild with
+  `bd work REF --clean` and run `--status`.
+- Some editors replace symlinks instead of writing through them. Use
+  `bd work --status` / `--writeback`.
+- Work folders rely on symlinks; Windows needs developer mode or elevated rights.
+- No generic importer yet. The licentiate migration is a worked example.
+- No CI configuration or packaging metadata yet.

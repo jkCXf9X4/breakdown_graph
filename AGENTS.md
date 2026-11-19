@@ -1,10 +1,34 @@
 # Agent operating rules
 
-This repository is a generic markdown information graph and its reference corpus.
-
-Read [`README.md`](README.md) and [`docs/DESIGN.md`](docs/DESIGN.md) before changing
+This repository is both a tool (`bd`) and a reference store corpus. Read
+[`README.md`](README.md) and [`docs/DESIGN.md`](docs/DESIGN.md) before changing
 behaviour. The design document is authoritative for the model; this file is the
 short operating protocol.
+
+## First session
+
+1. Locate the store: `export BD_ROOT=workspace/licentiate-n` or pass `--root`.
+2. Confirm the baseline:
+
+   ```sh
+   python3 -m pytest -q
+   bd check
+   ```
+
+3. See the shape: `bd tree 1 --depth 1`, `bd find <term>`, `bd path <ref>`.
+4. For a solution: `bd solution new NAME`, `cd` into it, `bd work 1`.
+5. For edits: edit through a work folder or `nodes/<ref>.md`; change structure
+   with `bd contain` / `bd uncontain` / `bd link` / `bd unlink`.
+6. Validate: `bd check`, `bd stale`.
+
+## Two jobs
+
+**Working in a store.** The store is data. Browse with `tree`/`show`/`find`; edit
+through `bd work`; keep `nodes/` flat; commit node files, never `build/`.
+
+**Changing the tool.** Read [`docs/DEVELOPING.md`](docs/DEVELOPING.md). Work
+through the loader, view, checker, and exporter boundaries. Add a test for every
+behaviour change. Update the docs listed at the bottom.
 
 ## Core invariants
 
@@ -37,6 +61,23 @@ short operating protocol.
 - Never hand-edit generated `INDEX.md`, `AGENTS.md`, or `REFS.md` inside a work or
   output directory.
 
+## Common tasks
+
+| Task | Command |
+| --- | --- |
+| New store | `bd init DIR` |
+| Add a node | `bd new --parent REF --field title=... --field layer=...` |
+| Move a child | `bd uncontain P C` then `bd contain P C --before REF` |
+| Add an edge | `bd link FROM TO --type supports --propagates` |
+| Browse a subtree | `bd tree REF --depth 0` |
+| Read a node and children | `bd show REF+2 --max-chars 800` |
+| Search | `bd find TEXT`, `bd grep 'RE'` |
+| Edit a view | `bd work REF`, then edit through the symlinks |
+| Repair symlinks | `bd work REF --status` / `--writeback` |
+| New solution | `bd solution new NAME` |
+| Validate | `bd check`, `bd stale` |
+| Read-only agent pack | `bd export context --view REF --out DIR` |
+
 ## Commands
 
 ```sh
@@ -50,13 +91,6 @@ python3 -m pytest -q
 ./bin/bd work 1 --print
 ./bin/bd solution list
 ```
-
-When changing behaviour:
-
-1. Update tests first or alongside the change.
-2. Run the full pytest suite and the corpus check.
-3. If the model or a command changes, update `README.md` and `docs/DESIGN.md`.
-4. Keep the CLI help and the generated work-tree `AGENTS.md` consistent.
 
 ## Code style
 
@@ -72,3 +106,12 @@ When changing behaviour:
 Short conventional prefixes, matching history: `feat:`, `fix:`, `chore:`,
 `docs:`. One concern per commit. Do not commit caches, `build/`, exported views, or
 generated corpora output.
+
+## Docs map
+
+- [`README.md`](README.md) — front door, two axes, command map.
+- [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) — user tutorial.
+- [`docs/CHEATSHEET.md`](docs/CHEATSHEET.md) — command reference.
+- [`docs/DEVELOPING.md`](docs/DEVELOPING.md) — developer guide.
+- [`docs/DESIGN.md`](docs/DESIGN.md) — model, decisions, invariants.
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — next work.

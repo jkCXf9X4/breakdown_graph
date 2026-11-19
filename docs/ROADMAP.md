@@ -12,6 +12,8 @@ Ordered by leverage. Each item names the problem it removes.
 - `bd solution new|list|remove`: a thin wrapper over `git worktree` so creating a
   solution branch does not depend on remembering the git syntax. It never
   reimplements branch, merge, or checkout semantics.
+- `bd init` bootstrap and onboarding docs for users (`GETTING-STARTED`,
+  `CHEATSHEET`) and developers (`DEVELOPING`).
 
 ## P0 — none
 
