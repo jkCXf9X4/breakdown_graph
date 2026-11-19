@@ -41,6 +41,9 @@ instead of silently present.
    active-branch files. Everything needed is in the node files or is derived.
 7. **Freshness is opt-in per edge.** A semantic link participates in staleness
    only when it declares `propagates: true`.
+8. **Git owns the solution boundary; the flat store is the merge unit; views are
+   lenses.** A branch/worktree isolates a solution. A work folder only changes the
+   layout inside one checkout. Neither is a second source of truth.
 
 ## 3. Data model
 
@@ -118,9 +121,23 @@ A view is the containment closure rooted at one ref. `bd view`, `bd export`, and
 - `bd check` validates the global tree and the view.
 - `bd diff A B` compares two closures by logical id.
 
-This is what replaces branches. A solution alternative is a version of the root
-(intent) node with its own `contains` list; the closure is the realization. Two
-views can coexist in the same store and the same working tree.
+A view is a containment closure, not a substitute for a git branch. A version of
+the root (intent) node with its own `contains` list gives an alternative closure
+inside the same checkout; the closure is the realization. Two views can coexist
+in the same store and the same working tree.
+
+Two axes, deliberately separate:
+
+- **Solution boundary: git.** A git branch and worktree hold one solution. Git
+  decides when a solution is merged or discarded.
+- **Merge unit: the flat `nodes/` store.** One file per node, no nested output,
+  so conflicts stay local to the node that changed.
+- **Within a checkout: views.** `bd contain`/`bd uncontain` shape one parent's
+  list and `bd link`/`bd unlink` shape typed edges; both edit only the source
+  file and preserve arbitrary front matter and body bytes.
+
+Git answers what changed; views and pins answer what belongs and what depends.
+`bd work` is a custom symlink layout inside one checkout, not a second copy.
 
 ### 3.5 Versions
 
@@ -133,6 +150,11 @@ views can coexist in the same store and the same working tree.
 
 Version references in `contains` and `links` are exact (`6-2`, not `6`). This is
 what makes a view independent of later edits to main.
+
+Versions are **node-local** alternatives inside one branch. They are not the
+solution boundary, and they do not sync across branches. A solution-level
+alternative is a git branch and worktree; mixing solutions is a merge or a
+cherry-pick. If a version and a branch express the same thing, prefer the branch.
 
 ## 4. Freshness
 
@@ -148,9 +170,11 @@ the second question:
 Hash: SHA-256 of the normalized body (trailing blank lines stripped, exactly one
 trailing newline), truncated to 12 hex characters.
 
-## 5. Work trees
+## 5. Work folders
 
-A work tree is the primary editing interface:
+A work folder is a symlink layout of one view inside one checkout. The solution
+boundary is the git branch/worktree that contains it; the flat node files are the
+merge unit that git records.
 
 ```
 build/work/1/claims/thesis-claim.md -> ../../../../nodes/49.md
@@ -168,6 +192,9 @@ build/work/1/claims/thesis-claim.md -> ../../../../nodes/49.md
   without valid front matter or with a mismatched `id`, so a body-only replacement
   cannot erase `contains` and sever the tree.
 - Generated files: `INDEX.md`, `REFS.md` (path ↔ ref), `AGENTS.md`.
+- Inside a git checkout, `AGENTS.md` records branch, short commit and worktree, so
+  the work folder identifies the solution boundary it belongs to. Detection is
+  best-effort: outside git the fields are omitted and the layout is unchanged.
 
 Read-only projections remain:
 
@@ -216,6 +243,9 @@ Consequences:
     containment; a one-off parent-selection rule materialized it.
 12. **Writeback requires valid front matter.** Protects `contains` from body-only
     replacements.
+13. **Git owns solutions; `bd work` owns layout.** Worktrees isolate branches;
+    symlink folders shape the view inside one branch. Structural edits go through
+    `bd contain` / `bd uncontain` / `bd link` / `bd unlink`.
 
 ## 8. Rejected alternatives
 
@@ -235,6 +265,15 @@ Consequences:
   128-node repository needs; markdown review and git diffs matter more.
 - **Extending the older `pb` tool.** Its checks, registers, and archive model are
   bound to the article schema and a single tree.
+- **A custom merge engine and `based_on` lineage.** Git already has commits,
+  branches, and three-way merges. A node-local merge would duplicate it with worse
+  conflict handling.
+- **`use` selection maps for cross-branch mixes.** A solution is a branch; mixing
+  is a merge or `git restore --source`. A selector would be a second branch
+  mechanism.
+- **Symlink worktrees as solution isolation.** `bd work` is a layout inside one
+  checkout. Isolation belongs to `git worktree`; otherwise branch switching and
+  view refresh get entangled.
 
 ## 9. Invariants
 
@@ -250,6 +289,11 @@ These are enforced or assumed:
 8. Work trees contain only symlinks plus generated files.
 9. Generated files (`INDEX.md`, `AGENTS.md`, `REFS.md`) are never hand-edited.
 10. No generated artifact is committed.
+11. A view never crosses a branch. Versions are node-local; solutions are git
+    branches.
+12. One worktree per solution. Work folders live under `build/` and are
+    disposable.
+13. Structural edits preserve body bytes and all unrelated front matter.
 
 ## 10. Evaluation corpus and migration
 
@@ -276,9 +320,12 @@ The migration is domain-specific. The tool itself is not.
 
 ## 11. Known limits
 
-- No structural edit commands yet. `contains` and `links` are edited in the node
-  file.
-- No three-way merge between versions. Promotion is a copy; synthesis is manual.
+- Node-local versions do not sync across branches. Solutions sync with git merges;
+  versions are alternatives inside one branch.
+- No three-way merge between node versions. Promotion is a copy; synthesis is
+  manual.
+- One worktree per solution. Switching branches inside one worktree can leave a
+  layout pointing at paths absent from the new branch; rebuild and run `--status`.
 - No locking. Concurrent editors can race; git is the conflict detector.
 - Symlinks require a POSIX filesystem. Windows needs developer mode.
 - Editors that replace symlinks need `--status`/`--writeback`.
@@ -296,3 +343,5 @@ The migration is domain-specific. The tool itself is not.
 5. Should the store support concurrent agent sessions with leases or locks?
 6. Is a generic exporter (`tree`/`context`) enough, or do we need per-workflow
    report renderers (traceability matrix, claim-evidence table)?
+7. Should node-local versions be deprecated entirely in favour of git branches,
+   or kept for cheap A/B variants inside one branch?

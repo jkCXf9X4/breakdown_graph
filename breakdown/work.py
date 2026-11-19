@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -41,6 +42,48 @@ _REF_ROW = re.compile(
 )
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
+GIT_TIMEOUT = 5.0
+
+
+@dataclass(frozen=True)
+class GitContext:
+    """The checkout a store belongs to, when one can be detected."""
+
+    branch: str
+    commit: str
+    toplevel: str
+
+
+def _git(root: Path, *args: str) -> str | None:
+    """Run one read-only git query; any failure yields ``None``."""
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(root), *args],
+            capture_output=True,
+            text=True,
+            timeout=GIT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    value = completed.stdout.strip()
+    return value or None
+
+
+def git_context(root: str | Path) -> GitContext | None:
+    """Detect the git checkout that contains ``root``, without requiring git."""
+    root = Path(root)
+    if _git(root, "rev-parse", "--is-inside-work-tree") != "true":
+        return None
+    branch = _git(root, "rev-parse", "--abbrev-ref", "HEAD")
+    commit = _git(root, "rev-parse", "--short", "HEAD")
+    toplevel = _git(root, "rev-parse", "--show-toplevel")
+    if not (branch and commit and toplevel):
+        return None
+    return GitContext(branch=branch, commit=commit, toplevel=toplevel)
+
 
 @dataclass(frozen=True)
 class WorkEntry:
@@ -61,6 +104,7 @@ class WorkResult:
     entries: list[WorkEntry] = field(default_factory=list)
     written: int = 0
     invalid: list[str] = field(default_factory=list)
+    git: GitContext | None = None
 
     @property
     def ok(self) -> bool:
@@ -196,7 +240,7 @@ def _refs_text(view: View, paths: dict[str, str], title_field: str) -> str:
     return "\n".join(lines)
 
 
-def _agents_text(view: View) -> str:
+def _agents_text(view: View, git: GitContext | None = None) -> str:
     ref = view.ref
     lines = [
         f"# Working set — view `{ref}`",
@@ -217,10 +261,19 @@ def _agents_text(view: View) -> str:
             f"- `bd work {ref} --status` and `bd work {ref} --writeback` are the "
             "repair path if an editor replaces a symlink with a regular file."
         ),
-        "",
-        f"Nodes in this view: {len(view.nodes)}.",
-        "",
     ]
+    if git is not None:
+        lines.extend(
+            [
+                "",
+                "Git context:",
+                "",
+                f"- Git branch: `{git.branch}`",
+                f"- Git commit: `{git.commit}`",
+                f"- Worktree: `{git.toplevel}`",
+            ]
+        )
+    lines.extend(["", f"Nodes in this view: {len(view.nodes)}.", ""])
     return "\n".join(lines)
 
 
@@ -253,6 +306,7 @@ def _build(
     summary_field: str,
     force: bool,
     clean: bool,
+    git: GitContext | None = None,
 ) -> WorkResult:
     if clean:
         _prepare_out(out, force=True, clean=True)
@@ -290,7 +344,7 @@ def _build(
         _refs_text(view, paths, title_field), encoding="utf-8", newline=""
     )
     agents_path = out / "AGENTS.md"
-    agents_path.write_text(_agents_text(view), encoding="utf-8", newline="")
+    agents_path.write_text(_agents_text(view, git), encoding="utf-8", newline="")
     files.extend((index_path, refs_path, agents_path))
 
     return WorkResult(
@@ -299,6 +353,7 @@ def _build(
         nodes=len(view.nodes),
         symlinks=len(view.nodes),
         files=files,
+        git=git,
     )
 
 
@@ -398,4 +453,5 @@ def work(
         summary_field=summary_field,
         force=force,
         clean=clean,
+        git=git_context(view.root),
     )

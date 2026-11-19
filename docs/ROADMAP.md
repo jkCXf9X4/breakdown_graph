@@ -2,59 +2,67 @@
 
 Ordered by leverage. Each item names the problem it removes.
 
-## P0 — structural edit commands
+## Done
 
-```
-bd contain PARENT CHILD [--before REF]
-bd uncontain PARENT CHILD
-bd link FROM TO --type TYPE [--propagates]
-bd unlink FROM TO [--type TYPE]
-```
+- Structural edit commands: `bd contain`, `bd uncontain`, `bd link`, `bd unlink`.
+- Two-axis model: git worktree is the solution boundary; `bd work` is the layout
+  inside one checkout. Work folders record branch, commit, and worktree.
+- Browsing: `bd tree`, `show`, `ls`, `find`, `grep`, `path`.
+- Symlink work folders with `--status` and `--writeback`.
 
-Why: `contains` and `links` are currently edited by hand in YAML. Every structural
-edit must preserve `contains` order, materialize inherited lists before editing,
-and keep `REFS.md`/view paths consistent. These commands also give an agent a
-safe protocol that never rewrites prose.
+## P0 — solution ergonomics
 
-## P1 — work tree ergonomics
+- `bd solution new NAME [--from REF]` wraps
+  `git worktree add ../NAME -b NAME` and then `bd work REF`.
+- `bd solution list` shows `git worktree list` plus store root, branch, and node
+  count.
+- `bd solution remove NAME` wraps `git worktree remove`.
 
-```
-bd work --list
-bd work REF --filter FIELD=VALUE
-bd work REF --open
-```
+Why: worktrees are the solution boundary, and path mistakes are the common failure.
+The wrapper must stay thin. Do not reimplement branch, merge, or checkout
+semantics.
 
-Why: several work trees over one store are now normal. A list shows what exists,
-where, and whether it is healthy. Filters would make a view narrower than a
-containment closure without inventing a new view root.
+## P1 — work folder ergonomics
 
-## P1 — diffs and comparison
+- `bd work --list` lists work folders in this checkout with root ref, node count,
+  and status summary.
+- `bd work REF --filter FIELD=VALUE` narrows a view without inventing a new
+  containment root.
+- `bd work REF --open` prints the path and opens `$EDITOR` at the view root.
+- `--status` should report nodes added to the view since the last build, not only
+  missing or detached ones.
+
+Why: several layouts per checkout are normal. A list and a filter make them
+discoverable; a status that notices additions keeps the folder honest.
+
+## P1 — comparison
 
 - `bd diff A B --changed` (default to changed rows; `--all` for everything).
 - `bd diff A B --body` with unified body diffs per node.
-- Optional `--out FILE` for review reports.
+- `bd where` prints store root, git branch, commit, and current view roots.
 
-Why: comparing two realizations is the core exploration loop, and the current diff
-prints all ids.
+Why: comparing two realizations is the exploration loop. `git diff` compares
+branches; `bd diff` compares containment views inside one branch.
 
-## P2 — promotion and merge
+## P2 — node-local versions
 
-- `bd promote REF --rewrite-refs`: rewrite incoming references from the version to
-  main.
-- `bd merge FROM INTO`: three-way per node with explicit conflict reporting.
-- Keep the rule: a merge produces a decision record, not silent prose blending.
+- Decide whether `bd fork` / `promote` / `retire-version` stay for cheap A/B
+  variants inside one branch, or are deprecated in favour of git branches.
+- If they stay: `bd promote REF --rewrite-refs` should rewrite incoming references
+  from the version to main.
+- Do not build a custom three-way merge. Solution merges are git merges.
 
-Why: promotion is a copy today; incoming references to the promoted version keep
-pointing at the old snapshot.
+Why: versions are useful for a local alternative, but they are the easiest place
+to drift back into reimplementing git.
 
 ## P2 — concurrency
 
-- Per-node advisory lease or lock when a work tree is edited by an agent.
-- `bd status` showing uncommitted node edits and which work trees see them.
+- Per-node advisory lease when a work folder is edited by an agent.
+- `bd status` showing uncommitted node edits and which layouts see them.
 - Keep git as the durable conflict detector.
 
-Why: multiple agents can edit the same node through different work trees and
-overwrite each other.
+Why: multiple agents can edit the same node through different worktrees or
+layouts and overwrite each other.
 
 ## P2 — validation
 
@@ -66,7 +74,8 @@ overwrite each other.
 ## P3 — packaging and CI
 
 - `pyproject.toml` with a console script.
-- CI: pytest, `bd check` on both corpora, no tracked generated output.
+- CI: pytest, `bd check` on both corpora, git integration test, no tracked
+  generated output.
 - A small fixture store under `tests/fixtures/` for documentation examples.
 
 ## P3 — import

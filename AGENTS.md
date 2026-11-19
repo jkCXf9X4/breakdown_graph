@@ -15,14 +15,20 @@ short operating protocol.
 - `contains` is a tree per view. `links` is a DAG and never adds nodes to a view.
 - Front matter is arbitrary. Only `id`, `legacy`, `contains`, `links`, `home` are
   reserved. Do not add a schema unless a project asks for one.
-- Work trees are symlink views. Never copy node content into a work tree and never
-  introduce a sync layer.
+- Git owns the solution boundary: one branch/worktree per solution. The flat store
+  is the merge unit. `bd work` is a layout inside one checkout, never a branch
+  mechanism.
+- Work folders are symlink views. Never copy node content into a work folder and
+  never introduce a sync layer.
+- A view never crosses a branch. Do not mix versions from different branches in one
+  view; merge the branches with git.
 - No JSON, TOML, lock, or state data files. Derived output is disposable and
   gitignored.
 
 ## Where to work
 
-- Writable views: `bd work REF` creates `build/work/<ref>`; edit through symlinks.
+- Solutions: `git worktree add ../NAME -b NAME`; one worktree per solution.
+- Writable layout: `bd work REF` creates `build/work/<ref>`; edit through symlinks.
 - Read-only views: `bd view REF --out DIR` or `bd export ...`.
 - Never edit `workspace/licentiate/` directly. It is the legacy typed-id source for
   the migration. Use `tools/migrate_licentiate.py` to regenerate
@@ -38,6 +44,8 @@ python3 -m pytest -q
 ./bin/bd check
 ./bin/bd tree 1 --depth 1
 ./bin/bd show 1+1 --max-chars 400
+./bin/bd contain 1 5 --after 6
+./bin/bd link 5 9 --type supports
 ./bin/bd work 1 --print
 ```
 

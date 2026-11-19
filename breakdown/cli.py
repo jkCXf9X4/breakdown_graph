@@ -129,6 +129,8 @@ def _cmd_work(args: argparse.Namespace) -> int:
         f"{result.nodes} nodes, {result.symlinks} symlinks, "
         f"{len(result.files)} generated files (view {result.ref})"
     )
+    if result.git is not None:
+        print(f"branch {result.git.branch}")
     return 0
 
 
@@ -244,6 +246,48 @@ def _cmd_new(args: argparse.Namespace) -> int:
         body=args.body or "",
     )
     print(f"created {path.relative_to(root)}")
+    return 0
+
+
+def _cmd_contain(args: argparse.Namespace) -> int:
+    api.contain(
+        _find_root(args.root),
+        args.parent,
+        args.child,
+        before=args.before,
+        after=args.after,
+    )
+    print(f"contained {args.child} in {args.parent}")
+    return 0
+
+
+def _cmd_uncontain(args: argparse.Namespace) -> int:
+    api.uncontain(_find_root(args.root), args.parent, args.child)
+    print(f"removed {args.child} from {args.parent}")
+    return 0
+
+
+def _cmd_link(args: argparse.Namespace) -> int:
+    api.link(
+        _find_root(args.root),
+        args.source,
+        args.target,
+        link_type=args.type,
+        propagates=args.propagates,
+    )
+    print(f"linked {args.source} -> {args.target} ({args.type})")
+    return 0
+
+
+def _cmd_unlink(args: argparse.Namespace) -> int:
+    api.unlink(
+        _find_root(args.root),
+        args.source,
+        args.target,
+        link_type=args.type,
+    )
+    suffix = f" ({args.type})" if args.type else ""
+    print(f"unlinked {args.source} -> {args.target}{suffix}")
     return 0
 
 
@@ -514,6 +558,46 @@ def build_parser() -> argparse.ArgumentParser:
     )
     new.add_argument("--body", default="", help="markdown body after the front matter")
     new.set_defaults(func=_cmd_new)
+
+    contain = sub.add_parser("contain", help="add a child to a parent's tree")
+    _add_root(contain)
+    contain.add_argument("parent", metavar="PARENT")
+    contain.add_argument("child", metavar="CHILD")
+    placement = contain.add_mutually_exclusive_group()
+    placement.add_argument(
+        "--before", default=None, metavar="REF", help="insert before this sibling"
+    )
+    placement.add_argument(
+        "--after", default=None, metavar="REF", help="insert after this sibling"
+    )
+    contain.set_defaults(func=_cmd_contain)
+
+    uncontain = sub.add_parser("uncontain", help="remove a child from a parent's tree")
+    _add_root(uncontain)
+    uncontain.add_argument("parent", metavar="PARENT")
+    uncontain.add_argument("child", metavar="CHILD")
+    uncontain.set_defaults(func=_cmd_uncontain)
+
+    link = sub.add_parser("link", help="append a typed link edge")
+    _add_root(link)
+    link.add_argument("source", metavar="FROM")
+    link.add_argument("target", metavar="TO")
+    link.add_argument("--type", required=True, help="arbitrary edge label")
+    link.add_argument(
+        "--propagates",
+        action="store_true",
+        help="make the edge participate in freshness, pinned to the target now",
+    )
+    link.set_defaults(func=_cmd_link)
+
+    unlink = sub.add_parser("unlink", help="remove link edges to a target")
+    _add_root(unlink)
+    unlink.add_argument("source", metavar="FROM")
+    unlink.add_argument("target", metavar="TO")
+    unlink.add_argument(
+        "--type", default=None, help="only remove edges with this label"
+    )
+    unlink.set_defaults(func=_cmd_unlink)
 
     show = sub.add_parser("show", help="print a node and its descendants")
     _add_root(show)

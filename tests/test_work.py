@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -426,3 +427,93 @@ def test_writeback_refuses_a_detached_file_without_frontmatter(write, tmp_path):
     assert result.invalid == ["claims/2.md"]
     assert (tmp_path / "nodes" / "2.md").read_text(encoding="utf-8") == before
     assert not dest.is_symlink()
+
+
+def _run_git(cwd, *args):
+    import subprocess
+
+    completed = subprocess.run(
+        ["git", "-C", str(cwd), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return completed.stdout.strip()
+
+
+def _git_repo(write, tmp_path):
+    repo = tmp_path / "repo"
+    write(repo / "nodes", 1, contains=["2"], layer="intent")
+    write(repo / "nodes", 2, layer="claims")
+    _run_git(repo, "init", "-q")
+    _run_git(repo, "config", "user.name", "Test User")
+    _run_git(repo, "config", "user.email", "test@example.com")
+    _run_git(repo, "add", "nodes")
+    _run_git(repo, "commit", "-q", "-m", "nodes")
+    return repo
+
+
+git_only = pytest.mark.skipif(
+    shutil.which("git") is None, reason="git not installed"
+)
+
+
+def test_work_without_git_omits_git_context(write, tmp_path, capsys):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    result = api.work(tmp_path, "1", out)
+    assert result.git is None
+    agents = (out / "AGENTS.md").read_text(encoding="utf-8")
+    assert "Git branch:" not in agents
+
+    from breakdown.cli import main
+
+    cli_out = tmp_path / "cli"
+    assert main(["work", "1", "--root", str(tmp_path), "--out", str(cli_out)]) == 0
+    assert "branch " not in capsys.readouterr().out
+
+
+@git_only
+def test_work_records_git_branch_commit_and_toplevel(write, tmp_path):
+    repo = _git_repo(write, tmp_path)
+    branch = _run_git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    commit = _run_git(repo, "rev-parse", "--short", "HEAD")
+    toplevel = _run_git(repo, "rev-parse", "--show-toplevel")
+    out = tmp_path / "work"
+
+    result = api.work(repo, "1", out)
+
+    assert result.git is not None
+    assert (result.git.branch, result.git.commit, result.git.toplevel) == (
+        branch,
+        commit,
+        toplevel,
+    )
+    agents = (out / "AGENTS.md").read_text(encoding="utf-8")
+    assert f"- Git branch: `{branch}`" in agents
+    assert f"- Git commit: `{commit}`" in agents
+    assert f"- Worktree: `{toplevel}`" in agents
+
+
+@git_only
+def test_work_cli_prints_the_branch(write, tmp_path, capsys):
+    repo = _git_repo(write, tmp_path)
+    branch = _run_git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    from breakdown.cli import main
+
+    out = tmp_path / "cli"
+    assert main(["work", "1", "--root", str(repo), "--out", str(out)]) == 0
+    assert f"branch {branch}" in capsys.readouterr().out
+
+
+@git_only
+def test_write_through_is_visible_to_git_status(write, tmp_path):
+    repo = _git_repo(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(repo, "1", out)
+
+    (out / "claims" / "2.md").write_text("edited through the link\n", encoding="utf-8")
+
+    porcelain = _run_git(repo, "status", "--porcelain")
+    assert "nodes/2.md" in porcelain
+    assert "work/" not in porcelain

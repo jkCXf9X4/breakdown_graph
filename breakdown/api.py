@@ -26,13 +26,17 @@ from .model import (
     Store,
     View,
 )
+from .ops import contain as _contain
 from .ops import diff as _diff
 from .ops import fork as _fork
+from .ops import link as _link
 from .ops import new_node as _new_node
 from .ops import promote as _promote
 from .ops import retire_version as _retire_version
+from .ops import uncontain as _uncontain
+from .ops import unlink as _unlink
 from .ops import versions as _versions
-from .work import WorkEntry, WorkResult
+from .work import GitContext, WorkEntry, WorkResult
 from .work import work as _work
 
 __all__ = [
@@ -48,6 +52,10 @@ __all__ = [
     "retire_version",
     "diff",
     "new_node",
+    "contain",
+    "uncontain",
+    "link",
+    "unlink",
     "work",
     "parse_ref",
     "parse_filename",
@@ -66,6 +74,7 @@ __all__ = [
     "StaleEdge",
     "WorkEntry",
     "WorkResult",
+    "GitContext",
     "BreakdownError",
     "ExportError",
 ]
@@ -179,6 +188,46 @@ def new_node(
         body=body,
         links=links,
     )
+
+
+def contain(
+    root: str | Path,
+    parent: str | int,
+    child: str | int,
+    *,
+    before: str | int | None = None,
+    after: str | int | None = None,
+) -> Path:
+    """Add ``child`` to ``parent``'s containment list."""
+    return _contain(root, parent, child, before=before, after=after)
+
+
+def uncontain(root: str | Path, parent: str | int, child: str | int) -> Path:
+    """Remove ``child`` from ``parent``'s containment list."""
+    return _uncontain(root, parent, child)
+
+
+def link(
+    root: str | Path,
+    source: str | int,
+    target: str | int,
+    *,
+    link_type: str,
+    propagates: bool = False,
+) -> Path:
+    """Append a typed link edge, pinning the target when it propagates."""
+    return _link(root, source, target, link_type=link_type, propagates=propagates)
+
+
+def unlink(
+    root: str | Path,
+    source: str | int,
+    target: str | int,
+    *,
+    link_type: str | None = None,
+) -> Path:
+    """Remove matching link edges between two refs."""
+    return _unlink(root, source, target, link_type=link_type)
 
 
 def work(

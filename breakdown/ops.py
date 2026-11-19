@@ -7,9 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from .errors import BreakdownError
-from .frontmatter import parse_document, render_document, rewrite_contains
+from .frontmatter import (
+    parse_document,
+    render_document,
+    rewrite_contains,
+    rewrite_links,
+)
 from .loader import load, load_view, node_path, parse_ref, ref_of
-from .model import DiffEntry, Node
+from .model import DiffEntry, Node, Store
 
 
 def _logical_id(text: str | int) -> int:
@@ -30,6 +35,44 @@ def _version_ref(text: str | int) -> tuple[int, int]:
     if version == 0:
         raise BreakdownError(f"ref {text!r} is a main version, not a version")
     return node_id, version
+
+
+def _canonical(text: str | int) -> str:
+    try:
+        return ref_of(*parse_ref(text))
+    except ValueError:
+        raise BreakdownError(f"invalid ref {text!r}") from None
+
+
+def _existing(store: Store, ref: str, role: str) -> Node:
+    node = store.nodes.get(ref)
+    if node is None:
+        raise BreakdownError(f"{role} {ref} does not exist")
+    return node
+
+
+def _reaches(store: Store, start: str, target: str) -> bool:
+    """Whether ``target`` is reachable from ``start`` through effective contains."""
+    seen: set[str] = set()
+    stack = [start]
+    while stack:
+        current = stack.pop()
+        if current == target:
+            return True
+        if current in seen:
+            continue
+        seen.add(current)
+        stack.extend(store.effective_contains(current))
+    return False
+
+
+def _raw_links(document) -> list[dict[str, Any]]:
+    raw = document.meta.get("links")
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not all(isinstance(item, dict) for item in raw):
+        raise BreakdownError("'links' must be a list of mappings")
+    return [dict(item) for item in raw]
 
 
 def _strip_contains(path: Path) -> None:
@@ -205,3 +248,171 @@ def new_node(
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(render_document(meta, body), encoding="utf-8", newline="")
     return target
+
+
+def _sibling_index(
+    siblings: list[str], before: str | None, after: str | None
+) -> int:
+    before_ref = None if before is None else _canonical(before)
+    after_ref = None if after is None else _canonical(after)
+    if before_ref is not None and after_ref is not None:
+        raise BreakdownError("use either --before or --after, not both")
+    if before_ref is not None:
+        if before_ref not in siblings:
+            raise BreakdownError(f"{before_ref} is not contained by this parent")
+        return siblings.index(before_ref)
+    if after_ref is not None:
+        if after_ref not in siblings:
+            raise BreakdownError(f"{after_ref} is not contained by this parent")
+        return siblings.index(after_ref) + 1
+    return len(siblings)
+
+
+def contain(
+    root: str | Path,
+    parent: str | int,
+    child: str | int,
+    *,
+    before: str | int | None = None,
+    after: str | int | None = None,
+) -> Path:
+    """Add ``child`` to ``parent``'s containment list, optionally positioned."""
+    root = Path(root).resolve()
+    parent_ref = _canonical(parent)
+    child_ref = _canonical(child)
+    store = load(root)
+    parent_node = _existing(store, parent_ref, "parent")
+    _existing(store, child_ref, "child")
+    if parent_ref == child_ref:
+        raise BreakdownError(f"refusing to contain {child_ref} in itself")
+    if _reaches(store, child_ref, parent_ref):
+        raise BreakdownError(
+            f"refusing to create a containment cycle: "
+            f"{child_ref} already reaches {parent_ref}"
+        )
+
+    siblings = store.effective_contains(parent_ref)
+    if child_ref in siblings:
+        raise BreakdownError(f"{child_ref} is already contained by {parent_ref}")
+    index = _sibling_index(
+        siblings,
+        None if before is None else _canonical(before),
+        None if after is None else _canonical(after),
+    )
+    new_contains = siblings[:index] + [child_ref] + siblings[index:]
+
+    document = parse_document(parent_node.path.read_text(encoding="utf-8"))
+    rewritten = rewrite_contains(document.raw_fm, new_contains)
+    parent_node.path.write_text(
+        document.with_raw_fm(rewritten), encoding="utf-8", newline=""
+    )
+    return parent_node.path
+
+
+def uncontain(root: str | Path, parent: str | int, child: str | int) -> Path:
+    """Remove ``child`` from ``parent``'s containment list; never delete it."""
+    root = Path(root).resolve()
+    parent_ref = _canonical(parent)
+    child_ref = _canonical(child)
+    store = load(root)
+    parent_node = _existing(store, parent_ref, "parent")
+    _existing(store, child_ref, "child")
+
+    siblings = store.effective_contains(parent_ref)
+    if child_ref not in siblings:
+        raise BreakdownError(f"{child_ref} is not contained by {parent_ref}")
+    new_contains = [ref for ref in siblings if ref != child_ref]
+
+    document = parse_document(parent_node.path.read_text(encoding="utf-8"))
+    # An empty explicit list must not fall back to inheriting main's list.
+    rewritten = rewrite_contains(document.raw_fm, new_contains)
+    parent_node.path.write_text(
+        document.with_raw_fm(rewritten), encoding="utf-8", newline=""
+    )
+    return parent_node.path
+
+
+def link(
+    root: str | Path,
+    source: str | int,
+    target: str | int,
+    *,
+    link_type: str,
+    propagates: bool = False,
+) -> Path:
+    """Append a typed link edge, pinning the target when it propagates."""
+    root = Path(root).resolve()
+    if not isinstance(link_type, str) or not link_type.strip():
+        raise BreakdownError("link type must be a non-empty string")
+    source_ref = _canonical(source)
+    target_ref = _canonical(target)
+    store = load(root)
+    source_node = _existing(store, source_ref, "source")
+    target_node = _existing(store, target_ref, "target")
+
+    document = parse_document(source_node.path.read_text(encoding="utf-8"))
+    links = _raw_links(document)
+    for item in links:
+        try:
+            existing = ref_of(*parse_ref(item.get("to")))
+        except ValueError:
+            continue
+        if existing == target_ref and item.get("type") == link_type:
+            raise BreakdownError(
+                f"link {source_ref} -> {target_ref} ({link_type}) already exists; "
+                "use bd unlink first"
+            )
+
+    edge: dict[str, Any] = {"to": target_ref, "type": link_type}
+    if propagates:
+        edge["propagates"] = True
+        edge["pinned"] = target_node.body_hash
+    links.append(edge)
+    rewritten = rewrite_links(document.raw_fm, links)
+    source_node.path.write_text(
+        document.with_raw_fm(rewritten), encoding="utf-8", newline=""
+    )
+    return source_node.path
+
+
+def unlink(
+    root: str | Path,
+    source: str | int,
+    target: str | int,
+    *,
+    link_type: str | None = None,
+) -> Path:
+    """Remove every matching edge; ``link_type`` narrows the match."""
+    root = Path(root).resolve()
+    source_ref = _canonical(source)
+    target_ref = _canonical(target)
+    store = load(root)
+    source_node = _existing(store, source_ref, "source")
+    _existing(store, target_ref, "target")
+
+    document = parse_document(source_node.path.read_text(encoding="utf-8"))
+    links = _raw_links(document)
+    kept: list[dict[str, Any]] = []
+    removed = 0
+    for item in links:
+        try:
+            existing = ref_of(*parse_ref(item.get("to")))
+        except ValueError:
+            kept.append(item)
+            continue
+        matches = existing == target_ref and (
+            link_type is None or item.get("type") == link_type
+        )
+        if matches:
+            removed += 1
+        else:
+            kept.append(item)
+    if removed == 0:
+        suffix = f" ({link_type})" if link_type is not None else ""
+        raise BreakdownError(f"no link {source_ref} -> {target_ref}{suffix} to remove")
+
+    rewritten = rewrite_links(document.raw_fm, kept)
+    source_node.path.write_text(
+        document.with_raw_fm(rewritten), encoding="utf-8", newline=""
+    )
+    return source_node.path
