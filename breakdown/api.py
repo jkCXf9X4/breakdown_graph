@@ -29,6 +29,7 @@ from .model import (
 from .ops import contain as _contain
 from .ops import diff as _diff
 from .ops import fork as _fork
+from .ops import init_store as _init_store
 from .ops import link as _link
 from .ops import new_node as _new_node
 from .ops import promote as _promote
@@ -44,6 +45,7 @@ from .work import GitContext, WorkEntry, WorkResult
 from .work import work as _work
 
 __all__ = [
+    "init_store",
     "load",
     "load_view",
     "check",
@@ -87,6 +89,11 @@ __all__ = [
     "BreakdownError",
     "ExportError",
 ]
+
+
+def init_store(root: str | Path = ".") -> Path:
+    """Create ``nodes/1.md`` in an empty directory and return the store root."""
+    return _init_store(root)
 
 
 def load(root: str | Path) -> Store:

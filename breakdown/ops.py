@@ -87,6 +87,27 @@ def _strip_contains(path: Path) -> None:
     )
 
 
+_ROOT_BODY = "# Root\n\nState the intent of this graph here.\n"
+
+
+def init_store(root: str | Path = ".") -> Path:
+    """Create a minimal store with one root node and return the store root."""
+    root = Path(root).resolve()
+    nodes = root / "nodes"
+    if nodes.is_dir() and any(nodes.iterdir()):
+        raise BreakdownError(f"store already exists at {root}")
+    nodes.mkdir(parents=True, exist_ok=True)
+    target = node_path(root, 1, 0)
+    target.write_text(
+        render_document(
+            {"id": 1, "title": "Root", "home": "1.md", "contains": []}, _ROOT_BODY
+        ),
+        encoding="utf-8",
+        newline="",
+    )
+    return root
+
+
 def versions(root: str | Path, node_id: str | int) -> list[Node]:
     """Every existing file for a logical id, main first."""
     return load(root).versions(_logical_id(node_id))

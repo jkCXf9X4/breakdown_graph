@@ -75,6 +75,17 @@ def _display_opts(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def _cmd_init(args: argparse.Namespace) -> int:
+    root = api.init_store(args.dir)
+    print(f"store initialized at {root}")
+    print("next:")
+    print(f"  cd {root}")
+    print('  bd new --parent 1 --field title="First claim" --field layer=claims')
+    print("  bd tree 1")
+    print("  bd work 1")
+    return 0
+
+
 def _cmd_view(args: argparse.Namespace) -> int:
     root = _find_root(args.root)
     result = api.export_view(
@@ -449,6 +460,12 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    init = sub.add_parser(
+        "init", help="create a store with one root node in an empty directory"
+    )
+    init.add_argument("dir", nargs="?", default=".", help="store directory (default: .)")
+    init.set_defaults(func=_cmd_init)
 
     view = sub.add_parser("view", help="read-only copy of one view")
     _add_root(view)
