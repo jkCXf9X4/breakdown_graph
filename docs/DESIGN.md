@@ -31,7 +31,7 @@ declared closure, and make stale material visible rather than silently present.
    is presentation metadata.
 3. **Containment is data.** The tree is an ordered `contains` list, not a
    directory hierarchy. A view is the closure of one ref.
-4. **No schema.** Front matter is arbitrary; only five keys are built in.
+4. **No schema.** Front matter is arbitrary; the built-in keys are listed below.
    Layers, types, and status values are user data.
 5. **Work in the store, through one work area.** The writable work area is a
    symlink view, not a copy, and there is no sync-back. A project has exactly one
@@ -88,8 +88,8 @@ Built-in keys (structural keys are reserved; presentation keys are placement onl
 | `legacy` | string | Original identifier from an imported tree |
 | `contains` | list of refs | Ordered children for this view |
 | `links` | list of edge objects | Semantic edges |
-| `folder` | string | Optional directory prefix for default placement |
 | `name` | string | Optional file stem; `.md` is appended |
+| `section` | bool or string | Opens a directory for this node's descendants |
 
 Everything else is arbitrary and preserved on export. Typical fields: `title`,
 `summary`, `layer`, `type`, `status`, `date`, `phase`, `audience`, `order`,
@@ -262,7 +262,9 @@ bd_work/claims/thesis-claim.md -> ../../.bd_tree/nodes/49-1.md
   materialize only the first `N` descendant levels of it. `bd work REF+N` (the
   same display suffix as `bd show`/`bd tree`) or `bd work REF --depth N` prunes
   the materialized prefix after the view is resolved; `N=0` leaves the root
-  alone and `--depth` overrides a suffix. Containment alone decides the prefix.
+  alone and `--depth` overrides a suffix. Containment alone decides the
+  materialized prefix; placement is the one deliberate exception, where a
+  `section` node opens a directory for its descendants.
   The generated `REFS.md`, `INDEX.md`, and `AGENTS.md` carry `REF+N`, so
   `bd current`, `--status`, `--writeback`, and `bd edit` recover the
   materialized depth; `bd edit` rejects a ref outside that prefix. A rebuild
@@ -274,14 +276,19 @@ bd_work/claims/thesis-claim.md -> ../../.bd_tree/nodes/49-1.md
   `bd edit REF` prints the absolute path of a ref in the active view and errors
   if it is not there. `bd views` lists containment roots and marks the store
   default with `*`.
-- Each node is placed by `folder` and `name`: `folder` is an optional directory
-  prefix, `name` the file stem (default: the lowercase kebab-case slug of
-  `title`, then the ref), and `.md` is appended. With neither, the path is
-  `<ref>-<title-slug>.md`; a node with no usable title (none, or punctuation
-  only) lands at `<ref>.md`, so the ref is never doubled.
-  `--path-template` overrides the whole area and never names another work area;
-  in a template, `{name}`/`{slug}` is the explicit `name`, else the title slug,
-  else the ref.
+- A node is placed by `section`, `name`, and `title`. `section` is the only
+  presentation key that creates directories: `section: true` names the directory
+  by the node's placement name (explicit `name`, else the lowercase kebab-case
+  `title` slug, else the ref), and `section: "<dir>"` uses the string verbatim
+  and may contain `/`. The section node's own file is
+  `<dir>/<placement-name>.md`; every containment descendant is placed at its
+  normal relative path under that prefix, and nested sections stack. Otherwise a
+  node is placed by explicit `name` (`<name>.md`), else
+  `<ref>-<title-slug>.md`, else `<ref>.md` when there is no usable title (none,
+  or punctuation only), so the ref is never doubled. `--path-template` opts out
+  of section inheritance, overrides the whole area, and never names another work
+  area; in a template, `{name}`/`{slug}` is the explicit `name`, else the title
+  slug, else the ref.
 - `--status` classifies paths as `ok`, `missing`, `wrong-target`, `detached`,
   `stray`, or `stale-ref`; `--writeback` re-links detached files and refuses
   invalid front matter or a mismatched `id`, so a body-only replacement cannot
@@ -325,8 +332,11 @@ branch is checked out where; `bd work` remains the layout inside one checkout.
 
 Nothing in the tool knows the article layers; `layer` is a field like any other.
 The only reserved vocabulary is structural: `id`, `legacy`, `contains`,
-`links`, and the freshness keys `to`, `type`, `propagates`, `pinned`. `folder`,
-`name`, and `title` are presentation fields.
+`links`, and the freshness keys `to`, `type`, `propagates`, `pinned`. `name`,
+`title`, and `section` are presentation fields: they change placement only,
+never identity, containment, or validation, so they add no schema. `folder` is
+ordinary front matter: preserved, never read, and it affects no placement,
+naming, validation, or warning.
 
 Consequences: any workflow can define layers (`phase`, `stage`, `stream`),
 ordering, and statuses; path templates read any front-matter field; dot

@@ -38,8 +38,8 @@ State the intent of this graph here.
 
 The filename is identity and version: logical id `1`, version `1`. `contains` is
 the ordered child list of full refs. The rest of the front matter is arbitrary.
-`bd init` writes no `folder` or `name`, so the title `Root` lands at
-`1-1-root.md`; add `folder`/`name` only to place it elsewhere.
+`bd init` writes no `name` or `section`, so the title `Root` lands at
+`1-1-root.md`; add `name` (or `section`) only to place it elsewhere.
 
 Add two nodes and inspect the tree:
 
@@ -106,10 +106,14 @@ INDEX.md  AGENTS.md  REFS.md
 ```
 
 Only the node `.md` files are symlinks; `INDEX.md`, `AGENTS.md`, and `REFS.md`
-are regular generated files. Each node is placed by `folder` and `name`; without
-a `name` the file stem is the `title` slug. With neither, the path is
-`<ref>-<title-slug>.md`; a node without a usable title lands at `<ref>.md`.
-`--path-template` sets another route for the whole view:
+are regular generated files. `section` is the only presentation key that opens
+directories: `section: true` names the directory by the node's placement name
+(explicit `name`, else the `title` slug, else the ref), and its containment
+descendants land inside; with `title: Evolution` the node becomes
+`evolution/evolution.md`. `section: "<dir>"` names the directory verbatim.
+Otherwise a node is placed by `name` (`<name>.md`), else `<ref>-<title-slug>.md`,
+else `<ref>.md` when there is no usable title. `--path-template` sets another
+route for the whole view:
 
 ```sh
 $EDITOR "$(bd edit 3-1)"
@@ -340,9 +344,9 @@ There is no generic importer yet. The pattern is:
    version starting at `1`.
 2. `id` matches the logical id in the filename.
 3. `contains` lists ordered children as full `id-version` refs.
-4. `folder` and `name` build the path (title slug by default). With neither, the
-   path is `<ref>-<title-slug>.md`, and a node without a usable title lands at
-   `<ref>.md`. `--path-template` sets another route for the whole view.
+4. `section` opens directories; `name` sets the file stem. Without `section`,
+   the path is `<name>.md`, else `<ref>-<title-slug>.md`, else `<ref>.md` when
+   the title is unusable. `--path-template` sets another route for the whole view.
 5. `links` holds typed edges with full refs; prose citations are separate.
 
 `examples/` is a small worked project laid out this way, with its store under

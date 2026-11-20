@@ -48,10 +48,12 @@ structure, and prove the result valid. It never decides what a node should say.
   cycles are neither refused nor reported, so keep links a DAG by convention.
 - **Front matter is arbitrary** — the only built-in keys are structural (`id`,
   `legacy`, `contains`, `links`), link freshness (`to`, `type`, `propagates`,
-  `pinned`), and presentation (`folder`, `name`, `title`). Everything else is
-  yours; add no schema unless the project asks for one. Placement is `folder`
-  plus `name`, else `<ref>-<title-slug>.md`, else `<ref>.md` when the title is
-  unusable. `home` means nothing.
+  `pinned`), and presentation (`section`, `name`, `title`). Everything else is
+  yours; add no schema unless the project asks for one. `section` is the only
+  key that opens directories: `section: true` names it by the node's placement
+  name, `section: "<dir>"` verbatim. Otherwise placement is `name`, else
+  `<ref>-<title-slug>.md`, else `<ref>.md` when the title is unusable. `folder`
+  is inert ordinary front matter. `home` means nothing.
 - **Structural edits preserve bytes** — `bd` rewrites only its own block;
   unrelated fields and body text survive.
 

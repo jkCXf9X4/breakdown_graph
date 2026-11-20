@@ -36,3 +36,33 @@ def test_switch_trees_example_has_two_complete_trees():
         "7-1",
     }
     assert set(alternative.nodes) == {"1-2", "2-2", "3-2", "4-2", "5-2"}
+
+
+def test_section_placement_example_matches_the_documented_layout(tmp_path):
+    from bd_tree import api
+
+    root = EXAMPLES
+    default = load_view(root, "1-1")
+    assert default.nodes["5-1"].section == "05-limits"
+    assert default.nodes["6-1"].section == "great-stuff"
+
+    out = (tmp_path / "view").resolve()
+    api.work(root, "1-1", out)
+    paths = {
+        path.relative_to(out).as_posix()
+        for path in out.rglob("*.md")
+        if path.is_symlink()
+    }
+    assert paths == {
+        "1-1-root-alternative.md",
+        "2-1-method.md",
+        "3-1-data.md",
+        "4-1-analysis.md",
+        "05-limits/limits.md",
+        "05-limits/great-stuff/great-stuff.md",
+        "05-limits/great-stuff/7-1.md",
+    }
+    assert api.edit_path(root, "5-1", out) == out / "05-limits" / "limits.md"
+    assert api.edit_path(root, "6-1", out) == (
+        out / "05-limits" / "great-stuff" / "great-stuff.md"
+    )

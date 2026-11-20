@@ -61,9 +61,8 @@ def write_node(
     because data refs are always full refs; pass ``raw_refs=True`` to write the
     given text unchanged (for bare-ref validation tests).
 
-    Convenience: when ``layer`` is given and ``folder`` is not, derive
-    ``<layer>`` as the folder and ``<ref>`` as the name so path assertions stay
-    readable.
+    Convenience: when ``layer`` is given, set ``name`` to ``<ref>`` so path
+    assertions stay readable.
     """
     directory.mkdir(parents=True, exist_ok=True)
     ref = f"{node_id}-{version}"
@@ -73,8 +72,7 @@ def write_node(
         "summary": fields.pop("summary", "summary"),
     }
     data.update(fields)
-    if "folder" not in data and isinstance(data.get("layer"), str):
-        data["folder"] = data["layer"]
+    if isinstance(data.get("layer"), str):
         data.setdefault("name", ref)
     if meta:
         data.update(meta)

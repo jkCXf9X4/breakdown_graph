@@ -26,8 +26,7 @@ bd uncontain P C
   full refs only, and `bd new` appends the full `<newid>-1`.
 - `contain` and `uncontain` accept a bare id as a selector and resolve it in the
   selected view; they always write full refs.
-- `bd new` derives `folder` from `layer`/`group`/`type` when absent and
-  refuses an explicit `id`.
+- `bd new` refuses an explicit `id` and derives no placement fields.
 
 Containment decides what a view shows. A fact that belongs to another branch
 does not get contained "for now" — it gets its own node in its own place.

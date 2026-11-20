@@ -6,6 +6,7 @@ from bd_tree.api import (
     clone,
     delete,
     diff,
+    link,
     load,
     migrate,
     new_node,
@@ -314,22 +315,20 @@ def test_new_rejects_missing_parent(write, tmp_path):
         new_node(tmp_path, parent="9-1", fields={"layer": "intent", "title": "x"})
 
 
-def test_new_derives_folder_from_group_fields_and_renders_title_slug(
-    write, tmp_path
-):
+def test_new_does_not_derive_folder_and_renders_title_slug(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=[])
     by_type = new_node(
         tmp_path, parent="1", fields={"type": "build", "title": "Build Step"}
     )
     type_meta = parse_document(by_type.read_text(encoding="utf-8")).meta
-    assert type_meta["folder"] == "build"
+    assert "folder" not in type_meta
 
     by_group = new_node(
         tmp_path, parent="1", fields={"group": "g", "title": "Grouped"}
     )
     group_meta = parse_document(by_group.read_text(encoding="utf-8")).meta
-    assert group_meta["folder"] == "g"
+    assert "folder" not in group_meta
 
     flat = new_node(
         tmp_path, parent="1", fields={"phase": "build", "title": "Flat"}
@@ -344,7 +343,7 @@ def test_new_derives_folder_from_group_fields_and_renders_title_slug(
     )
     home_meta = parse_document(explicit_home.read_text(encoding="utf-8")).meta
     assert home_meta["home"] == "custom/here.md"
-    assert home_meta["folder"] == "build"
+    assert "folder" not in home_meta
 
     explicit_folder = new_node(
         tmp_path,
@@ -358,12 +357,28 @@ def test_new_derives_folder_from_group_fields_and_renders_title_slug(
 
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1-1", out)
-    assert (out / "build" / "build-step.md").is_file()
-    assert (out / "g" / "grouped.md").is_file()
+    assert (out / "2-1-build-step.md").is_file()
+    assert (out / "3-1-grouped.md").is_file()
     assert (out / "4-1-flat.md").is_file()
-    assert (out / "build" / "explicit-home.md").is_file()
+    assert (out / "5-1-explicit-home.md").is_file()
     assert not (out / "custom" / "here.md").exists()
-    assert (out / "picked" / "explicit-folder.md").is_file()
+    assert (out / "6-1-explicit-folder.md").is_file()
+    assert not (out / "picked").exists()
+
+
+def test_folder_front_matter_survives_a_rewrite(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2, folder="x", title="Carrier")
+    path = nodes / "2-1.md"
+    before = path.read_text(encoding="utf-8")
+    assert "folder: x" in before
+
+    link(tmp_path, "2-1", "1-1", link_type="supports")
+
+    after = path.read_text(encoding="utf-8")
+    assert "folder: x" in after
+    assert parse_document(after).meta["folder"] == "x"
 
 
 def _classic(nodes, node_id, *, contains=None, links=None, body="body\n"):

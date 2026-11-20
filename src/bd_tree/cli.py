@@ -87,9 +87,9 @@ def _add_display(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--path-template",
         default=None,
-        help="output path template: {ref} {id} {version} {folder} {name} {slug} "
-        "or any field (default: folder/name, else <ref>-<title-slug>.md, "
-        "else <ref>.md)",
+        help="output path template: {ref} {id} {version} {section} {name} {slug} "
+        "or any field (default: section dirs, else name, else "
+        "<ref>-<title-slug>.md, else <ref>.md)",
     )
     parser.add_argument(
         "--title-field",

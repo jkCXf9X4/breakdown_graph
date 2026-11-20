@@ -205,11 +205,19 @@ requested or default view. `bd views` lists containment roots, marking the store
 default with `*`. `bd edit REF` prints the absolute path of that ref inside the
 current work area and errors if the ref is not in the materialized area.
 
-Placement follows one rule: `folder`/`name`, else
-`<ref>-<title-slug>.md`, else `<ref>.md` when there is no usable title. The
-title slug is lowercase kebab-case.
-`--path-template` overrides the whole area; `{name}` and `{slug}` in a template
+`section` is the only presentation key that creates directories. A node with
+`section: true` opens a directory named by its placement name (explicit `name`,
+else the `title` slug, else the ref), and its containment descendants nest
+inside it; `section: "<dir>"` names the directory verbatim, slashes included.
+The section node's own file is `<dir>/<placement-name>.md`, and nested sections
+stack. Otherwise a node is placed by explicit `name` (`<name>.md`), else
+`<ref>-<title-slug>.md`, else `<ref>.md` when there is no usable title; the
+title slug is lowercase kebab-case. `--path-template` opts out of section
+inheritance and overrides the whole area; `{name}` and `{slug}` in a template
 are the explicit `name`, else the title slug, else the ref.
+
+`folder` is ordinary front matter: preserved, never read, and it affects no
+placement, naming, validation, or warning.
 
 Solutions:
 

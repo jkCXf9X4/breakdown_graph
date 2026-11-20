@@ -148,20 +148,25 @@ bd work 1-1                                    # restore the full closure
 bd work 1-1 --path-template '{layer}/{ref}.md'
 ```
 
-`folder` is the directory prefix and `name` the file stem; without a `name` the
-file uses the lowercase kebab-case slug of `title`, falling back to the ref.
-With neither, the path is `<ref>-<title-slug>.md`; a node without a usable title
-lands at `<ref>.md`.
-`bd new --field layer=...` derives `folder` from the first of `layer`, `group`,
-`type`:
+`section` is the only presentation key that creates directories: `section: true`
+opens a directory at the node's placement name (explicit `name`, else the `title`
+slug, else the ref) and nests its containment descendants inside; the node's own
+file is `<dir>/<placement-name>.md`. `section: "<dir>"` names the directory
+verbatim, slashes included, and nested sections stack. Otherwise `name` sets the
+file stem (`<name>.md`); without it the file is `<ref>-<title-slug>.md`, or
+`<ref>.md` when the title is unusable. `--path-template` opts out of section
+inheritance.
 
 ```yaml
-folder: claims            # 06-evolution/suggested also works
+section: claims           # opens claims/ for this node's subtree
 title: The Main Thesis    # -> claims/the-main-thesis.md
 name: custom-name         # optional override -> claims/custom-name.md
 ```
 
-`--path-template '{folder}/{name}.md'` uses the computed fields directly;
+`folder` is ordinary front matter: preserved, never read, with no effect on
+placement, naming, validation, or warnings. `bd new` no longer derives `folder`
+from `layer`, `group`, or `type`.
+`--path-template '{name}.md'` uses the computed fields directly;
 `{name}` and `{slug}` are the explicit `name`, else the title slug, else the
 ref. A template such as `'{layer}/{ref}.md'` needs `layer` on every node in the
 view.

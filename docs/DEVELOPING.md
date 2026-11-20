@@ -53,10 +53,10 @@ resolved inside the selected view (`current_ref(view, id)`).
 | `checker.py` | Structural checks, per-view tree checks, `--require`, size limits |
 | `freshness.py` | Pins, stale edges, reconcile |
 | `navigate.py` | `show`, `tree`, `find`, `path` renderers |
-| `exporter.py` | `tree`, `context`, `dot` projections, path templates, and `folder`/`name` resolution |
+| `exporter.py` | `tree`, `context`, `dot` projections, path templates, and `section`/`name` placement |
 | `work.py` | Single `<project>/bd_work/` area, `current`/`views`/`edit`, switching, `--status`, `--writeback`, git context |
 | `solutions.py` | Thin `git worktree` lifecycle wrapper |
-| `ops.py` | `init`, `new` (seeds empty `title`/`summary`, derives `folder`), `contain`, `uncontain`, `link`, `unlink`, `clone`, `replace`, `delete`, `diff`, `migrate` |
+| `ops.py` | `init`, `new` (seeds empty `title`/`summary`), `contain`, `uncontain`, `link`, `unlink`, `clone`, `replace`, `delete`, `diff`, `migrate` |
 | `api.py` | Public Python functions |
 | `cli.py` | argparse wiring and output formatting |
 
@@ -140,8 +140,11 @@ Rules:
 - Take a `View`, never a root path.
 - Return `ExportResult`.
 - Preserve arbitrary front matter.
-- Placement follows `_default_path`: `folder`/`name`, then
+- Placement follows `_default_path`: a `section` node opens a directory at its
+  own placement name and its containment descendants inherit that prefix (nested
+  sections stack); otherwise explicit `name` (`<name>.md`), then
   `<ref>-<title-slug>.md`, then `<ref>.md` when there is no usable title.
+  `--path-template` opts out of section inheritance. `folder` is not read.
 - In a path template, `{name}`/`{slug}` is the explicit `name`, else the title
   slug, else the ref.
 - Be deterministic; sort by `(id, version)` unless `contains` order is the point.
@@ -176,7 +179,7 @@ python3 -m pytest -q
 ```
 
 - `tests/conftest.py` provides `write_node`, a helper that writes arbitrary front
-  matter and derives `folder`/`name` from `layer` and the ref.
+  matter; placement uses the node's `section`/`name`/`title`.
 - Use `tmp_path` and real files. Do not mock the loader.
 - `test_examples.py` runs the project at `examples/` (store under `.bd_tree/`)
   through `bd check` and view loading, asserting both complete trees.

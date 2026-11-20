@@ -364,15 +364,6 @@ def diff(root: str | Path, left: str | int, right: str | int) -> list[DiffEntry]
 NEW_NODE_DEFAULTS: dict[str, Any] = {"title": "", "summary": ""}
 
 
-def _derive_folder(fields: dict[str, Any]) -> str | None:
-    """The first of layer/group/type, if any, as the node's ``folder``."""
-    for key in ("layer", "group", "type"):
-        value = fields.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
-
-
 def new_node(
     root: str | Path,
     *,
@@ -394,12 +385,6 @@ def new_node(
     meta: dict[str, Any] = {"id": node_id}
     meta.update(NEW_NODE_DEFAULTS)
     meta.update(fields)
-    folder = meta.get("folder")
-    has_folder = isinstance(folder, str) and bool(folder.strip())
-    if not has_folder:
-        derived = _derive_folder(fields)
-        if derived is not None:
-            meta["folder"] = derived
     if links:
         meta["links"] = links
     target = node_path(root, node_id, 1)

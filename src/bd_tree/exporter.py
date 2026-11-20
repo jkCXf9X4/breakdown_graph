@@ -8,9 +8,7 @@ here.
 
 from __future__ import annotations
 
-import re
 import shutil
-import unicodedata
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -18,7 +16,7 @@ from .checker import path_problem
 from .errors import ExportError
 from .freshness import stale_edge_list
 from .frontmatter import render_document
-from .model import ExportResult, Node, StaleEdge, View
+from .model import ExportResult, Node, StaleEdge, View, slugify
 
 Exporter = Callable[..., ExportResult]
 EXPORTERS: dict[str, Exporter] = {}
@@ -97,20 +95,9 @@ def _text(value: object) -> str:
     return "" if value is None else str(value)
 
 
-def slugify(text: str) -> str:
-    """Lowercase ASCII filename stem; non-ASCII and punctuation collapse to ``-``."""
-    normalised = unicodedata.normalize("NFKD", text).lower()
-    ascii_text = "".join(
-        char if char.isascii() else "-"
-        for char in normalised
-        if not unicodedata.combining(char)
-    )
-    return re.sub(r"[^a-z0-9]+", "-", ascii_text).strip("-")
-
-
 def _placement_name(node: Node) -> str:
     """Explicit ``name``, else the title slug, else the ref."""
-    return node.name or slugify(node.title) or node.ref
+    return node.placement_name
 
 
 def _template_fields(node: Node) -> dict[str, str]:
@@ -120,9 +107,9 @@ def _template_fields(node: Node) -> dict[str, str]:
             "ref": node.ref,
             "id": str(node.id),
             "version": str(node.version),
-            "folder": node.folder or "",
             "name": _placement_name(node),
             "slug": _placement_name(node),
+            "section": node.section or "",
         }
     )
     return fields
@@ -149,16 +136,73 @@ def render_path(node: Node, template: str) -> str:
     return _validated_path(node, path)
 
 
-def _default_path(node: Node) -> str:
-    """Placement: ``folder``/``name``, then ``<ref>-<slug>.md``, then ``<ref>.md``."""
-    if node.folder or node.name:
-        parts = [part for part in (node.folder, _placement_name(node)) if part]
+def _with_prefix(prefix: str, path: str) -> str:
+    return f"{prefix}/{path}" if prefix else path
+
+
+def _section_layout(view: View) -> tuple[dict[str, str], dict[str, str]]:
+    """Inherited section prefix and containment parent for each reachable ref.
+
+    Mirrors :func:`bd_tree.loader.load_view`: walk declared ``contains`` from the
+    view root, restricted to the refs in ``view.nodes``.  A section node's
+    directory applies to its descendants only; nested sections stack.  A ref
+    unreachable from the root gets no prefix.
+    """
+    prefixes: dict[str, str] = {}
+    parents: dict[str, str] = {}
+    seen: set[str] = set()
+
+    def walk(ref: str, prefix: str, parent: str) -> None:
+        if ref in seen or ref not in view.nodes:
+            return
+        seen.add(ref)
+        prefixes[ref] = prefix
+        parents[ref] = parent
+        section = view.nodes[ref].section
+        child_prefix = _with_prefix(prefix, section) if section else prefix
+        for child in view.store.effective_contains(ref):
+            walk(child, child_prefix, ref)
+
+    walk(view.ref, "", "")
+    return prefixes, parents
+
+
+def _check_section_dirs(view: View, parents: dict[str, str]) -> None:
+    """Two sibling sections sharing one directory would merge silently."""
+    used: dict[tuple[str, str], str] = {}
+    for ref in sorted(
+        view.nodes, key=lambda r: (view.nodes[r].id, view.nodes[r].version)
+    ):
+        section = view.nodes[ref].section
+        if not section or ref not in parents:
+            continue
+        key = (parents[ref], section)
+        previous = used.get(key)
+        if previous is not None:
+            raise ExportError(
+                f"sections {previous} and {ref} both use directory '{section}'"
+            )
+        used[key] = ref
+
+
+def _default_path(node: Node, prefix: str = "") -> str:
+    """Placement under any inherited ``prefix``.
+
+    A section node opens ``<prefix>/<section>/`` and its own file sits there by
+    placement name.  Every other node uses its ``name`` as the stem, else
+    ``<ref>-<title-slug>.md``, else ``<ref>.md``.  ``folder`` is ordinary front
+    matter and never affects placement.
+    """
+    if node.section:
+        parts = [part for part in (prefix, node.section, _placement_name(node)) if part]
         return _validated_path(node, "/".join(parts) + ".md")
+    if node.name:
+        return _validated_path(node, _with_prefix(prefix, f"{node.name}.md"))
     slug = slugify(node.title)
     # ``Node.title`` falls back to the ref, so an equal slug is not a title.
     if slug and slug != node.ref:
-        return _validated_path(node, f"{node.ref}-{slug}.md")
-    return _validated_path(node, f"{node.ref}.md")
+        return _validated_path(node, _with_prefix(prefix, f"{node.ref}-{slug}.md"))
+    return _validated_path(node, _with_prefix(prefix, f"{node.ref}.md"))
 
 
 def _build_paths(
@@ -170,9 +214,17 @@ def _build_paths(
 ) -> dict[str, str]:
     paths: dict[str, str] = {}
     used: dict[str, str] = {}
+    if template is None:
+        prefixes, parents = _section_layout(view)
+        _check_section_dirs(view, parents)
+    else:
+        prefixes = {}
     for ref in refs:
         node = view.nodes[ref]
-        path = render_path(node, template) if template else _default_path(node)
+        if template is None:
+            path = _default_path(node, prefixes.get(ref, ""))
+        else:
+            path = render_path(node, template)
         if path in reserved:
             raise ExportError(f"node {ref} path collides with generated '{path}'")
         previous = used.get(path)

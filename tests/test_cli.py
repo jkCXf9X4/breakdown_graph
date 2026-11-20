@@ -13,7 +13,7 @@ def test_check_exit_status(write, tmp_path):
 
 
 def test_export_tree_writes_view_output_shape(write, tmp_path):
-    write(tmp_path / "nodes", 1, title="Root", layer="intent")
+    write(tmp_path / "nodes", 1, title="Root", layer="intent", section="intent")
     out = tmp_path / "out"
     assert (
         main(["export", "tree", "1", "--root", str(tmp_path), "--out", str(out), "--clean"])
@@ -175,8 +175,8 @@ def test_check_require_flag_and_view_path_template(write, tmp_path):
 
 
 def test_current_views_and_edit_cli(write, tmp_path, capsys):
-    write(tmp_path / "nodes", 1, contains=["2-1"], layer="intent")
-    write(tmp_path / "nodes", 2, layer="claims")
+    write(tmp_path / "nodes", 1, contains=["2-1"], layer="intent", name="intent/1-1")
+    write(tmp_path / "nodes", 2, layer="claims", name="claims/2-1")
     assert main(["work", "1-1", "--root", str(tmp_path)]) == 0
     capsys.readouterr()
 
@@ -310,9 +310,9 @@ def test_work_depth_suffix_reports_and_current_shows_it(write, tmp_path, capsys)
 
 def test_work_depth_option_overrides_a_suffix(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2-1"], layer="intent")
-    write(nodes, 2, contains=["3-1"], layer="claims")
-    write(nodes, 3, layer="evidence")
+    write(nodes, 1, contains=["2-1"], layer="intent", name="intent/1-1")
+    write(nodes, 2, contains=["3-1"], layer="claims", name="claims/2-1")
+    write(nodes, 3, layer="evidence", name="evidence/3-1")
     out = tmp_path / "bd_work"
 
     assert main(["work", "1-1+0", "--depth", "1", "--root", str(tmp_path)]) == 0
@@ -342,9 +342,9 @@ def test_work_malformed_depth_suffix_exits_2(write, tmp_path, capsys):
 
 def test_edit_respects_materialized_depth(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2-1"], layer="intent")
-    write(nodes, 2, contains=["3-1"], layer="claims")
-    write(nodes, 3, layer="evidence")
+    write(nodes, 1, contains=["2-1"], layer="intent", name="intent/1-1")
+    write(nodes, 2, contains=["3-1"], layer="claims", name="claims/2-1")
+    write(nodes, 3, layer="evidence", name="evidence/3-1")
 
     assert main(["work", "1-1+1", "--root", str(tmp_path)]) == 0
     capsys.readouterr()
@@ -354,3 +354,16 @@ def test_edit_respects_materialized_depth(write, tmp_path, capsys):
 
     assert main(["edit", "3-1", "--root", str(tmp_path)]) == 2
     assert "current view 1-1+1" in capsys.readouterr().err
+
+
+def test_edit_prints_a_nested_section_path(write, tmp_path, capsys):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2-1"], section="06-evolution", title="Root")
+    write(nodes, 2, section="claims", name="idea")
+
+    assert main(["work", "1-1", "--root", str(tmp_path)]) == 0
+    capsys.readouterr()
+
+    assert main(["edit", "2-1", "--root", str(tmp_path)]) == 0
+    expected = tmp_path / "bd_work" / "06-evolution" / "claims" / "idea.md"
+    assert capsys.readouterr().out == f"{expected}\n"

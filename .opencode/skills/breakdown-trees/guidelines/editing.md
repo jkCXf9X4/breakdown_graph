@@ -22,8 +22,8 @@ levels are materialized (`N=0` leaves the root alone). `bd edit` honors that
 prefix, so a ref in the full closure but below the materialized depth is
 refused. A bare id such as `bd edit 5` is a selector resolved in the active
 view; the path returned is the placement path (for example
-`bd_work/5-1-<title-slug>.md`, or `folder/name` when the node sets them), not a
-file named only by the ref.
+`bd_work/5-1-<title-slug>.md`, or a `section`/`name` path when the node sets
+them), not a file named only by the ref.
 
 `bd current --path` prints the directory without building anything;
 `bd work REF --clean` discards detached files while switching.

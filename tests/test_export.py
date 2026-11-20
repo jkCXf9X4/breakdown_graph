@@ -9,7 +9,7 @@ from bd_tree.errors import ExportError
 def test_tree_view_writes_nodes_and_one_index(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"], title="Root intent")
-    write(nodes, 2, type="claim", layer="claims", title="Thesis")
+    write(nodes, 2, type="claim", layer="claims", section="claims", title="Thesis")
     out = tmp_path / "tree"
     result = export_view("tree", tmp_path, "1-1", out)
     assert result.nodes == 2
@@ -41,13 +41,13 @@ def test_version_view_exports_only_that_closure(write, tmp_path):
     write(nodes, 1, contains=["2"])
     write(nodes, 2, contains=["3"])
     write(nodes, 3)
-    write(nodes, 3, version=1, folder="evidence", name="three-v1")
-    write(nodes, 2, version=1, contains=["3-1"], folder="claims", name="two-v1")
+    write(nodes, 3, version=1, section="evidence", name="three-v1")
+    write(nodes, 2, version=1, contains=["3-1"], section="claims", name="two-v1")
     out = tmp_path / "view"
     result = export_view("tree", tmp_path, "2-1", out)
     assert result.nodes == 2
     assert (out / "claims" / "two-v1.md").is_file()
-    assert (out / "evidence" / "three-v1.md").is_file()
+    assert (out / "claims" / "evidence" / "three-v1.md").is_file()
     assert not (out / "claims" / "two.md").exists()
 
 
@@ -129,8 +129,8 @@ def test_generic_store_without_layer_type_or_placement(write, tmp_path):
 
 def test_default_path_adds_the_title_slug_to_the_ref(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2"], layer="intent")
-    write(nodes, 2, title="Some Method (Draft)")  # no folder/name
+    write(nodes, 1, contains=["2"], layer="intent", name="intent/1-1")
+    write(nodes, 2, title="Some Method (Draft)")  # no name
     out = tmp_path / "fallback"
     export_view("tree", tmp_path, "1-1", out)
     assert (out / "intent" / "1-1.md").is_file()
@@ -161,20 +161,20 @@ def test_default_path_falls_back_to_ref_without_a_usable_title(write, tmp_path):
     assert not (out / "3-1-.md").exists()
 
 
-def test_folder_and_title_slug_build_the_default_path(write, tmp_path):
+def test_section_and_title_slug_build_the_default_path(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2"], folder="claims", title="The Main Thesis")
-    write(nodes, 2, folder="06-evolution/suggested", title="Café: An Idea!")
+    write(nodes, 1, contains=["2"], section="claims", title="The Main Thesis")
+    write(nodes, 2, section="06-evolution/suggested", title="Café: An Idea!")
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1-1", out)
     assert (out / "claims" / "the-main-thesis.md").is_file()
-    assert (out / "06-evolution" / "suggested" / "cafe-an-idea.md").is_file()
+    assert (out / "claims" / "06-evolution" / "suggested" / "cafe-an-idea.md").is_file()
 
 
 def test_name_overrides_the_title_for_the_file_stem(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"], title="Root")
-    write(nodes, 2, folder="claims", name="custom-name", title="Ignored")
+    write(nodes, 2, section="claims", name="custom-name", title="Ignored")
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1-1", out)
     assert (out / "claims" / "custom-name.md").is_file()
@@ -190,14 +190,14 @@ def test_name_only_places_the_node_flat(write, tmp_path):
     assert (out / "flat-name.md").is_file()
 
 
-def test_folder_and_name_win_over_home(write, tmp_path):
+def test_section_and_name_win_over_home(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"], title="Root")
     write(
         nodes,
         2,
         home="explicit/home.md",
-        folder="claims",
+        section="claims",
         name="custom",
         title="Ignored",
     )
@@ -209,9 +209,9 @@ def test_folder_and_name_win_over_home(write, tmp_path):
 
 def test_slug_falls_back_to_ref_when_title_has_no_slug(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2", "3"])
-    write(nodes, 2, folder="odd", title="!!!")
-    write(nodes, 3, folder="odd", title="")
+    write(nodes, 1, contains=["2", "3"], section="odd")
+    write(nodes, 2, title="!!!")
+    write(nodes, 3, title="")
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1-1", out)
     assert (out / "odd" / "2-1.md").is_file()
@@ -228,11 +228,11 @@ def test_folder_and_name_are_available_as_template_fields(write, tmp_path):
     assert (out / "claims" / "deep-claim.md").is_file()
 
 
-def test_folder_paths_are_checked_for_duplicates(write, tmp_path):
+def test_duplicate_flat_paths_are_checked(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2", "3"])
-    write(nodes, 2, folder="claims", title="Same")
-    write(nodes, 3, folder="claims", title="Same")
+    write(nodes, 2, name="same", title="Same")
+    write(nodes, 3, name="same", title="Same")
     out = tmp_path / "view"
     with pytest.raises(ExportError, match="both resolve"):
         export_view("tree", tmp_path, "1-1", out)
@@ -251,10 +251,21 @@ def test_home_is_inert_and_the_title_slug_places_the_node(write, tmp_path):
     assert "[Some Method](2-1-some-method.md)" in index
 
 
+def test_folder_is_inert_and_the_title_slug_places_the_node(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], title="Root")
+    write(nodes, 2, folder="x", title="Some Method")
+    out = tmp_path / "view"
+    result = export_view("tree", tmp_path, "1-1", out)
+    assert result.nodes == 2
+    assert (out / "2-1-some-method.md").is_file()
+    assert not (out / "x").exists()
+
+
 def test_prefix_collision_is_refused(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2"], folder="a", name="b")
-    write(nodes, 2, folder="a/b.md", name="c")
+    write(nodes, 1, contains=["2"], name="a/b")
+    write(nodes, 2, section="a/b.md", name="c")
     out = tmp_path / "tree"
     with pytest.raises(ExportError) as caught:
         export_view("tree", tmp_path, "1-1", out)
@@ -281,3 +292,108 @@ def test_dot_color_and_shape_by_arbitrary_fields(write, tmp_path):
     # same phase -> same stable colour
     assert colours[1] == colours[2]
     assert colours[0] != colours[1]
+
+
+def test_section_true_uses_the_title_slug_as_directory(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], section=True, title="Evolution")
+    write(nodes, 2, title="New Idea")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1-1", out)
+    assert (out / "evolution" / "evolution.md").is_file()
+    assert (out / "evolution" / "2-1-new-idea.md").is_file()
+    index = (out / "INDEX.md").read_text(encoding="utf-8")
+    assert "[Evolution](evolution/evolution.md)" in index
+    assert "[New Idea](evolution/2-1-new-idea.md)" in index
+
+
+def test_section_string_sets_the_directory_verbatim(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], section="06-evolution", title="Root")
+    write(nodes, 2, section="claims", name="idea")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1-1", out)
+    assert (out / "06-evolution" / "root.md").is_file()
+    assert (out / "06-evolution" / "claims" / "idea.md").is_file()
+
+
+def test_nested_sections_stack_their_directories(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], section=True, title="Alpha")
+    write(nodes, 2, contains=["3"], section=True, title="Beta")
+    write(nodes, 3, title="Leaf")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1-1", out)
+    assert (out / "alpha" / "alpha.md").is_file()
+    assert (out / "alpha" / "beta" / "beta.md").is_file()
+    assert (out / "alpha" / "beta" / "3-1-leaf.md").is_file()
+
+
+def test_sections_coexist_with_unchanged_placement(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3", "4", "5"], title="Root")
+    write(nodes, 2, contains=["6"], section=True, title="Section")
+    write(nodes, 3, section="claims", name="named")
+    write(nodes, 4, name="flat")
+    write(nodes, 5, title="Titled")
+    write(nodes, 6, title="Inside")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1-1", out)
+    assert (out / "1-1-root.md").is_file()
+    assert (out / "section" / "section.md").is_file()
+    assert (out / "section" / "6-1-inside.md").is_file()
+    assert (out / "claims" / "named.md").is_file()
+    assert (out / "flat.md").is_file()
+    assert (out / "5-1-titled.md").is_file()
+
+
+@pytest.mark.parametrize("value", [False, "", None, 0, [], {}])
+def test_non_section_values_are_ignored(write, tmp_path, value):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2, section=value, title="Plain")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1-1", out)
+    assert (out / "2-1-plain.md").is_file()
+    assert not (out / "plain").exists()
+
+
+def test_two_sibling_sections_with_the_same_directory_are_refused(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3"])
+    write(nodes, 2, section="same", title="One")
+    write(nodes, 3, section="same", title="Two")
+    out = tmp_path / "view"
+    with pytest.raises(ExportError, match="directory 'same'"):
+        export_view("tree", tmp_path, "1-1", out)
+
+
+def test_section_directory_colliding_with_a_file_path_is_refused(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3"])
+    write(nodes, 2, section="claims", name="2-1")
+    write(nodes, 3, section="claims/2-1.md", title="Clash")
+    out = tmp_path / "view"
+    with pytest.raises(ExportError, match="conflicting paths"):
+        export_view("tree", tmp_path, "1-1", out)
+
+
+def test_path_template_disables_section_inheritance(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], section=True, title="Section")
+    write(nodes, 2, name="child")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1-1", out, path_template="{ref}.md")
+    assert (out / "1-1.md").is_file()
+    assert (out / "2-1.md").is_file()
+    assert not (out / "section").exists()
+
+
+def test_section_is_available_as_a_template_field(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], section="dir", title="Root")
+    write(nodes, 2, section="child-dir", title="Child")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1-1", out, path_template="{section}/{ref}.md")
+    assert (out / "dir" / "1-1.md").is_file()
+    assert (out / "child-dir" / "2-1.md").is_file()

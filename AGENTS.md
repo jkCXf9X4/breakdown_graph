@@ -59,10 +59,14 @@ behaviour change and update the docs listed at the bottom.
   type from the target node's `type`.
 - Front matter is arbitrary; only the identity/containment/link/freshness keys
   (`id`, `legacy`, `contains`, `links`, `to`, `type`, `propagates`, `pinned`)
-  are reserved. `folder`, `name`, and `title` are presentation fields: work and
-  export paths use `<ref>-<title-slug>.md`, or `folder`/`name` when given.
-  `home` has no meaning; it is ordinary front matter. Add no schema unless a
-  project asks for one.
+  are reserved. `section`, `name`, and `title` are presentation fields: work and
+  export paths use `section` to open directories, else `<name>.md`, else
+  `<ref>-<title-slug>.md`, else `<ref>.md`. `section: true` names the directory
+  by the node's placement name; `section: "<dir>"` names it verbatim.
+  Presentation only: it changes no identity or validation, so it adds no schema.
+  `folder` is ordinary metadata with no effect on placement, naming, or
+  validation. `home` has no meaning; it is ordinary front matter. Add no schema
+  unless a project asks for one.
 - Git owns the solution boundary: one branch/worktree per solution. The flat store
   is the merge unit; `bd work` is a layout inside one checkout, never a branch
   mechanism.

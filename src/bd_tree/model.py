@@ -6,19 +6,32 @@ nodes it reaches through declared ``contains`` lists.  The containment chain
 from the view root is the only record of which version is current.
 
 The model is deliberately schema-agnostic: ``id``, ``legacy``, ``contains`` and
-``links`` are structural; ``folder``, ``name`` and ``title`` are presentation
-fields exposed as properties.  Every other front-matter key is user metadata and
-is carried in ``Node.meta`` untouched.
+``links`` are structural; ``name``, ``title`` and ``section`` are presentation
+fields exposed as properties.  Every other front-matter key (including
+``folder``) is user metadata and is carried in ``Node.meta`` untouched.
 """
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .errors import BreakdownError
 from .frontmatter import body_hash
+
+
+def slugify(text: str) -> str:
+    """Lowercase ASCII filename stem; non-ASCII and punctuation collapse to ``-``."""
+    normalised = unicodedata.normalize("NFKD", text).lower()
+    ascii_text = "".join(
+        char if char.isascii() else "-"
+        for char in normalised
+        if not unicodedata.combining(char)
+    )
+    return re.sub(r"[^a-z0-9]+", "-", ascii_text).strip("-")
 
 
 @dataclass
@@ -65,13 +78,6 @@ class Node:
         return len(self.body)
 
     @property
-    def folder(self) -> str | None:
-        value = self.meta.get("folder")
-        if isinstance(value, str) and value.strip():
-            return value
-        return None
-
-    @property
     def name(self) -> str | None:
         value = self.meta.get("name")
         if isinstance(value, str) and value.strip():
@@ -82,6 +88,26 @@ class Node:
     def title(self) -> str:
         value = self.meta.get("title")
         return str(value) if value not in (None, "") else self.ref
+
+    @property
+    def placement_name(self) -> str:
+        """Explicit ``name``, else the title slug, else the ref."""
+        return self.name or slugify(self.title) or self.ref
+
+    @property
+    def section(self) -> str | None:
+        """Directory this node opens for its containment descendants.
+
+        ``section: true`` uses the node's own placement name; a non-empty string
+        is used verbatim.  Any other value (``false``, ``null``, ``0``, ``""``,
+        a list) means the node is not a section.
+        """
+        value = self.meta.get("section")
+        if value is True:
+            return self.placement_name
+        if isinstance(value, str) and value.strip():
+            return value
+        return None
 
     @property
     def summary(self) -> str:
