@@ -3,6 +3,9 @@
 Everything here is a pure projection of an already loaded :class:`~.model.Store`.
 Containment order is the order of ``store.effective_contains(ref)``; cycles are
 broken with a seen-set, and every walk is bounded by the requested depth.
+
+Bare ids are CLI selectors, never refs: :func:`resolve_ref` maps ``5`` to the
+version of id 5 that the chosen view contains.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .errors import BreakdownError
-from .loader import load_view, parse_ref, ref_of
+from .loader import load_view, parse_selector
 from .model import Node, Store
 
 # Front-matter keys that drive the model or are displayed separately.
@@ -39,7 +42,11 @@ class RefDepth:
 
 
 def parse_ref_depth(text: str, override: int | None = None) -> RefDepth:
-    """Split ``5-1+2`` on the last ``+``; ``override`` wins over the suffix."""
+    """Split ``5-1+2`` on the last ``+``; ``override`` wins over the suffix.
+
+    The ref part may be a bare selector; :func:`resolve_ref` turns it into a
+    full ref once the view is known.
+    """
     ref_text = str(text).strip()
     depth: int | None = None
     if "+" in ref_text:
@@ -52,22 +59,51 @@ def parse_ref_depth(text: str, override: int | None = None) -> RefDepth:
     if not ref_text:
         raise NavigationError(f"invalid ref {text!r}")
     try:
-        canonical = ref_of(*parse_ref(ref_text))
+        parse_selector(ref_text)
     except ValueError as exc:
         raise NavigationError(f"invalid ref {text!r}") from exc
     if override is not None:
         depth = override
     if depth is not None and depth < 0:
         raise NavigationError(f"invalid depth {depth} (must be non-negative)")
-    return RefDepth(canonical, depth)
+    return RefDepth(ref_text, depth)
 
 
-def main_root(store: Store) -> str:
-    """Declared ``ROOT``, else the lowest main ref."""
+def default_root(store: Store) -> str:
+    """Declared ``ROOT``, else the lowest node by ``(id, version)``."""
     ref = store.root_ref
     if ref is None:
-        raise NavigationError("store has no main nodes")
+        raise NavigationError("store has no nodes")
     return ref
+
+
+def current_ref(store: Store, node_id: int, view_ref: str | None = None) -> str | None:
+    """The ref of ``node_id`` in ``view_ref`` (default: the store view)."""
+    view = load_view(store, view_ref if view_ref is not None else default_root(store))
+    return view.current_ref(node_id)
+
+
+def resolve_ref(
+    store: Store, text: str | int, *, view_ref: str | None = None
+) -> str:
+    """Resolve a CLI selector to a full ref.
+
+    A full ref is returned unchanged and is never re-resolved.  A bare id is
+    looked up in ``view_ref`` (default: the store's default view); failure
+    raises :class:`NavigationError` naming the id and the view searched.
+    """
+    raw = str(text).strip()
+    try:
+        node_id, version = parse_selector(raw)
+    except ValueError as exc:
+        raise NavigationError(f"invalid ref {text!r}") from exc
+    if version is not None:
+        return f"{node_id}-{version}"
+    view = view_ref if view_ref is not None else default_root(store)
+    resolved = current_ref(store, node_id, view)
+    if resolved is None:
+        raise NavigationError(f"id {node_id} is not in view {view}")
+    return resolved
 
 
 def get_node(store: Store, ref: str) -> Node:
@@ -82,15 +118,10 @@ def view_roots(store: Store) -> list[Node]:
     return store.containment_roots()
 
 
-def _base_ref(node: Node) -> str:
-    return node.ref if node.is_main else str(node.id)
-
-
 def ancestor_chain(store: Store, ref: str, root: str | None = None) -> list[str]:
-    """Refs from the main root down to ``ref`` (versions append their file)."""
-    node = get_node(store, ref)
-    target = _base_ref(node)
-    start = root or main_root(store)
+    """Refs from the store root down to ``ref``."""
+    target = get_node(store, ref).ref
+    start = root or default_root(store)
     path: list[str] = []
     seen: set[str] = set()
 
@@ -107,11 +138,8 @@ def ancestor_chain(store: Store, ref: str, root: str | None = None) -> list[str]
         path.pop()
         return False
 
-    found = walk(start)
-    if not found:
+    if not walk(start):
         path = [target]
-    if node.version != 0 and (not path or path[-1] != node.ref):
-        path.append(node.ref)
     return path
 
 
@@ -421,7 +449,7 @@ def render_find(
     if all_nodes:
         nodes: Iterable[Node] = store.nodes.values()
     else:
-        ref = view if view is not None else main_root(store)
+        ref = resolve_ref(store, view) if view is not None else default_root(store)
         get_node(store, ref)
         nodes = load_view(store, ref).nodes.values()
     blocks: list[str] = []

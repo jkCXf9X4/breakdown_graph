@@ -1,10 +1,9 @@
 """Structural validation over the full store and its containment views.
 
 Only structure is checked: filename grammar, id/filename agreement, duplicate
-refs, missing mains, containment targets and cycles, per-view tree shape,
-reachability, dangling links and size.  Front-matter
-fields, link types and layers are never validated unless asked for with
-``require``.
+refs, ref syntax in data, containment targets and cycles, per-view tree shape,
+reachability, dangling links and size.  Front-matter fields, link types and
+layers are never validated unless asked for with ``require``.
 """
 
 from __future__ import annotations
@@ -12,8 +11,15 @@ from __future__ import annotations
 from pathlib import Path, PurePosixPath
 
 from .errors import BreakdownError
-from .loader import load, load_view, parse_ref, ref_of
+from .loader import (
+    is_full_ref,
+    load,
+    load_view,
+    parse_selector,
+    ref_of,
+)
 from .model import CheckResult, Issue, Node, Store, View
+from .navigate import current_ref
 
 SIZE_LINES = 120
 SIZE_CHARS = 8000
@@ -68,15 +74,18 @@ def _sort_key(node: Node) -> tuple[int, int]:
 
 
 def default_root_ref(store: Store) -> str:
-    """Declared ``ROOT``, else the lowest main ref; ``1`` when empty."""
-    return store.root_ref or "1"
+    """Declared ``ROOT``, else the lowest ``(id, version)``; ``1-1`` when empty."""
+    return store.root_ref or "1-1"
 
 
 def _check_targets_and_cycles(store: Store, issues: list[Issue]) -> None:
     adjacency: dict[str, list[str]] = {}
     for node in store.nodes.values():
         targets: list[str] = []
-        for child in node.contains or []:
+        for child in node.contains:
+            if not is_full_ref(child):
+                # The loader already reported this as bare-ref / invalid-ref.
+                continue
             if child not in store.nodes:
                 issues.append(
                     Issue(
@@ -104,12 +113,11 @@ def _check_targets_and_cycles(store: Store, issues: list[Issue]) -> None:
 
 
 def _check_reachability(store: Store, root_ref: str, issues: list[Issue]) -> None:
-    """Every file connected to the root through containment, shared id or link.
+    """Every logical id connected to the root through containment or a link.
 
-    A main and its versions are alternatives for one logical node, so reaching
-    any of them reaches the others and the closures beneath them.  An outgoing
-    link from a reached node is a reachability edge too.  A ref with no such
-    path is an orphan and is reported.
+    Reachability is per logical id: once an id appears in the root closure, all
+    of its versions are normal alternatives and none is reported.  An id with no
+    such path is an orphan and is reported as a warning.
     """
     if root_ref not in store.nodes:
         issues.append(
@@ -122,34 +130,33 @@ def _check_reachability(store: Store, root_ref: str, issues: list[Issue]) -> Non
         )
         return
 
-    by_id: dict[int, list[str]] = {}
-    for ref, node in store.nodes.items():
-        by_id.setdefault(node.id, []).append(ref)
-
-    reachable: set[str] = set()
+    reachable_ids: set[int] = set()
+    seen: set[str] = set()
     queue = [root_ref]
     while queue:
         ref = queue.pop()
-        if ref in reachable:
+        if not is_full_ref(ref) or ref in seen:
             continue
         reached = store.nodes.get(ref)
         if reached is None:
             continue
-        reachable.add(ref)
-        queue.extend(store.effective_contains(ref))
-        queue.extend(peer for peer in by_id[reached.id] if peer != ref)
-        queue.extend(link.to for link in reached.links)
+        seen.add(ref)
+        reachable_ids.add(reached.id)
+        queue.extend(child for child in reached.contains if is_full_ref(child))
+        queue.extend(
+            link.to for link in reached.links if is_full_ref(link.to)
+        )
 
     for ref in sorted(store.nodes, key=lambda r: _sort_key(store.nodes[r])):
-        if ref in reachable:
-            continue
         node = store.nodes[ref]
+        if node.id in reachable_ids:
+            continue
         issues.append(
             Issue(
-                "error",
-                "unreachable",
+                "warning",
+                "unreachable-node",
                 f"node '{ref}' is not reachable from root {root_ref} through "
-                "containment, another file of the same id, or a link",
+                "containment or a link",
                 node=ref,
                 path=str(node.path.relative_to(store.root)),
             )
@@ -160,7 +167,30 @@ def _check_view_trees(store: Store, issues: list[Issue]) -> None:
     """Tree shape per view: one parent per node, no cycles, no lost targets."""
     seen: set[tuple[str, str]] = set()
     for ref in sorted(store.nodes, key=lambda r: _sort_key(store.nodes[r])):
-        resolved = load_view(store, ref)
+        try:
+            resolved = load_view(store, ref)
+        except BreakdownError:
+            # Bare data refs are reported by the store scan; a view cannot walk.
+            continue
+        by_id: dict[int, list[str]] = {}
+        for node_ref, node in resolved.nodes.items():
+            by_id.setdefault(node.id, []).append(node_ref)
+        for node_id, refs in by_id.items():
+            if len(refs) < 2:
+                continue
+            key = ("duplicate-id", ",".join(sorted(refs)))
+            if key in seen:
+                continue
+            seen.add(key)
+            issues.append(
+                Issue(
+                    "error",
+                    "duplicate-id",
+                    f"view {resolved.ref} contains multiple versions of id "
+                    f"{node_id}: " + ", ".join(sorted(refs)),
+                    node=sorted(refs)[0],
+                )
+            )
         for issue in resolved.issues:
             if issue.code not in (
                 "multiple-parents",
@@ -269,17 +299,33 @@ def check(
             Issue("error", "root", str(exc))
         ])
 
+    def _resolve(value: str | int) -> tuple[str | None, Issue | None]:
+        """Resolve a full ref or a bare selector through the default view."""
+        try:
+            node_id, version = parse_selector(value)
+        except ValueError:
+            return None, Issue("error", "invalid-ref", f"invalid ref {value!r}")
+        if version is not None:
+            return ref_of(node_id, version), None
+        try:
+            found = current_ref(store, node_id)
+        except BreakdownError as exc:
+            return None, Issue("error", "bare-ref", str(exc))
+        if found is None:
+            return None, Issue(
+                "error",
+                "invalid-ref",
+                f"id {node_id} is not in view {default_root_ref(store)}",
+            )
+        return found, None
+
     if root_ref is None:
         canonical_root = default_root_ref(store)
     else:
-        try:
-            canonical_root = ref_of(*parse_ref(root_ref))
-        except ValueError:
+        canonical_root, problem = _resolve(root_ref)
+        if canonical_root is None:
             return CheckResult(
-                root_path,
-                str(root_ref),
-                0,
-                [Issue("error", "invalid-ref", f"invalid root ref {root_ref!r}")],
+                root_path, str(root_ref), 0, [problem] if problem else []
             )
 
     issues: list[Issue] = list(store.issues)
@@ -287,7 +333,21 @@ def check(
     _check_reachability(store, canonical_root, issues)
     _check_view_trees(store, issues)
 
-    resolved = load_view(store, view if view is not None else canonical_root)
+    selected = canonical_root
+    if view is not None:
+        selected, problem = _resolve(view)
+        if selected is None:
+            if problem is not None:
+                issues.append(problem)
+            issues = _dedupe(issues)
+            issues.sort(key=lambda i: (i.level != "error", i.node or "", i.code, i.message))
+            return CheckResult(root_path, str(view), 0, issues)
+    try:
+        resolved = load_view(store, selected)
+    except BreakdownError as exc:
+        # Already reported by the store scan; report once more with the ref.
+        issues.append(Issue("error", "bare-ref", str(exc)))
+        resolved = View(store=store, ref=str(selected), nodes={}, edges=[], issues=[])
     issues.extend(resolved.issues)
     _check_freshness(resolved, issues)
     _check_sizes(

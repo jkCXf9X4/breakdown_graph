@@ -3,9 +3,9 @@
 A flat markdown store for layered project information, with a git solution
 boundary, typed dependency edges, and a single custom symlink work area.
 
-- **Store** — one markdown file per node, keyed by a running integer.
-- **Structure** — an ordered `contains` list defines the tree; paths do not.
-- **Root** — an optional `ROOT` file names the default view root in one ref line.
+- **Store** — one markdown file per node version, keyed by `<id>-<version>`.
+- **Structure** — an ordered `contains` list of full refs defines the tree; paths do not.
+- **Root** — an optional `ROOT` file names the default view root in one full ref.
 - **Solutions** — git branches and worktrees.
 - **Layout** — `bd work` renders one view as symlinks into the store, in a
   single `<project>/bd_work/` area; `bd current` reports which view is there.
@@ -20,26 +20,30 @@ These are deliberately separate:
 
 - **Solution boundary: git.** A branch and worktree hold one solution. Git decides
   when it is merged or discarded.
-- **Merge unit: the flat `nodes/` store.** One file per node keeps a conflict
-  local to the node that changed.
+- **Merge unit: the flat `nodes/` store.** One file per node version keeps a
+  conflict local to the version that changed.
 - **Layout: `bd work`.** One writable symlink area at `<project>/bd_work/`;
   `bd work REF` switches its contents to another view. Read-only `bd export`
   projections (tree, context, dot) may be many and are disposable; none is a
   copy.
-- **Versions are not a third axis.** `5-1` is an alternative file for node `5`
-  inside the checked-out branch. Versions give no isolation and never cross a
-  branch; git still owns every branch decision.
+- **Versions are not a third axis.** Every node file is `<id>-<version>.md`;
+  `5-1` and `5-2` are peer alternatives for logical node `5` inside the
+  checked-out branch. Versions give no isolation and never cross a branch; git
+  still owns every branch decision.
   [The full separation](docs/BRANCHES-AND-VERSIONS.md).
 
-A store-level `ROOT` file names one default view root (`bd root 1-4`), so
+A store-level `ROOT` file names one default view root (`bd root 1-1`), so
 `tree`, `find`, `work`, `check`, `stale`, and `reconcile` follow it without an
 argument. An explicit ref wins where a command takes one; with no `ROOT`, the
-lowest main ref is the root. `bd check --view REF` only narrows reporting. The
-default root and the view in the work area are separate:
-`bd root REF` changes the default used by commands, while `bd work REF` replaces
-the contents of `<project>/bd_work/`; the area keeps its view until you run
-`bd work` again. `bd promote` only copies one version onto main; it is not a
-switch.
+lowest `(id, version)` is the root. `bd check --view REF` only narrows reporting.
+The default root and the view in the work area are separate: `bd root REF`
+changes the default used by commands, while `bd work REF` replaces the contents
+of `<project>/bd_work/`; the area keeps its view until you run `bd work` again.
+
+A ref in data is always the full `id-version` (`5-1`, not `5`); `contains`,
+`links`, and `ROOT` never hold a bare id. At the command line a bare id is a
+selector: `bd show 5` resolves `5` to the version present in the selected view
+and never writes the short form into data.
 
 Git answers what changed. `contains` and `links` answer what belongs and what
 depends. Pins answer whether it still holds.
@@ -70,25 +74,25 @@ not edit it unless you mean to change the example.
 export BD_ROOT=examples
 
 bd check                       # clean, two complete trees
-bd tree 1 --depth 1            # the main tree
-bd tree 1-1                    # the alternative tree
-bd show 1+1 --max-chars 300    # body plus one level
-bd tree 1 --columns ref,title,summary  # children as a table
+bd tree 1-1 --depth 1          # the default tree named by ROOT
+bd tree 1-2                    # the other tree over the same ids
+bd show 1-1+1 --max-chars 300  # body plus one level
+bd tree 1-1 --columns ref,title,summary  # children as a table
 bd find Method --limit 3
-bd path 3                      # ancestor chain to a leaf
+bd path 3-1                    # ancestor chain to a leaf
 ```
 
 Then open the work area:
 
 ```sh
-bd work 1                      # write <project>/bd_work for view 1
-bd current                     # <project>/bd_work (view 1)
+bd work 1-1                    # write <project>/bd_work for view 1-1
+bd current                     # <project>/bd_work (view 1-1)
 cd "$(bd current --path)"      # print only the path, for cd
 # node .md files here are symlinks; editing one edits .bd_tree/nodes/<ref>.md
 # INDEX.md, AGENTS.md, and REFS.md are regular generated files
 
-bd edit 2                      # absolute path of ref 2 in the active view
-bd work 1-1                    # switch the same area to the alternative tree
+bd edit 2-1                    # absolute path of ref 2-1 in the active view
+bd work 1-2                    # switch the same area to the other tree
 ```
 
 ## Create a store
@@ -96,17 +100,25 @@ bd work 1-1                    # switch the same area to the alternative tree
 ```sh
 mkdir my-graph && cd my-graph
 bd init
-bd new --parent 1 --field title="What is true?" --field layer=claims
-bd new --parent 1 --field title="Why does this exist?" --field layer=intent
-bd tree 1
-bd work 1
+bd new --parent 1-1 --field title="What is true?" --field layer=claims
+bd new --parent 1-1 --field title="Why does this exist?" --field layer=intent
+bd tree 1-1
+bd work 1-1
 ```
 
-`bd init` creates `.bd_tree/nodes/1.md`, writes a `.gitignore` entry for
+`bd init` creates `.bd_tree/nodes/1-1.md`, writes a `.gitignore` entry for
 `bd_work/`, and prints the next commands. `bd init DIR` scaffolds the same
-layout inside `DIR`. `bd new` prefills `title` and `summary` as empty
-placeholders; `--field` overrides them. Front matter is arbitrary: use `layer`,
-`phase`, `status`, `audience`, or anything else.
+layout inside `DIR`. `bd new` allocates the next global id at version 1 and
+appends that full ref to the parent's `contains`; it prefills `title` and
+`summary` as empty placeholders, and `--field` overrides them. Front matter is
+arbitrary: use `layer`, `phase`, `status`, `audience`, or anything else.
+
+A classic store with bare `nodes/<id>.md` files is converted once, in place:
+
+```sh
+bd migrate --dry-run           # print the plan
+bd migrate                     # rename bare files and rewrite data refs
+```
 
 ## Where is my store?
 
@@ -158,7 +170,7 @@ bd check | bd tree | bd show | bd find | bd path
 Edit and structure:
 
 ```
-bd init | bd new | bd contain | bd uncontain | bd link | bd unlink
+bd init | bd new | bd contain | bd uncontain | bd link | bd unlink | bd migrate
 ```
 
 `bd new` seeds empty `title` and `summary`; `--field` overrides them.
@@ -208,13 +220,15 @@ bd solution new | bd solution list | bd solution remove
 Versions (node-local alternatives inside one branch):
 
 ```
-bd versions | bd fork | bd promote | bd retire-version | bd diff
+bd versions | bd version | bd delete | bd diff
 ```
 
-`bd fork` materialises the effective `contains` list into the new version.
-`bd promote` copies one version onto main; it does not switch trees — use
-`bd root` for the default root, `bd work` for the work-area view, or repoint a
-parent with `bd contain`/`bd uncontain`.
+`bd version REF` copies a ref to the next free version of the same logical id
+(or to `--version N`) and keeps the source file's declared `contains`. A parent's `contains` names the version that is current in that view, so
+repoint the parent with `bd contain`/`bd uncontain`, switch the default
+root with `bd root`, or switch the work-area view with `bd work`.
+`bd delete REF` removes a version and refuses a `ROOT`, a reachable ref, or one
+referenced by any `contains`/`links` unless `--force` is given.
 
 Freshness:
 
@@ -247,7 +261,7 @@ src/bd_tree/               Python package
   navigate.py              show/tree/find/path
   work.py                  single work area, current/views/edit, status, writeback
   solutions.py             git worktree wrapper
-  ops.py                   init, new, structural edits, versions, diff
+  ops.py                   init, new, structural edits, versions, delete, diff, migrate
   cli.py, api.py           command line and public API
 tests/                     pytest suite
 examples/                 example project: .bd_tree/ store + ignored bd_work/
@@ -258,8 +272,9 @@ docs/breakdown/            product breakdown: bd store (.bd_tree/) + ignored bd_
 ## Status
 
 - The suite passes: `python3 -m pytest -q`.
-- The committed example project `examples/` has a `.bd_tree/nodes/` tree, a
-  `.bd_tree/ROOT` file, and a gitignored `bd_work/`; `bd check` passes for it.
+- The committed example project `examples/` has a `.bd_tree/nodes/` tree of
+  `<id>-<version>.md` files, a `.bd_tree/ROOT` file, and a gitignored
+  `bd_work/`; `bd check` passes for it.
 - No JSON, TOML, lock, or state data files; the only exceptions are a
   store-level `ROOT` file with one ref line and a folder-level `.bd_root`
   pointer with one store path. Derived output is gitignored.
@@ -268,13 +283,14 @@ docs/breakdown/            product breakdown: bd store (.bd_tree/) + ignored bd_
 
 ## Known limits
 
-- Node-local versions do not sync across branches. Use git merges for solutions;
+- Node versions do not sync across branches. Use git merges for solutions;
   versions are for alternatives inside one branch.
-- No three-way merge between versions. Promotion copies; synthesis is manual.
+- No three-way merge between versions. Synthesis is manual.
 - One worktree per solution. Switching branches inside one worktree can leave a
   layout pointing at paths absent from the new branch; rebuild with
   `bd work REF --clean` and run `bd work --status`.
 - Some editors replace symlinks instead of writing through them. Use
   `bd work --status` / `bd work --writeback`.
 - Work folders rely on symlinks; Windows needs developer mode or elevated rights.
-- No generic importer or CI configuration yet.
+- No generic importer or CI configuration yet; `bd migrate` only converts a
+  classic bare-file store in place.

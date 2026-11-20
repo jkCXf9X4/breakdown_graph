@@ -3,84 +3,91 @@ from __future__ import annotations
 import pytest
 
 from bd_tree.api import (
+    delete,
     diff,
-    fork,
     load,
+    migrate,
     new_node,
-    promote,
-    retire_version,
+    version,
     versions,
 )
 from bd_tree.errors import BreakdownError
-from bd_tree.frontmatter import parse_document
+from bd_tree.frontmatter import parse_document, render_document
 
 
-def test_fork_creates_next_and_explicit_versions(write, tmp_path):
+def test_version_creates_next_and_explicit_versions(write, tmp_path):
     write(tmp_path / "nodes", 1)
-    created = fork(tmp_path, "1")
-    assert created.name == "1-1.md"
-    assert [node.ref for node in versions(tmp_path, 1)] == ["1", "1-1"]
-    assert fork(tmp_path, 1).name == "1-2.md"
-    assert fork(tmp_path, 1, version=4).name == "1-4.md"
+    created = version(tmp_path, "1-1")
+    assert created.name == "1-2.md"
+    assert [node.ref for node in versions(tmp_path, 1)] == ["1-1", "1-2"]
+    assert version(tmp_path, 1).name == "1-3.md"
+    assert version(tmp_path, 1, version=4).name == "1-4.md"
     with pytest.raises(BreakdownError, match="already exists"):
-        fork(tmp_path, 1, version=4)
-    with pytest.raises(BreakdownError, match="not found"):
-        fork(tmp_path, 9)
+        version(tmp_path, 1, version=4)
+    with pytest.raises(BreakdownError, match="does not exist"):
+        version(tmp_path, "9-1")
 
 
-def test_fork_materialises_containment(write, tmp_path):
+def test_version_copies_declared_containment(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"])
     write(nodes, 2, contains=["3"])
     write(nodes, 3)
-    path = fork(tmp_path, 2)
-    assert parse_document(path.read_text(encoding="utf-8")).meta["contains"] == ["3"]
-    assert set(load(tmp_path).effective_contains("2-1")) == {"3"}
+    path = version(tmp_path, "2-1")
+    assert path.name == "2-2.md"
+    assert parse_document(path.read_text(encoding="utf-8")).meta["contains"] == ["3-1"]
+    assert set(load(tmp_path).effective_contains("2-2")) == {"3-1"}
+
     from bd_tree.api import check, load_view
 
     assert check(tmp_path).ok
-    assert set(load_view(tmp_path, "2-1").nodes) == {"2-1", "3"}
+    assert set(load_view(tmp_path, "2-2").nodes) == {"2-2", "3-1"}
 
-    # A materialised list must not follow later edits to main.
+    # The copy keeps its own declared list; editing its peer changes nothing.
     write(nodes, 2, contains=["4"])
     write(nodes, 4)
-    assert set(load(tmp_path).effective_contains("2-1")) == {"3"}
+    assert set(load(tmp_path).effective_contains("2-2")) == {"3-1"}
 
 
-def test_promote_preserves_effective_containment(write, tmp_path):
+def test_delete_refuses_root_and_reachable_refs_then_force(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"])
-    write(nodes, 2, contains=["3"])
-    write(nodes, 3)
-    fork(tmp_path, 2)
-    promote(tmp_path, "2-1")
-    meta = parse_document((nodes / "2.md").read_text(encoding="utf-8")).meta
-    assert meta["contains"] == ["3"]
+    write(nodes, 2)
 
-    write(nodes, 2, version=1, contains=["4"])
+    with pytest.raises(BreakdownError, match="store root"):
+        delete(tmp_path, "1-1")
+    with pytest.raises(BreakdownError, match="reachable"):
+        delete(tmp_path, "2-1")
+
+    removed = delete(tmp_path, "2-1", force=True)
+    assert removed == (nodes / "2-1.md").resolve()
+    assert not (nodes / "2-1.md").exists()
+
+
+def test_delete_refuses_a_link_reference_then_force(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2)
+    write(nodes, 3, links=[{"to": "4", "type": "supports"}])
     write(nodes, 4)
-    promote(tmp_path, "2-1", keep=True)
-    meta = parse_document((nodes / "2.md").read_text(encoding="utf-8")).meta
-    assert meta["contains"] == ["4"]
-    kept = parse_document((nodes / "2-1.md").read_text(encoding="utf-8")).meta
-    assert "contains" not in kept
+
+    with pytest.raises(BreakdownError, match="referenced by 3-1"):
+        delete(tmp_path, "4-1")
+
+    delete(tmp_path, "4-1", force=True)
+    assert not (nodes / "4-1.md").exists()
 
 
-def test_promote_copies_onto_main_and_retire_version(write, tmp_path):
-    write(tmp_path / "nodes", 1, body="main\n")
-    write(tmp_path / "nodes", 1, version=1, body="version one\n")
-    promote(tmp_path, "1-1")
-    assert (tmp_path / "nodes" / "1.md").read_text(encoding="utf-8").endswith("version one\n")
-    assert not (tmp_path / "nodes" / "1-1.md").exists()
+def test_delete_allows_an_unreferenced_peer_version(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2)
+    write(nodes, 2, version=2)
 
-    write(tmp_path / "nodes", 1, version=2, body="version two\n")
-    promote(tmp_path, "1-2", keep=True)
-    assert (tmp_path / "nodes" / "1.md").read_text(encoding="utf-8").endswith("version two\n")
-    assert (tmp_path / "nodes" / "1-2.md").is_file()
-    retire_version(tmp_path, "1-2")
-    assert not (tmp_path / "nodes" / "1-2.md").exists()
-    with pytest.raises(BreakdownError, match="main version"):
-        retire_version(tmp_path, "1")
+    delete(tmp_path, "2-2")
+
+    assert not (nodes / "2-2.md").exists()
+    assert (nodes / "2-1.md").is_file()
 
 
 def test_diff_views_by_id(write, tmp_path):
@@ -89,9 +96,9 @@ def test_diff_views_by_id(write, tmp_path):
     write(nodes, 2, contains=["4"])
     write(nodes, 3)
     write(nodes, 4)
-    write(nodes, 2, version=1, contains=["5"])
+    write(nodes, 2, version=2, contains=["5"])
     write(nodes, 5)
-    entries = {entry.id: entry.state for entry in diff(tmp_path, "1", "2-1")}
+    entries = {entry.id: entry.state for entry in diff(tmp_path, "1-1", "2-2")}
     assert entries == {
         1: "only-left",
         2: "same",
@@ -110,17 +117,17 @@ def test_new_uses_next_global_id_and_appends_to_parent(write, tmp_path):
         parent="1",
         fields={"type": "claim", "layer": "claims", "title": "New claim", "summary": ""},
     )
-    assert created.name == "3.md"
-    root = parse_document((nodes / "1.md").read_text(encoding="utf-8"))
-    assert root.meta["contains"] == ["2", "3"]
+    assert created.name == "3-1.md"
+    root = parse_document((nodes / "1-1.md").read_text(encoding="utf-8"))
+    assert root.meta["contains"] == ["2-1", "3-1"]
     assert root.body == "root body\n"
-    assert load(tmp_path).effective_contains("1") == ["2", "3"]
+    assert load(tmp_path).effective_contains("1-1") == ["2-1", "3-1"]
 
     second = new_node(
         tmp_path, parent="2", fields={"type": "claim", "layer": "claims", "title": "Under 2"}
     )
-    assert second.name == "4.md"
-    assert load(tmp_path).effective_contains("2") == ["4"]
+    assert second.name == "4-1.md"
+    assert load(tmp_path).effective_contains("2-1") == ["4-1"]
 
 
 def test_new_seeds_empty_title_and_summary_and_fields_override(write, tmp_path):
@@ -134,8 +141,8 @@ def test_new_seeds_empty_title_and_summary_and_fields_override(write, tmp_path):
     from bd_tree.api import export_view
 
     out = tmp_path / "view"
-    export_view("tree", tmp_path, "1", out)
-    assert (out / "2.md").is_file()
+    export_view("tree", tmp_path, "1-1", out)
+    assert (out / "2-1.md").is_file()
 
     overridden = new_node(
         tmp_path, parent="1", fields={"title": "X", "summary": "Y"}
@@ -145,28 +152,28 @@ def test_new_seeds_empty_title_and_summary_and_fields_override(write, tmp_path):
     assert meta["summary"] == "Y"
 
 
-def test_new_materializes_inherited_contains_on_a_version(write, tmp_path):
+def test_new_appends_to_the_parent_version_only(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"])
     write(nodes, 2, contains=["3"])
     write(nodes, 3)
-    write(nodes, 2, version=1)
+    version(tmp_path, "2-1")
     created = new_node(
         tmp_path,
-        parent="2-1",
+        parent="2-2",
         fields={"type": "claim", "layer": "claims", "title": "Version child"},
     )
-    assert created.name == "4.md"
-    assert load(tmp_path).effective_contains("2") == ["3"]
-    assert load(tmp_path).effective_contains("2-1") == ["3", "4"]
-    version_meta = parse_document((nodes / "2-1.md").read_text(encoding="utf-8"))
-    assert version_meta.meta["contains"] == ["3", "4"]
+    assert created.name == "4-1.md"
+    assert load(tmp_path).effective_contains("2-1") == ["3-1"]
+    assert load(tmp_path).effective_contains("2-2") == ["3-1", "4-1"]
+    version_meta = parse_document((nodes / "2-2.md").read_text(encoding="utf-8"))
+    assert version_meta.meta["contains"] == ["3-1", "4-1"]
 
 
 def test_new_rejects_missing_parent(write, tmp_path):
     write(tmp_path / "nodes", 1)
     with pytest.raises(BreakdownError, match="does not exist"):
-        new_node(tmp_path, parent="9", fields={"layer": "intent", "title": "x"})
+        new_node(tmp_path, parent="9-1", fields={"layer": "intent", "title": "x"})
 
 
 def test_new_derives_folder_from_group_fields_and_renders_title_slug(
@@ -212,10 +219,94 @@ def test_new_derives_folder_from_group_fields_and_renders_title_slug(
     from bd_tree.api import export_view
 
     out = tmp_path / "view"
-    export_view("tree", tmp_path, "1", out)
+    export_view("tree", tmp_path, "1-1", out)
     assert (out / "build" / "build-step.md").is_file()
     assert (out / "g" / "grouped.md").is_file()
-    assert (out / "4-flat.md").is_file()
+    assert (out / "4-1-flat.md").is_file()
     assert (out / "build" / "explicit-home.md").is_file()
     assert not (out / "custom" / "here.md").exists()
     assert (out / "picked" / "explicit-folder.md").is_file()
+
+
+def _classic(nodes, node_id, *, contains=None, links=None, body="body\n"):
+    """Write a classic bare ``<id>.md`` file for migration tests."""
+    nodes.mkdir(parents=True, exist_ok=True)
+    meta = {"id": node_id, "title": f"Node {node_id}"}
+    if contains is not None:
+        meta["contains"] = contains
+    if links is not None:
+        meta["links"] = links
+    path = nodes / f"{node_id}.md"
+    path.write_text(render_document(meta, body), encoding="utf-8", newline="")
+    return path
+
+
+def test_migrate_dry_run_prints_the_plan_without_touching_disk(tmp_path):
+    nodes = tmp_path / "nodes"
+    _classic(nodes, 1, contains=[2])
+    _classic(nodes, 2)
+    (tmp_path / "ROOT").write_text("1\n", encoding="utf-8")
+
+    result = migrate(tmp_path, dry_run=True)
+
+    assert result.dry_run is True
+    assert result.count == 2
+    assert result.renames == [
+        ("nodes/1.md", "nodes/1-1.md"),
+        ("nodes/2.md", "nodes/2-1.md"),
+    ]
+    assert any("contains" in rewrite for rewrite in result.rewrites)
+    assert any(rewrite.startswith("ROOT:") for rewrite in result.rewrites)
+    assert (nodes / "1.md").is_file()
+    assert (nodes / "2.md").is_file()
+    assert not (nodes / "1-1.md").exists()
+    assert (tmp_path / "ROOT").read_text(encoding="utf-8") == "1\n"
+
+
+def test_migrate_renames_rewrites_and_is_idempotent(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    body = "# Node 1\n\nBody mentions contains: [2] and must stay put.\n"
+    path = _classic(nodes, 1, contains=[2], body=body)
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "---\nid: 1\n", "---\n# keep this comment\nid: 1\n"
+        ),
+        encoding="utf-8",
+    )
+    _classic(nodes, 2)
+    write(nodes, 2, version=2)
+    (tmp_path / "ROOT").write_text("1\n", encoding="utf-8")
+
+    result = migrate(tmp_path)
+
+    assert result.dry_run is False
+    assert not (nodes / "1.md").exists()
+    assert not (nodes / "2.md").exists()
+    assert (nodes / "1-1.md").is_file()
+    assert (nodes / "2-1.md").is_file()
+    assert (nodes / "2-2.md").is_file()
+    migrated_text = (nodes / "1-1.md").read_text(encoding="utf-8")
+    assert "# keep this comment" in migrated_text
+    migrated = parse_document(migrated_text)
+    assert migrated.meta["contains"] == ["2-1"]
+    assert migrated.body == body
+    assert (tmp_path / "ROOT").read_text(encoding="utf-8") == "1-1\n"
+
+    store = load(tmp_path)
+    assert store.root_ref == "1-1"
+    assert store.effective_contains("1-1") == ["2-1"]
+
+    again = migrate(tmp_path)
+    assert again.count == 0
+    assert again.rewrites == []
+
+
+def test_migrate_fails_on_an_ambiguous_bare_ref(tmp_path):
+    nodes = tmp_path / "nodes"
+    _classic(nodes, 1, contains=[2])
+
+    with pytest.raises(BreakdownError, match="ambiguous"):
+        migrate(tmp_path)
+
+    assert (nodes / "1.md").is_file()
+    assert not (nodes / "1-1.md").exists()

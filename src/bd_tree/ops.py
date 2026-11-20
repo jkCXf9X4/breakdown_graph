@@ -1,13 +1,16 @@
-"""Filesystem operations on the numeric, versioned node store."""
+"""Filesystem operations on the version-only numeric node store."""
 
 from __future__ import annotations
 
+import re
 import shutil
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .errors import BreakdownError
 from .frontmatter import (
+    FrontMatterError,
     parse_document,
     render_document,
     rewrite_contains,
@@ -16,40 +19,25 @@ from .frontmatter import (
 from .loader import (
     ROOT_FILE,
     STORE_DIR,
+    is_bare_ref,
+    is_full_ref,
     load,
     load_view,
     node_path,
-    parse_ref,
+    parse_selector,
     ref_of,
+    resolve_store_root,
 )
 from .model import DiffEntry, Node, Store
+from .navigate import resolve_ref
 
 
 def _logical_id(text: str | int) -> int:
     try:
-        node_id, version = parse_ref(text)
+        node_id, _version = parse_selector(text)
     except ValueError:
         raise BreakdownError(f"invalid id {text!r}") from None
-    if version != 0:
-        raise BreakdownError(f"expected a bare id, got ref {text!r}")
     return node_id
-
-
-def _version_ref(text: str | int) -> tuple[int, int]:
-    try:
-        node_id, version = parse_ref(text)
-    except ValueError:
-        raise BreakdownError(f"invalid ref {text!r}") from None
-    if version == 0:
-        raise BreakdownError(f"ref {text!r} is a main version, not a version")
-    return node_id, version
-
-
-def _canonical(text: str | int) -> str:
-    try:
-        return ref_of(*parse_ref(text))
-    except ValueError:
-        raise BreakdownError(f"invalid ref {text!r}") from None
 
 
 def _existing(store: Store, ref: str, role: str) -> Node:
@@ -60,7 +48,7 @@ def _existing(store: Store, ref: str, role: str) -> Node:
 
 
 def _reaches(store: Store, start: str, target: str) -> bool:
-    """Whether ``target`` is reachable from ``start`` through effective contains."""
+    """Whether ``target`` is reachable from ``start`` through declared contains."""
     seen: set[str] = set()
     stack = [start]
     while stack:
@@ -91,10 +79,8 @@ def _link_target(item: Any) -> str | None:
     value = item.get("to") if isinstance(item, dict) else item
     if value is None:
         return None
-    try:
-        return ref_of(*parse_ref(value))
-    except ValueError:
-        return None
+    text = str(value).strip()
+    return text if is_full_ref(text) else None
 
 
 def _link_type(item: Any, store: Store) -> str | None:
@@ -106,18 +92,6 @@ def _link_type(item: Any, store: Store) -> str | None:
     node = store.nodes.get(target) if target is not None else None
     value = node.meta.get("type") if node is not None else None
     return value if isinstance(value, str) and value.strip() else None
-
-
-def _strip_contains(path: Path) -> None:
-    """Drop an explicit ``contains`` so a version inherits its main's list."""
-    document = parse_document(path.read_text(encoding="utf-8"))
-    if "contains" not in document.meta:
-        return
-    meta = dict(document.meta)
-    meta.pop("contains", None)
-    path.write_text(
-        render_document(meta, document.body), encoding="utf-8", newline=""
-    )
 
 
 _ROOT_BODY = "# Root\n\nState the intent of this graph here.\n"
@@ -150,7 +124,7 @@ def init_store(root: str | Path = ".") -> Path:
                 f"store already exists at {project} ({label} is not empty)"
             )
     hidden.mkdir(parents=True, exist_ok=True)
-    target = node_path(project / STORE_DIR, 1, 0)
+    target = node_path(project / STORE_DIR, 1, 1)
     target.write_text(
         render_document({"id": 1, "title": "Root", "contains": []}, _ROOT_BODY),
         encoding="utf-8",
@@ -161,50 +135,45 @@ def init_store(root: str | Path = ".") -> Path:
 
 
 def versions(root: str | Path, node_id: str | int) -> list[Node]:
-    """Every existing file for a logical id, main first."""
+    """Every existing file for a logical id, ascending by version."""
     return load(root).versions(_logical_id(node_id))
 
 
-def fork(
-    root: str | Path, node_id: str | int, version: int | None = None
+def version(
+    root: str | Path, ref: str | int, version: int | None = None
 ) -> Path:
-    """Copy ``nodes/<id>.md`` to the next free (or explicit) version file."""
+    """Copy a ref to the next free (or explicit) version of the same id."""
     root = Path(root).resolve()
-    node_id = _logical_id(node_id)
-    source = node_path(root, node_id, 0)
-    if not source.is_file():
-        raise BreakdownError(f"main node {node_id} not found at {source}")
     store = load(root)
-    used = {node.version for node in store.versions(node_id)}
+    source_ref = resolve_ref(store, ref)
+    source = _existing(store, source_ref, "source")
+    used = {node.version for node in store.nodes.values() if node.id == source.id}
     if version is None:
         version = 1
         while version in used:
             version += 1
     else:
-        if version < 1:
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
             raise BreakdownError(f"invalid version {version!r}")
         if version in used:
-            raise BreakdownError(f"version {ref_of(node_id, version)} already exists")
-    target = node_path(root, node_id, version)
+            raise BreakdownError(
+                f"version {ref_of(source.id, version)} already exists"
+            )
+    target = node_path(root, source.id, version)
     if target.exists():
-        raise BreakdownError(f"version {ref_of(node_id, version)} already exists")
-    shutil.copyfile(source, target)
-    # Materialise the effective list: an alternative must not silently follow
-    # later edits to main's containment.
-    document = parse_document(target.read_text(encoding="utf-8"))
-    meta = dict(document.meta)
-    meta["contains"] = store.effective_contains(str(node_id))
-    target.write_text(
-        render_document(meta, document.body), encoding="utf-8", newline=""
-    )
+        raise BreakdownError(
+            f"version {ref_of(source.id, version)} already exists"
+        )
+    # Byte copy: the new version keeps the source file's declared contains.
+    shutil.copyfile(source.path, target)
     return target
 
 
 def set_root(root: str | Path, ref: str | int) -> Path:
-    """Write the store-level ``ROOT`` file to an existing ref."""
+    """Write the store-level ``ROOT`` file to an existing, fully qualified ref."""
     root = Path(root).resolve()
-    canonical = _canonical(ref)
     store = load(root)
+    canonical = resolve_ref(store, ref)
     if canonical not in store.nodes:
         raise BreakdownError(f"root ref {canonical} does not exist")
     path = root / ROOT_FILE
@@ -213,7 +182,7 @@ def set_root(root: str | Path, ref: str | int) -> Path:
 
 
 def clear_root(root: str | Path) -> Path | None:
-    """Remove the ``ROOT`` file; the lowest main ref becomes the root again."""
+    """Remove the ``ROOT`` file; the lowest ``(id, version)`` becomes the root."""
     path = Path(root).resolve() / ROOT_FILE
     if not path.is_file():
         return None
@@ -221,54 +190,46 @@ def clear_root(root: str | Path) -> Path | None:
     return path
 
 
-def promote(root: str | Path, ref: str | int, *, keep: bool = False) -> Path:
-    """Copy a version's content onto the main file, preserving the tree."""
+def delete(root: str | Path, ref: str | int, *, force: bool = False) -> Path:
+    """Delete one node file, refusing anything still bound into the graph."""
     root = Path(root).resolve()
-    node_id, version = _version_ref(ref)
-    source = node_path(root, node_id, version)
-    if not source.is_file():
-        raise BreakdownError(f"version {ref_of(node_id, version)} not found at {source}")
     store = load(root)
-    node = store.nodes.get(ref_of(node_id, version))
-    if node is None:
-        raise BreakdownError(f"version {ref_of(node_id, version)} is not loadable")
-    document = parse_document(source.read_text(encoding="utf-8"))
-    meta = dict(document.meta)
-    if node.contains is not None:
-        meta["contains"] = list(node.contains)
-    else:
-        main = store.main(node_id)
-        if main is not None and main.contains is not None:
-            meta["contains"] = list(main.contains)
-        else:
-            meta.pop("contains", None)
-    target = node_path(root, node_id, 0)
-    target.write_text(
-        render_document(meta, document.body), encoding="utf-8", newline=""
-    )
-    if keep:
-        # The kept version now inherits the promoted main's containment.
-        _strip_contains(source)
-    else:
-        source.unlink()
-    return target
-
-
-def retire_version(root: str | Path, ref: str | int) -> Path:
-    """Delete a non-main version file."""
-    root = Path(root).resolve()
-    node_id, version = _version_ref(ref)
-    path = node_path(root, node_id, version)
-    if not path.is_file():
-        raise BreakdownError(f"version {ref_of(node_id, version)} not found at {path}")
-    path.unlink()
-    return path
+    canonical = resolve_ref(store, ref)
+    node = _existing(store, canonical, "node")
+    if not force:
+        if store.root_ref == canonical:
+            raise BreakdownError(
+                f"refusing to delete the store root {canonical} (use --force)"
+            )
+        if _reaches(store, store.root_ref or canonical, canonical):
+            raise BreakdownError(
+                f"refusing to delete {canonical}: it is reachable from root "
+                f"{store.root_ref} (use --force)"
+            )
+        referenced_by = [
+            other.ref
+            for other in store.nodes.values()
+            if other.ref != canonical
+            and (
+                canonical in other.contains
+                or any(link.to == canonical for link in other.links)
+            )
+        ]
+        if referenced_by:
+            raise BreakdownError(
+                f"refusing to delete {canonical}: referenced by "
+                + ", ".join(sorted(referenced_by))
+                + " (use --force)"
+            )
+    node.path.unlink()
+    return node.path
 
 
 def diff(root: str | Path, left: str | int, right: str | int) -> list[DiffEntry]:
     """Compare two containment views id by id."""
-    a = load_view(root, left)
-    b = load_view(root, right)
+    store = load(root)
+    a = load_view(store, resolve_ref(store, left))
+    b = load_view(store, resolve_ref(store, right))
     for view in (a, b):
         errors = [issue for issue in view.issues if issue.level == "error"]
         if errors:
@@ -314,19 +275,14 @@ def new_node(
     body: str = "",
     links: list[dict[str, Any]] | None = None,
 ) -> Path:
-    """Create the next global id as a main file and append it to ``parent``."""
+    """Create the next global id at version 1 and append it to ``parent``."""
     root = Path(root).resolve()
     fields = dict(fields or {})
     if "id" in fields:
         raise BreakdownError("'id' is assigned by bd new and cannot be given")
     store = load(root)
-    try:
-        parent_ref = ref_of(*parse_ref(parent))
-    except ValueError:
-        raise BreakdownError(f"invalid parent ref {parent!r}") from None
-    parent_node = store.nodes.get(parent_ref)
-    if parent_node is None:
-        raise BreakdownError(f"parent {parent_ref} does not exist")
+    parent_ref = resolve_ref(store, parent)
+    parent_node = _existing(store, parent_ref, "parent")
 
     node_id = max((node.id for node in store.nodes.values()), default=0) + 1
     meta: dict[str, Any] = {"id": node_id}
@@ -340,14 +296,14 @@ def new_node(
             meta["folder"] = derived
     if links:
         meta["links"] = links
-    target = node_path(root, node_id, 0)
+    target = node_path(root, node_id, 1)
     if target.exists():
-        raise BreakdownError(f"node {node_id} already exists at {target}")
+        raise BreakdownError(f"node {node_id}-1 already exists at {target}")
 
-    effective = store.effective_contains(parent_ref)
-    new_contains = effective + [str(node_id)]
+    new_ref = ref_of(node_id, 1)
+    siblings = store.effective_contains(parent_ref)
     document = parse_document(parent_node.path.read_text(encoding="utf-8"))
-    rewritten = rewrite_contains(document.raw_fm, new_contains)
+    rewritten = rewrite_contains(document.raw_fm, siblings + [new_ref])
     parent_node.path.write_text(
         document.with_raw_fm(rewritten), encoding="utf-8", newline=""
     )
@@ -357,10 +313,13 @@ def new_node(
 
 
 def _sibling_index(
-    siblings: list[str], before: str | None, after: str | None
+    store: Store,
+    siblings: list[str],
+    before: str | int | None,
+    after: str | int | None,
 ) -> int:
-    before_ref = None if before is None else _canonical(before)
-    after_ref = None if after is None else _canonical(after)
+    before_ref = None if before is None else resolve_ref(store, before)
+    after_ref = None if after is None else resolve_ref(store, after)
     if before_ref is not None and after_ref is not None:
         raise BreakdownError("use either --before or --after, not both")
     if before_ref is not None:
@@ -384,11 +343,11 @@ def contain(
 ) -> Path:
     """Add ``child`` to ``parent``'s containment list, optionally positioned."""
     root = Path(root).resolve()
-    parent_ref = _canonical(parent)
-    child_ref = _canonical(child)
     store = load(root)
+    parent_ref = resolve_ref(store, parent)
+    child_ref = resolve_ref(store, child)
     parent_node = _existing(store, parent_ref, "parent")
-    _existing(store, child_ref, "child")
+    child_node = _existing(store, child_ref, "child")
     if parent_ref == child_ref:
         raise BreakdownError(f"refusing to contain {child_ref} in itself")
     if _reaches(store, child_ref, parent_ref):
@@ -396,15 +355,22 @@ def contain(
             f"refusing to create a containment cycle: "
             f"{child_ref} already reaches {parent_ref}"
         )
+    subtree = load_view(store, parent_ref)
+    clash = [
+        ref
+        for ref, node in subtree.nodes.items()
+        if node.id == child_node.id and ref != child_ref
+    ]
+    if clash:
+        raise BreakdownError(
+            f"refusing to contain {child_ref}: the view of {parent_ref} already "
+            f"holds version {clash[0]} of id {child_node.id}"
+        )
 
     siblings = store.effective_contains(parent_ref)
     if child_ref in siblings:
         raise BreakdownError(f"{child_ref} is already contained by {parent_ref}")
-    index = _sibling_index(
-        siblings,
-        None if before is None else _canonical(before),
-        None if after is None else _canonical(after),
-    )
+    index = _sibling_index(store, siblings, before, after)
     new_contains = siblings[:index] + [child_ref] + siblings[index:]
 
     document = parse_document(parent_node.path.read_text(encoding="utf-8"))
@@ -418,9 +384,9 @@ def contain(
 def uncontain(root: str | Path, parent: str | int, child: str | int) -> Path:
     """Remove ``child`` from ``parent``'s containment list; never delete it."""
     root = Path(root).resolve()
-    parent_ref = _canonical(parent)
-    child_ref = _canonical(child)
     store = load(root)
+    parent_ref = resolve_ref(store, parent)
+    child_ref = resolve_ref(store, child)
     parent_node = _existing(store, parent_ref, "parent")
     _existing(store, child_ref, "child")
 
@@ -430,7 +396,6 @@ def uncontain(root: str | Path, parent: str | int, child: str | int) -> Path:
     new_contains = [ref for ref in siblings if ref != child_ref]
 
     document = parse_document(parent_node.path.read_text(encoding="utf-8"))
-    # An empty explicit list must not fall back to inheriting main's list.
     rewritten = rewrite_contains(document.raw_fm, new_contains)
     parent_node.path.write_text(
         document.with_raw_fm(rewritten), encoding="utf-8", newline=""
@@ -450,9 +415,9 @@ def link(
     root = Path(root).resolve()
     if not isinstance(link_type, str) or not link_type.strip():
         raise BreakdownError("link type must be a non-empty string")
-    source_ref = _canonical(source)
-    target_ref = _canonical(target)
     store = load(root)
+    source_ref = resolve_ref(store, source)
+    target_ref = resolve_ref(store, target)
     source_node = _existing(store, source_ref, "source")
     target_node = _existing(store, target_ref, "target")
 
@@ -496,9 +461,9 @@ def unlink(
 ) -> Path:
     """Remove every matching edge; ``link_type`` narrows the match."""
     root = Path(root).resolve()
-    source_ref = _canonical(source)
-    target_ref = _canonical(target)
     store = load(root)
+    source_ref = resolve_ref(store, source)
+    target_ref = resolve_ref(store, target)
     source_node = _existing(store, source_ref, "source")
     _existing(store, target_ref, "target")
 
@@ -524,3 +489,182 @@ def unlink(
         document.with_raw_fm(rewritten), encoding="utf-8", newline=""
     )
     return source_node.path
+
+
+@dataclass
+class MigrationResult:
+    """What a migration did, or would do under ``--dry-run``."""
+
+    renames: list[tuple[str, str]] = field(default_factory=list)
+    rewrites: list[str] = field(default_factory=list)
+    dry_run: bool = False
+
+    @property
+    def count(self) -> int:
+        return len(self.renames)
+
+
+CLASSIC_FILENAME = re.compile(
+    r"^(?P<id>[1-9]\d*)(?:-(?P<version>[1-9]\d*))?\.md$"
+)
+
+
+def _map_data_ref(
+    value: object,
+    mapping: dict[int, str],
+    where: str,
+    ambiguous: dict[int, set[str]],
+) -> tuple[bool, object]:
+    """Map one bare data ref through ``mapping``; return ``(changed, value)``.
+
+    A bare ref whose id has no bare file cannot be resolved; it is collected in
+    ``ambiguous`` so the caller can report every offender at once.
+    """
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return False, value
+    text = str(value).strip()
+    if is_full_ref(text):
+        return False, text
+    if is_bare_ref(text):
+        node_id = int(text)
+        if node_id not in mapping:
+            ambiguous.setdefault(node_id, set()).add(where)
+            return False, value
+        return True, mapping[node_id]
+    return False, value
+
+
+def migrate(root: str | Path, *, dry_run: bool = False) -> MigrationResult:
+    """One-time, idempotent, in-place migration of a classic bare-file store."""
+    root = resolve_store_root(root)
+    nodes_dir = root / "nodes"
+    if not nodes_dir.is_dir():
+        raise BreakdownError(f"no node store at {nodes_dir}")
+    result = MigrationResult(dry_run=dry_run)
+
+    parsed: list[tuple[Path, int, int | None]] = []
+    used: dict[int, set[int]] = {}
+    for path in sorted(nodes_dir.glob("*.md")):
+        match = CLASSIC_FILENAME.fullmatch(path.name)
+        if not match:
+            raise BreakdownError(
+                f"cannot migrate: invalid node filename '{path.name}'"
+            )
+        node_id = int(match.group("id"))
+        raw_version = match.group("version")
+        file_version = int(raw_version) if raw_version is not None else None
+        parsed.append((path, node_id, file_version))
+        if file_version is not None:
+            used.setdefault(node_id, set()).add(file_version)
+
+    mapping: dict[int, str] = {}
+    rename_of: dict[Path, Path] = {}
+    for path, node_id, file_version in parsed:
+        if file_version is not None:
+            continue
+        new_version = 1
+        while new_version in used.get(node_id, set()):
+            new_version += 1
+        new_ref = ref_of(node_id, new_version)
+        mapping[node_id] = new_ref
+        new_path = nodes_dir / f"{new_ref}.md"
+        rename_of[path] = new_path
+        result.renames.append(
+            (str(path.relative_to(root)), str(new_path.relative_to(root)))
+        )
+        used.setdefault(node_id, set()).add(new_version)
+
+    ambiguous: dict[int, set[str]] = {}
+    pending: list[tuple[Path, Path, str]] = []
+    for path, _node_id, _file_version in parsed:
+        target = rename_of.get(path, path)
+        where = str(path.relative_to(root))
+        text = path.read_text(encoding="utf-8")
+        try:
+            document = parse_document(text)
+        except (OSError, FrontMatterError) as exc:
+            raise BreakdownError(
+                f"cannot migrate {where}: {exc}"
+            ) from exc
+        raw_fm = document.raw_fm
+        changed = False
+
+        contains = document.meta.get("contains")
+        if isinstance(contains, list):
+            new_contains: list[object] = []
+            contains_changed = False
+            for item in contains:
+                item_changed, value = _map_data_ref(
+                    item, mapping, where, ambiguous
+                )
+                contains_changed = contains_changed or item_changed
+                new_contains.append(value)
+            if contains_changed:
+                raw_fm = rewrite_contains(raw_fm, [str(v) for v in new_contains])
+                result.rewrites.append(f"{where}: contains {contains} -> {new_contains}")
+                changed = True
+
+        links = document.meta.get("links")
+        if isinstance(links, list):
+            new_links: list[object] = []
+            links_changed = False
+            for item in links:
+                if isinstance(item, dict):
+                    if "to" in item:
+                        item_changed, value = _map_data_ref(
+                            item["to"], mapping, where, ambiguous
+                        )
+                        if item_changed:
+                            item = {**item, "to": value}
+                            links_changed = True
+                    new_links.append(item)
+                elif isinstance(item, (str, int)) and not isinstance(item, bool):
+                    item_changed, value = _map_data_ref(
+                        item, mapping, where, ambiguous
+                    )
+                    links_changed = links_changed or item_changed
+                    new_links.append(value)
+                else:
+                    new_links.append(item)
+            if links_changed:
+                raw_fm = rewrite_links(raw_fm, new_links)
+                result.rewrites.append(f"{where}: links {links} -> {new_links}")
+                changed = True
+
+        if changed:
+            pending.append((path, target, document.with_raw_fm(raw_fm)))
+
+    root_path = root / ROOT_FILE
+    root_text: str | None = None
+    if root_path.is_file():
+        value = root_path.read_text(encoding="utf-8").strip()
+        if is_bare_ref(value):
+            node_id = int(value)
+            if node_id not in mapping:
+                ambiguous.setdefault(node_id, set()).add(ROOT_FILE)
+            else:
+                root_text = mapping[node_id]
+                result.rewrites.append(f"{ROOT_FILE}: {value} -> {root_text}")
+
+    if ambiguous:
+        details = "; ".join(
+            f"id {node_id} in {', '.join(sorted(where))}"
+            for node_id, where in sorted(ambiguous.items())
+        )
+        raise BreakdownError(
+            "cannot migrate ambiguous bare refs (no bare file to map): " + details
+        )
+
+    if dry_run:
+        return result
+
+    for old, new, text in pending:
+        if old != new:
+            old.rename(new)
+        new.write_text(text, encoding="utf-8", newline="")
+    for old, new in rename_of.items():
+        if not any(pending_old == old for pending_old, _n, _t in pending):
+            old.rename(new)
+    if root_text is not None:
+        root_path.write_text(root_text + "\n", encoding="utf-8", newline="")
+    return result

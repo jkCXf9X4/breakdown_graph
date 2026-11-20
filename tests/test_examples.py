@@ -24,7 +24,15 @@ def test_switch_trees_example_is_clean():
 
 def test_switch_trees_example_has_two_complete_trees():
     root = EXAMPLES
-    main = load_view(root, "1")
-    alternative = load_view(root, "1-1")
-    assert set(main.nodes) == {"1", "2", "3", "4", "5"}
-    assert set(alternative.nodes) == {"1-1", "2-1", "3-1", "4-1", "5-1", "6", "7"}
+    default = load_view(root, "1-1")
+    alternative = load_view(root, "1-2")
+    assert set(default.nodes) == {
+        "1-1",
+        "2-1",
+        "3-1",
+        "4-1",
+        "5-1",
+        "6-1",
+        "7-1",
+    }
+    assert set(alternative.nodes) == {"1-2", "2-2", "3-2", "4-2", "5-2"}

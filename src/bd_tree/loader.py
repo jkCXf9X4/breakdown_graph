@@ -1,10 +1,13 @@
 """Load the flat numeric node store and resolve containment views.
 
-A node lives at ``nodes/<id>.md`` (main, version 0) or
-``nodes/<id>-<version>.md``.  The filename is the only identity and the only
-version marker; the front matter carries arbitrary user metadata.  Containment
-is a tree per view: ``contains:`` lists child refs in display order, and a
-version that omits ``contains`` inherits the main version's list.
+Every node lives at ``nodes/<id>-<version>.md``.  The filename is the only
+identity and the only version marker; there is no bare ``<id>.md`` file and no
+privileged "main" version.  All versions of one logical id are peers.
+
+Data refs (``contains``, ``links`` and the ``ROOT`` file) must be fully
+qualified ``<id>-<version>`` refs.  A bare id in data is recorded as a
+``bare-ref`` issue and is retained in the parsed list, so walking that view
+fails loudly instead of silently guessing a version.
 """
 
 from __future__ import annotations
@@ -31,43 +34,71 @@ ROOT_FILE = "ROOT"
 ROOT_POINTER = ".bd_root"
 STORE_DIR = ".bd_tree"
 
-FILENAME = re.compile(r"^(?P<id>[1-9]\d*)(?:-(?P<version>[1-9]\d*))?\.md$")
-REF = re.compile(r"^(?P<id>[1-9]\d*)(?:-(?P<version>[1-9]\d*))?$")
+# Filename and data refs are version-only.  A CLI selector may still be bare.
+FILENAME = re.compile(r"^(?P<id>[1-9]\d*)-(?P<version>[1-9]\d*)\.md$")
+REF = re.compile(r"^(?P<id>[1-9]\d*)-(?P<version>[1-9]\d*)$")
+SELECTOR = re.compile(r"^(?P<id>[1-9]\d*)(?:-(?P<version>[1-9]\d*))?$")
 
 
 class FilenameError(ValueError):
-    """A filename does not follow the numeric node grammar."""
+    """A filename does not follow the version-only numeric grammar."""
+
+
+def is_full_ref(text: object) -> bool:
+    """Whether ``text`` is a complete ``<id>-<version>`` ref."""
+    return isinstance(text, str) and REF.fullmatch(text.strip()) is not None
+
+
+def is_bare_ref(text: object) -> bool:
+    """Whether ``text`` is a bare ``<id>`` selector (never valid as data)."""
+    return isinstance(text, str) and text.strip().isdigit() and text.strip()[0] != "0"
 
 
 def parse_ref(text: str | int) -> tuple[int, int]:
-    """Parse ``5`` or ``5-1`` into ``(id, version)``; version 0 is main."""
+    """Parse a full ``5-1`` ref into ``(id, version)``.
+
+    A bare ``5`` is a selector, not a ref: resolve it through a view first.
+    """
     if isinstance(text, bool) or not isinstance(text, (str, int)):
         raise ValueError(f"invalid ref {text!r}")
     match = REF.fullmatch(str(text).strip())
     if not match:
         raise ValueError(f"invalid ref {text!r}")
-    return int(match.group("id")), int(match.group("version") or 0)
+    return int(match.group("id")), int(match.group("version"))
 
 
-def ref_of(node_id: int, version: int = 0) -> str:
+def parse_selector(text: str | int) -> tuple[int, int | None]:
+    """Parse ``5`` or ``5-1`` into ``(id, version)``; version is ``None`` if bare."""
+    if isinstance(text, bool) or not isinstance(text, (str, int)):
+        raise ValueError(f"invalid ref {text!r}")
+    match = SELECTOR.fullmatch(str(text).strip())
+    if not match:
+        raise ValueError(f"invalid ref {text!r}")
+    raw = match.group("version")
+    return int(match.group("id")), (int(raw) if raw is not None else None)
+
+
+def ref_of(node_id: int, version: int) -> str:
     if node_id < 1:
         raise ValueError(f"invalid id {node_id!r}")
-    if version < 0:
+    if version < 1:
         raise ValueError(f"invalid version {version!r}")
-    return str(node_id) if version == 0 else f"{node_id}-{version}"
+    return f"{node_id}-{version}"
 
 
 def parse_filename(name: str) -> tuple[int, int]:
-    """Parse ``<id>.md`` or ``<id>-<version>.md`` into ``(id, version)``."""
+    """Parse ``<id>-<version>.md`` into ``(id, version)``."""
     if Path(name).name != name:
         raise FilenameError(f"not a bare filename: '{name}'")
     match = FILENAME.fullmatch(name)
     if not match:
-        raise FilenameError(f"invalid node filename '{name}'")
-    return int(match.group("id")), int(match.group("version") or 0)
+        raise FilenameError(
+            f"invalid node filename '{name}' (expected <id>-<version>.md)"
+        )
+    return int(match.group("id")), int(match.group("version"))
 
 
-def node_path(root: str | Path, node_id: int, version: int = 0) -> Path:
+def node_path(root: str | Path, node_id: int, version: int) -> Path:
     return Path(root) / "nodes" / f"{ref_of(node_id, version)}{NODE_SUFFIX}"
 
 
@@ -200,6 +231,18 @@ def _issue(
     issues.append(Issue(level, code, message, node=node, path=rel))
 
 
+def _classify_data_ref(value: object) -> tuple[str, str | None]:
+    """Classify one data ref as ``full``, ``bare`` or ``invalid``."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return "invalid", None
+    text = str(value).strip()
+    if is_full_ref(text):
+        return "full", text
+    if is_bare_ref(text):
+        return "bare", text
+    return "invalid", None
+
+
 def _parse_links(
     meta: dict[str, Any], issues: list[Issue], path: Path, root: Path
 ) -> tuple[list[Link], list[Any]]:
@@ -213,19 +256,28 @@ def _parse_links(
     raws: list[Any] = []
     for index, item in enumerate(raw):
         if isinstance(item, (str, int)) and not isinstance(item, bool):
-            try:
-                target = ref_of(*parse_ref(item))
-            except ValueError:
+            kind, target = _classify_data_ref(item)
+            if kind == "invalid":
                 _issue(
                     issues,
                     "error",
-                    "invalid-link",
+                    "invalid-ref",
                     f"links[{index}] has invalid ref {item!r}",
                     path=path,
                     root=root,
                 )
                 continue
-            links.append(Link(to=target, type="", raw=item))
+            if kind == "bare":
+                _issue(
+                    issues,
+                    "error",
+                    "bare-ref",
+                    f"links[{index}] '{target}' is a bare id; use a full "
+                    "<id>-<version> ref",
+                    path=path,
+                    root=root,
+                )
+            links.append(Link(to=str(target), type="", raw=item))
             raws.append(item)
             continue
         if not isinstance(item, dict):
@@ -240,20 +292,27 @@ def _parse_links(
             continue
         to = item.get("to")
         ltype = item.get("type")
-        try:
-            target = ref_of(*parse_ref(to)) if to is not None else None
-        except ValueError:
-            target = None
-        if target is None:
+        kind, target = _classify_data_ref(to) if to is not None else ("invalid", None)
+        if kind == "invalid":
             _issue(
                 issues,
                 "error",
-                "invalid-link-target",
+                "invalid-ref",
                 f"links[{index}] has invalid 'to' {to!r}",
                 path=path,
                 root=root,
             )
             continue
+        if kind == "bare":
+            _issue(
+                issues,
+                "error",
+                "bare-ref",
+                f"links[{index}] 'to' {target!r} is a bare id; use a full "
+                "<id>-<version> ref",
+                path=path,
+                root=root,
+            )
         if not isinstance(ltype, str) or not ltype.strip():
             _issue(
                 issues,
@@ -288,7 +347,7 @@ def _parse_links(
             pinned = None
         links.append(
             Link(
-                to=target,
+                to=str(target),
                 type=ltype,
                 pinned=pinned,
                 propagates=propagates,
@@ -301,9 +360,9 @@ def _parse_links(
 
 def _parse_contains(
     meta: dict[str, Any], issues: list[Issue], path: Path, root: Path
-) -> list[str] | None:
+) -> list[str]:
     if "contains" not in meta or meta.get("contains") is None:
-        return None
+        return []
     raw = meta.get("contains")
     if not isinstance(raw, list):
         _issue(
@@ -314,22 +373,31 @@ def _parse_contains(
             path=path,
             root=root,
         )
-        return None
+        return []
     refs: list[str] = []
     for index, item in enumerate(raw):
-        try:
-            ref = ref_of(*parse_ref(item))
-        except ValueError:
+        kind, target = _classify_data_ref(item)
+        if kind == "invalid":
             _issue(
                 issues,
                 "error",
-                "invalid-contains",
+                "invalid-ref",
                 f"contains[{index}] has invalid ref {item!r}",
                 path=path,
                 root=root,
             )
             continue
-        refs.append(ref)
+        if kind == "bare":
+            _issue(
+                issues,
+                "error",
+                "bare-ref",
+                f"contains[{index}] '{target}' is a bare id; use a full "
+                "<id>-<version> ref",
+                path=path,
+                root=root,
+            )
+        refs.append(str(target))
     return refs
 
 
@@ -414,8 +482,6 @@ def scan(root: str | Path) -> tuple[list[Record], list[Issue]]:
         return records, issues
 
     seen: dict[str, Path] = {}
-    mains: set[int] = set()
-    versioned: set[int] = set()
     for path in sorted(nodes_dir.glob(f"*{NODE_SUFFIX}")):
         try:
             parsed_id, parsed_version = parse_filename(path.name)
@@ -435,30 +501,16 @@ def scan(root: str | Path) -> tuple[list[Record], list[Issue]]:
             )
             continue
         seen[ref] = path
-        if parsed_version == 0:
-            mains.add(parsed_id)
-        else:
-            versioned.add(parsed_id)
 
         node = _parse_node(path, parsed_id, parsed_version, issues, root)
         records.append(
             Record(path=path, node_id=parsed_id, version=parsed_version, node=node)
         )
-
-    for node_id in sorted(versioned - mains):
-        _issue(
-            issues,
-            "error",
-            "missing-main",
-            f"id {node_id} has version files but no main nodes/{node_id}.md",
-            node=str(node_id),
-            root=root,
-        )
     return records, issues
 
 
 def _read_declared_root(root: Path, issues: list[Issue]) -> str | None:
-    """Read the optional store-level ``ROOT`` file: one ref, nothing else."""
+    """Read the optional store-level ``ROOT`` file: one full ref, nothing else."""
     path = root / ROOT_FILE
     if not path.is_file():
         return None
@@ -473,9 +525,17 @@ def _read_declared_root(root: Path, issues: list[Issue]) -> str | None:
             root=root,
         )
         return None
-    try:
-        return ref_of(*parse_ref(text))
-    except ValueError:
+    if is_bare_ref(text):
+        _issue(
+            issues,
+            "error",
+            "bare-ref",
+            f"ROOT file holds bare id {text!r}; use a full <id>-<version> ref",
+            path=path,
+            root=root,
+        )
+        return None
+    if not is_full_ref(text):
         _issue(
             issues,
             "error",
@@ -485,6 +545,7 @@ def _read_declared_root(root: Path, issues: list[Issue]) -> str | None:
             root=root,
         )
         return None
+    return text
 
 
 def _resolve_implicit_link_types(
@@ -534,15 +595,45 @@ def _ref_sort_key(node: Node) -> tuple[int, int]:
     return node.id, node.version
 
 
-def load_view(root: str | Path | Store, ref: str | int = "1") -> View:
-    """Walk effective ``contains`` from ``ref`` and return the closure."""
+def require_full_ref(text: str, role: str) -> str:
+    """Return ``text`` as a full ref or raise a :class:`BreakdownError`."""
+    if is_full_ref(text):
+        return text.strip()
+    if is_bare_ref(text):
+        raise BreakdownError(
+            f"bare ref '{text}' in {role}; use a full <id>-<version> ref"
+        )
+    raise BreakdownError(f"invalid ref '{text}' in {role}")
+
+
+def load_view(root: str | Path | Store, ref: str | None = None) -> View:
+    """Walk declared ``contains`` from ``ref`` and return the closure.
+
+    ``ref`` defaults to the store root.  Walking a bare ref raises
+    :class:`BreakdownError` naming the offending entry: a view can never pick a
+    version for the caller.
+    """
     store = root if isinstance(root, Store) else load(root)
     issues: list[Issue] = []
-    try:
-        canonical = ref_of(*parse_ref(ref))
-    except ValueError:
-        issues.append(Issue("error", "invalid-ref", f"invalid view ref {ref!r}"))
-        return View(store=store, ref=str(ref), nodes={}, edges=[], issues=issues)
+    if ref is None:
+        canonical = store.root_ref
+        if canonical is None:
+            issues.append(
+                Issue("error", "view-root-missing", "store has no nodes")
+            )
+            return View(store=store, ref="", nodes={}, edges=[], issues=issues)
+    else:
+        try:
+            node_id, version = parse_selector(ref)
+        except ValueError:
+            issues.append(Issue("error", "invalid-ref", f"invalid view ref {ref!r}"))
+            return View(store=store, ref=str(ref), nodes={}, edges=[], issues=issues)
+        if version is None:
+            raise BreakdownError(
+                f"bare ref '{ref}' used as a view root; resolve it through a view "
+                "first"
+            )
+        canonical = ref_of(node_id, version)
 
     if canonical not in store.nodes:
         issues.append(
@@ -559,47 +650,52 @@ def load_view(root: str | Path | Store, ref: str | int = "1") -> View:
     parents: dict[str, str] = {}
     path: list[str] = []
 
-    def walk(ref: str, parent: str | None) -> None:
-        if ref in path:
-            cycle = path[path.index(ref) :] + [ref]
+    def walk(current: str, parent: str | None) -> None:
+        if not is_full_ref(current):
+            raise BreakdownError(
+                f"bare ref '{current}' in contains of '{parent or canonical}'; "
+                "data refs must be full <id>-<version> refs"
+            )
+        if current in path:
+            cycle = path[path.index(current) :] + [current]
             issues.append(
                 Issue(
                     "error",
                     "containment-cycle",
                     "containment cycle: " + " -> ".join(cycle),
-                    node=ref,
+                    node=current,
                 )
             )
             return
-        if ref in included:
-            previous = parents.get(ref)
+        if current in included:
+            previous = parents.get(current)
             if parent is not None and previous != parent:
                 issues.append(
                     Issue(
                         "error",
                         "multiple-parents",
-                        f"node '{ref}' is reached through two parents in view "
+                        f"node '{current}' is reached through two parents in view "
                         f"{canonical}: '{previous}', '{parent}'",
-                        node=ref,
+                        node=current,
                     )
                 )
             return
-        node = store.nodes.get(ref)
+        node = store.nodes.get(current)
         if node is None:
             issues.append(
                 Issue(
                     "error",
                     "missing-target",
-                    f"contains target '{ref}' does not exist",
+                    f"contains target '{current}' does not exist",
                     node=path[-1] if path else None,
                 )
             )
             return
-        included[ref] = node
-        parents[ref] = parent or ""
-        path.append(ref)
-        for child in store.effective_contains(ref):
-            walk(child, ref)
+        included[current] = node
+        parents[current] = parent or ""
+        path.append(current)
+        for child in store.effective_contains(current):
+            walk(child, current)
         path.pop()
 
     walk(canonical, None)
@@ -616,6 +712,11 @@ def load_view(root: str | Path | Store, ref: str | int = "1") -> View:
     edges: list[Edge] = []
     for node in included.values():
         for link in node.links:
+            if not is_full_ref(link.to):
+                raise BreakdownError(
+                    f"bare ref '{link.to}' in links of '{node.ref}'; data refs "
+                    "must be full <id>-<version> refs"
+                )
             if link.to in included:
                 edges.append(
                     Edge(

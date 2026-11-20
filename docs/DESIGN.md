@@ -51,14 +51,18 @@ declared closure, and make stale material visible rather than silently present.
 ### 3.1 Filenames
 
 ```
-nodes/5.md          main version of node 5
 nodes/5-1.md        version 1 of node 5
 nodes/5-2.md        version 2 of node 5
 ```
 
-- Id and version are positive integers, no leading zeros; main has no suffix.
-- Ref `5` or `5-1` is the only citation form; the filename is the authority.
-  A front-matter `id`, when present, must match the logical id.
+- Id and version are positive integers, no leading zeros; version starts at 1;
+  bare `nodes/5.md` is invalid.
+- The logical id is the part before the dash (`5`); versions of one id are
+  peers with no privileged version.
+- A ref in data is always the full `5-1`; the filename is the authority. A
+  front-matter `id`, when present, must match the logical id.
+- A bare id on the command line (`bd show 5`) is a selector resolved inside the
+  selected view; it is never written to data.
 
 In a project these files live under `.bd_tree/nodes/`; the project root is the
 directory containing `.bd_tree/`. Classic stores with `<dir>/nodes/` remain
@@ -91,20 +95,21 @@ Everything else is arbitrary and preserved on export. Typical fields: `title`,
 `summary`, `layer`, `type`, `status`, `date`, `phase`, `audience`, `order`,
 `tags`.
 
-A link may be a bare ref: `links: ['10']` takes its edge type from node `10`'s
-own `type` field. Use the mapping form for an edge-specific label or freshness.
+A link may be a scalar ref: `links: ['10-1']` takes its edge type from node
+`10-1`'s own `type` field. Use the mapping form for an edge-specific label or
+freshness.
 
 Edge object:
 
 ```yaml
 links:
   - { to: 6-2, type: supports, propagates: true, pinned: "sha256:ab12cd34ef56" }
-  - { to: 27, type: see_also }
+  - { to: 27-1, type: see_also }
 ```
 
-- `to`: ref. `type`: arbitrary label, never validated against an enum. A bare
-  ref omits `type` and uses the target node's `type`; a history view's root
-  declares `type: decision`.
+- `to`: a full ref. `type`: arbitrary label, never validated against an enum. A
+  scalar ref omits `type` and uses the target node's `type`; a history view's
+  root declares `type: decision`.
 - `propagates`: opt-in freshness participation. `pinned`: target body hash
   recorded at the last reconciliation, written by `bd reconcile` and never
   required by hand.
@@ -114,15 +119,19 @@ links:
 `contains` is an ordered list of refs, in presentation order; the exporter and
 browser do not re-sort it.
 
-- Missing `contains` on a version inherits main's list; `contains: []` means no
-  children. `bd fork` materialises the effective list into the new version, so
-  later edits to main's containment do not silently change the alternative.
-- Containment is a tree **per view**: main and a version may both contain a node
-  in different views, but one view must not reach it through two parents.
+- A `contains` list holds full refs only. A node that omits `contains` is a
+  leaf; there is no inheritance from another version. `bd version` copies the
+  source file, so the copy keeps its declared list.
+- Containment is a tree **per view**: two versions of an id may each contain a
+  node in different views, but one view must not reach it through two parents,
+  and one view must not hold two versions of the same logical id
+  (`duplicate-id`). The chain selects exactly one version per id.
 - Global check: a ref is reachable from the root through `contains`, through
-  another file with the same id (main and its versions are alternatives for one
-  logical node), or through an outgoing link from a reachable node. A ref
-  connected by none of these paths is an `unreachable` error.
+  another file with the same logical id (versions are alternatives for one
+  logical node), or through an outgoing link from a reachable node. A logical
+  id connected by none of these paths is an `unreachable-node` warning.
+- A bare ref in data is a `bare-ref` error; malformed syntax is `invalid-ref`.
+  Views walk only full refs.
 
 Containment and semantics are separate: `contains` decides view membership and
 is a tree. `links` expresses provenance, support, contradiction, review, and
@@ -135,11 +144,12 @@ edge.
 
 A view is the containment closure rooted at one ref; `bd export tree`, the
 other `bd export` choices, and `bd work` take a root ref. The default root is
-the store's `ROOT` file when present, else the lowest main ref; an explicit ref
-where a command takes one wins over both. `bd check --view REF` only narrows
-reporting. `bd root REF` writes the file, `bd root --clear` removes it, and
-`bd root` prints `<ref>  (ROOT|lowest main)`. A declared but missing ref is
-`root-ref-missing`; malformed content is `invalid-root`. This default root is
+the store's `ROOT` file when present, else the lowest available node by
+`(id, version)`; an explicit ref where a command takes one wins over both.
+`bd check --view REF` only narrows reporting. `bd root REF` writes the file,
+`bd root --clear` removes it, and `bd root` prints `<ref>  (ROOT|lowest)`. A
+declared but missing ref is `root-ref-missing`; malformed content is
+`invalid-root`. This default root is
 separate from the view the work area holds: `bd root` changes the default used
 by commands, while `bd work REF` replaces the contents of `<project>/bd_work/`.
 `bd current` reports the area and the view actually there.
@@ -152,25 +162,27 @@ writable at a time. Two axes, deliberately separate:
 
 - **Solution boundary: git.** A branch and worktree hold one solution; git
   decides when to merge or discard it.
-- **Merge unit: the flat `nodes/` store.** One file per node and no nested
-  output keep conflicts local to the node that changed.
+- **Merge unit: the flat `nodes/` store.** One file per node version and no
+  nested output keep conflicts local to the version that changed.
 - **Within a checkout: views.** `bd contain`/`bd uncontain` shape one parent's
   list; `bd link`/`bd unlink` shape typed edges. Both edit only the source file
   and preserve arbitrary front matter and body bytes.
 
 ### 3.5 Versions
 
-- `5.md` is the mutable main version, the current truth. `5-1.md` and `5-2.md`
-  are alternatives or snapshots, immutable by convention, not enforcement.
-- `bd fork 5` copies main to the next free version and materialises the effective
-  `contains` list; `bd promote 5-2` copies the version onto main (`--keep`
-  retains it); `bd retire-version 5-2` deletes a non-main version.
-- Switching between full trees is `bd work REF` (the work area), `bd root REF`
-  (the store default), or repointing one parent with `bd uncontain` /
-  `bd contain`. `bd promote` is not a switch.
+- Every node file is a version: `5-1.md`, `5-2.md`, and so on are peers, each
+  immutable by convention, not enforcement. No version is privileged.
+- `bd version 5-1` copies a ref to the next free version of the same logical id
+  (or to `--version N`) and keeps the source file's declared `contains`;
+  `bd delete 5-2` deletes a version, refusing a `ROOT`, a reachable ref, or one
+  referenced by any `contains`/`links` unless `--force`.
+- The version current in a view is the one its parent's `contains` names. There
+  is no per-node pointer. Repoint one parent with `bd uncontain` / `bd contain`;
+  switch whole trees with `bd work REF` (the work area) or `bd root REF` (the
+  store default). No copy step exists.
 
-Version references in `contains` and `links` are exact (`6-2`, not `6`); this
-makes a view independent of later edits to main.
+Version references in `contains` and `links` are exact full refs (`6-2`, not
+`6`); this makes a view independent of later edits to any peer.
 
 Versions are **node-local** alternatives inside one branch. They are not the
 solution boundary and do not sync across branches. A solution-level alternative
@@ -181,8 +193,9 @@ version and a branch express the same thing, prefer the branch.
 
 A branch is an isolation boundary over a whole checkout, owned by git. A version
 is an alternative file for one node inside the current checkout. Neither can
-express the other: refs carry no branch name, `bd promote` never crosses a
-worktree, and a version is absent on another branch until the branches merge.
+express the other: refs carry no branch name, no operation copies a version
+across a worktree, and a version is absent on another branch until the branches
+merge.
 
 The full model, comparison table, and decision rule are in
 [`BRANCHES-AND-VERSIONS.md`](BRANCHES-AND-VERSIONS.md).
@@ -218,7 +231,7 @@ The project keeps exactly one writable work area:
 the project root is `<dir>`, so the work area is still `<dir>/bd_work/`.
 
 ```text
-bd_work/claims/thesis-claim.md -> ../../.bd_tree/nodes/49.md
+bd_work/claims/thesis-claim.md -> ../../.bd_tree/nodes/49-1.md
 ```
 
 - Each node `.md` is a relative symlink to its node file; editing the link edits
@@ -308,9 +321,10 @@ styling is chosen by arbitrary fields (`--color-by`, `--shape-by`); and
 
 1. **Running integer ids, no type prefixes.** Simpler filenames and refs; type
    information lives in front matter. Cost: ids are less self-describing.
-2. **Flat storage, one file per ref.** Per-node diffs and merges, no path churn
-   when titles change.
-3. **Versions as filename suffixes.** `5`, `5-1`, `5-2`; main is unsuffixed.
+2. **Flat storage, one file per node version.** Per-version diffs and merges, no
+   path churn when titles change.
+3. **Versions as mandatory filename suffixes.** `5-1`, `5-2`; every node is a
+   version and no unsuffixed file exists.
 4. **Containment as explicit ordered data.** The tree survives renames of refs
    and can differ per view.
 5. **Views as closures, not branches.** No branch names, branch directories, or
@@ -332,10 +346,10 @@ styling is chosen by arbitrary fields (`--color-by`, `--shape-by`); and
     Structural edits go through `bd contain` / `bd uncontain` / `bd link` /
     `bd unlink`.
 13. **Branches and versions are disjoint layers.** Branches isolate whole
-    checkouts; versions are alternative files for single nodes. No cross-branch
-    refs, no branch selector, no per-node active-version selector, no promote
-    across branches. The one store-level pointer is `ROOT`, a single ref line
-    naming the default view root; a folder-level `.bd_root` pointer names a
+    checkouts; versions are peer files for single nodes. No cross-branch refs,
+    no branch selector, no per-node active-version selector, and no copy step
+    across branches. The one store-level pointer is `ROOT`, a single full ref
+    line naming the default view root; a folder-level `.bd_root` pointer names a
     store for discovery only. See
     [`BRANCHES-AND-VERSIONS.md`](BRANCHES-AND-VERSIONS.md).
 14. **One work area at a time.** `<project>/bd_work/` holds exactly one view;
@@ -348,7 +362,7 @@ styling is chosen by arbitrary fields (`--color-by`, `--shape-by`); and
 
 - **Typed ids (`INT-001`, `CLM-003`).** Readable, but the prefix duplicates
   `type`, adds validation, and makes running order awkward. Simplicity won.
-- **Branch directories (`branches/<name>/nodes/`).** Clean inheritance, but a
+- **Branch directories (`branches/<name>/nodes/`).** Clean layering, but a
   global selector and branch metadata returned, needing duplicate state.
 - **Filename branches (`<id>-<branch>`).** Better, but branch names were
   global, and exclusion needed a marker. Versions are smaller: the branch is
@@ -367,10 +381,10 @@ styling is chosen by arbitrary fields (`--color-by`, `--shape-by`); and
   worse conflict handling.
 - **Root/active-version pointers.** A per-node selector that chooses among
   alternatives implicitly stays rejected: refs and diffs must show the choice.
-  A single store-level `ROOT` ref line is accepted as the default view root; it
-  selects no version, only the ref a bare command starts from (§7.10). A
-  folder-level `.bd_root` pointer is accepted only for store discovery and
-  selects no view or version.
+  A single store-level `ROOT` line is accepted as the default view root; it
+  names the full ref a bare command starts from and selects no version for any
+  other node (§7.10). A folder-level `.bd_root` pointer is accepted only for
+  store discovery and selects no view or version.
 - **`use` selection maps for cross-branch mixes.** A solution is a branch;
   mixing is a merge or `git restore --source`; a selector would be a second
   branch mechanism.
@@ -382,12 +396,15 @@ styling is chosen by arbitrary fields (`--color-by`, `--shape-by`); and
 
 These are enforced or assumed:
 
-1. The filename is identity and version.
-2. Main exists for every id that has a version.
+1. The filename is identity and version: every node file is `<id>-<version>.md`,
+   version >= 1; a bare `<id>.md` is invalid.
+2. `contains`, `links`, and `ROOT` hold full `id-version` refs; a bare id is a
+   CLI selector resolved inside the selected view and is never written to data.
 3. `contains` order is display order.
-4. Containment is a tree per view; no node is reached twice in one view.
-5. Every id is reachable from the global root through containment, through
-   another file of the same id, or through a link from a reachable node.
+4. Containment is a tree per view; no node is reached twice in one view, and
+   one view holds at most one version per logical id (`duplicate-id`).
+5. Every logical id is reachable from the global root through containment,
+   through another file of the same id, or through a link from a reachable node.
 6. Semantic links resolve in the store; links outside a view never pull in and
    warn unless the target is another containment root.
 7. Arbitrary front matter is preserved on export.
@@ -396,7 +413,7 @@ These are enforced or assumed:
 10. No generated artifact is committed.
 11. A view never crosses a branch, and neither does a version: a version is a
     node-local file in one branch; a solution is a git branch and worktree;
-    neither substitutes for the other, and promote never crosses a branch.
+    neither substitutes for the other, and no ref resolves through a branch.
 12. One worktree per solution. A project has exactly one writable work area,
     `<project>/bd_work/`, holding one view at a time; it is disposable and
     ignored. Read-only exports are separate and never a second work area.
@@ -404,9 +421,8 @@ These are enforced or assumed:
 
 ## 10. Known limits
 
-- Node-local versions do not sync across branches; git merges sync solutions.
-- No three-way merge between node versions: promotion is a copy; synthesis is
-  manual.
+- Node versions do not sync across branches; git merges sync solutions.
+- No three-way merge between node versions; synthesis is manual.
 - One worktree per solution; switching branches can leave a layout pointing
   at paths absent from the new branch, so rebuild and run `--status`.
 - No locking: concurrent editors can race, and git is the conflict detector.
@@ -419,11 +435,12 @@ These are enforced or assumed:
 ## 11. Open questions
 
 1. Are versions immutable snapshots enforced by convention, or should the tool
-   create a new version on every edit of a non-main file?
-2. Should a hand-written version inherit `contains` by default (current) or
-   require the full list? `bd fork` already materialises it.
+   create a new version on every edit?
+2. Should `bd version` repoint the parent automatically, or leave repointing to
+   `bd contain` / `bd uncontain`?
 3. Do we need filtered views (selectors over fields) in addition to closures?
-4. How should two views be merged: promote one, or synthesize a third version?
+4. How should two views be merged: repoint one parent, or synthesize a new
+   version and repoint to it?
 5. Should concurrent agent sessions share the one work area under leases, or
    each use a separate git worktree?
 6. Are the generic projections (`tree`/`context`/`dot`) enough, or do we need

@@ -9,9 +9,11 @@ and `--max-chars` on any body dump.
   A nested store needs `BD_ROOT=path/to/project` or `--root path/to/project`.
 - Project layout: store at `<project>/.bd_tree/`, nodes under
   `.bd_tree/nodes/`. Classic layout: `nodes/` at the repo root.
-- The default view root is `ROOT` when present, else the lowest main ref. An
-  explicit ref argument or `--view` wins over both; `bd check --view` only
-  narrows reporting.
+- The default view root is `ROOT` when present, else the lowest available node
+  by `(id, version)`. An explicit ref argument or `--view` wins over both;
+  `bd check --view` only narrows reporting.
+- Data refs are full `id-version`. A bare id on the command line is a selector
+  resolved inside the selected view, never written to data.
 - `bd work REF` does **not** change the default root; it changes the view held
   by the work area. Track them separately.
 
@@ -26,9 +28,9 @@ capped by `--max-chars`. `--links` appends a `links:` footer for edges leaving
 the view:
 
 ```
-1 Root
-+- 2 Why does this exist?
-`- 3 What is true?
+1-1 Root
++- 2-1 Why does this exist?
+`- 3-1 What is true?
 ```
 
 `bd show REF+N` — the node plus N levels of descendant bodies, each capped at
@@ -44,7 +46,7 @@ the path, `--view` only the ref, and it errors when no area exists.
 `*`. A history or decisions view appears here without joining the default
 closure; switch to it with `bd work REF` when you need to edit it.
 
-`bd root` — `<ref>  (ROOT|lowest main)`.
+`bd root` — `<ref>  (ROOT|lowest)`.
 
 `bd check` — `N nodes, N errors, N warnings (view REF)` on the last line.
 `bd path REF` — the ancestor chain, oldest first.

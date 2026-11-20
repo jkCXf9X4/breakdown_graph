@@ -28,6 +28,7 @@ from .exporter import _build_paths, _index_text, _prepare_out
 from .frontmatter import FrontMatterError, parse_document
 from .loader import load, load_view
 from .model import View
+from .navigate import resolve_ref
 
 GENERATED = ("INDEX.md", "AGENTS.md", "REFS.md")
 GENERATED_SET = frozenset(GENERATED)
@@ -141,9 +142,12 @@ class WorkResult:
 
 def _resolve_view(root: str | Path, ref: str | int | None) -> View:
     store = load(root)
-    target = store.root_ref if ref is None else ref
-    if target is None:
-        raise BreakdownError("store has no main nodes")
+    if ref is None:
+        target = store.root_ref
+        if target is None:
+            raise BreakdownError("store has no nodes")
+    else:
+        target = resolve_ref(store, ref)
     view = load_view(store, target)
     errors = [issue for issue in view.issues if issue.level == "error"]
     if errors:
@@ -187,7 +191,7 @@ def _depth_view(view: View, depth: int | None) -> View:
     walk(view.ref, 0)
     nodes = {ref: node for ref, node in view.nodes.items() if ref in kept}
     edges = [
-        edge for edge in view.edges if edge.source in kept and edge.to in kept
+        edge for edge in view.edges if edge.source in kept and edge.target in kept
     ]
     return View(
         store=view.store,
@@ -421,7 +425,10 @@ def _agents_text(
             "- This is the single writable work area. `bd work REF` replaces "
             "its contents when the view changes."
         ),
-        "- Create new nodes with `bd new` or `bd fork`, never by adding files here.",
+        (
+            "- Create nodes with `bd new` and branch a node with `bd version`, "
+            "never by adding files here."
+        ),
         "- `INDEX.md`, `AGENTS.md` and `REFS.md` are generated; do not edit them.",
         (
             f"- `bd work {ref} --status` and `bd work {ref} --writeback` are the "
@@ -614,7 +621,7 @@ def edit_path(
     """
     current = _current_area(root, out)
     view = _depth_view(_resolve_view(root, current.ref), current.depth)
-    wanted = str(ref)
+    wanted = resolve_ref(view.store, ref, view_ref=current.ref)
     if wanted not in view.nodes:
         raise ExportError(
             f"ref {wanted} is not in current view {current.view_ref}; "

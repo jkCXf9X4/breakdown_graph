@@ -20,12 +20,12 @@ from bd_tree.navigate import (
 def _tree(write, tmp_path, body_by_id: dict[int, str] | None = None):
     nodes = tmp_path / "nodes"
     bodies = body_by_id or {}
-    write(nodes, 1, title="Root", contains=["2", "3"], body=bodies.get(1, "root body\n"))
+    write(nodes, 1, title="Root", contains=["2-1", "3-1"], body=bodies.get(1, "root body\n"))
     write(
         nodes,
         2,
         title="Child",
-        contains=["4"],
+        contains=["4-1"],
         body=bodies.get(2, "child body\n"),
     )
     write(nodes, 3, title="Sibling", body=bodies.get(3, "sibling body\n"))
@@ -57,7 +57,9 @@ def test_cli_rejects_unknown_ref_and_bad_depth(write, tmp_path, capsys):
     assert main(["show", "99", "--root", str(tmp_path)]) == 1
     assert main(["show", "1+oops", "--root", str(tmp_path)]) == 1
     assert main(["show", "1", "--depth", "-1", "--root", str(tmp_path)]) == 1
-    assert "unknown ref" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "id 99" in err
+    assert "view 1-1" in err
 
 
 # -- show --------------------------------------------------------------------
@@ -65,17 +67,17 @@ def test_cli_rejects_unknown_ref_and_bad_depth(write, tmp_path, capsys):
 
 def test_show_root_only_by_default(write, tmp_path):
     store = _tree(write, tmp_path)
-    out = render_show(store, "1")
-    assert out.startswith("# 1  Root")
-    assert "## 2" not in out
+    out = render_show(store, "1-1")
+    assert out.startswith("# 1-1  Root")
+    assert "## 2-1" not in out
     assert "child body" not in out
 
 
 def test_show_depth_two_includes_grandchildren_in_order(write, tmp_path):
     store = _tree(write, tmp_path)
-    out = render_show(store, "1", depth=2)
-    assert out.index("## 2  Child") < out.index("### 4  Grandchild")
-    assert out.index("### 4  Grandchild") < out.index("## 3  Sibling")
+    out = render_show(store, "1-1", depth=2)
+    assert out.index("## 2-1  Child") < out.index("### 4-1  Grandchild")
+    assert out.index("### 4-1  Grandchild") < out.index("## 3-1  Sibling")
     assert "child body" in out
     assert "grandchild body" in out
 
@@ -85,13 +87,13 @@ def test_show_no_body_and_max_chars_and_fields(write, tmp_path):
     write(nodes, 1, title="Root", layer="intent", type="intent", body="abcdefghij\n")
     store = load(tmp_path)
 
-    stripped = render_show(store, "1", no_body=True)
+    stripped = render_show(store, "1-1", no_body=True)
     assert "abcdefghij" not in stripped
 
-    clipped = render_show(store, "1", max_chars=5)
-    assert "abcde ... [truncated; bd show 1]" in clipped
+    clipped = render_show(store, "1-1", max_chars=5)
+    assert "abcde ... [truncated; bd show 1-1]" in clipped
 
-    selected = render_show(store, "1", fields=["layer"])
+    selected = render_show(store, "1-1", fields=["layer"])
     assert "layer: intent" in selected
     assert "type:" not in selected
 
@@ -99,31 +101,33 @@ def test_show_no_body_and_max_chars_and_fields(write, tmp_path):
 def test_show_auto_cap_by_depth(write, tmp_path):
     nodes = tmp_path / "nodes"
     body = "x" * 5000
-    write(nodes, 1, title="Root", contains=["2"], body=body + "\n")
+    write(nodes, 1, title="Root", contains=["2-1"], body=body + "\n")
     write(nodes, 2, title="Child", body=body + "\n")
     store = load(tmp_path)
 
-    full = render_show(store, "1")
+    full = render_show(store, "1-1")
     assert body in full
     assert "[truncated" not in full
 
-    capped = render_show(store, "1", depth=1)
+    capped = render_show(store, "1-1", depth=1)
     assert body not in capped
-    assert "[truncated; bd show 1]" in capped
-    assert "[truncated; bd show 2]" in capped
+    assert "[truncated; bd show 1-1]" in capped
+    assert "[truncated; bd show 2-1]" in capped
 
-    explicit_full = render_show(store, "1", depth=1, max_chars=0)
+    explicit_full = render_show(store, "1-1", depth=1, max_chars=0)
     assert body in explicit_full
     assert "[truncated" not in explicit_full
 
-    explicit_cap = render_show(store, "1", max_chars=10)
-    assert "xxxxxxxxxx ... [truncated; bd show 1]" in explicit_cap
+    explicit_cap = render_show(store, "1-1", max_chars=10)
+    assert "xxxxxxxxxx ... [truncated; bd show 1-1]" in explicit_cap
 
 
 def test_path_command_prints_breadcrumb(write, tmp_path, capsys):
     _tree(write, tmp_path)
     assert main(["path", "4", "--root", str(tmp_path)]) == 0
-    assert capsys.readouterr().out == "1  Root\n2  Child\n4  Grandchild\n"
+    assert capsys.readouterr().out == (
+        "1-1  Root\n2-1  Child\n4-1  Grandchild\n"
+    )
 
 
 # -- tree --------------------------------------------------------------------
@@ -131,89 +135,89 @@ def test_path_command_prints_breadcrumb(write, tmp_path, capsys):
 
 def test_tree_glyphs(write, tmp_path):
     store = _tree(write, tmp_path)
-    assert render_tree(store, "1", depth=2) == (
-        "1 Root\n"
-        "+- 2 Child\n"
-        "|  `- 4 Grandchild\n"
-        "`- 3 Sibling"
+    assert render_tree(store, "1-1", depth=2) == (
+        "1-1 Root\n"
+        "+- 2-1 Child\n"
+        "|  `- 4-1 Grandchild\n"
+        "`- 3-1 Sibling"
     )
 
 
 def test_tree_default_depth_is_two_and_zero_is_unlimited(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, title="One", contains=["2"])
-    write(nodes, 2, title="Two", contains=["3"])
-    write(nodes, 3, title="Three", contains=["4"])
+    write(nodes, 1, title="One", contains=["2-1"])
+    write(nodes, 2, title="Two", contains=["3-1"])
+    write(nodes, 3, title="Three", contains=["4-1"])
     write(nodes, 4, title="Four")
     store = load(tmp_path)
 
-    assert "4 Four" not in render_tree(store, "1", depth=2)
-    assert "3 Three" in render_tree(store, "1", depth=2)
-    assert "4 Four" in render_tree(store, "1", depth=0)
+    assert "4-1 Four" not in render_tree(store, "1-1", depth=2)
+    assert "3-1 Three" in render_tree(store, "1-1", depth=2)
+    assert "4-1 Four" in render_tree(store, "1-1", depth=0)
 
 
 def test_tree_summary_flag(write, tmp_path):
     store = _tree(write, tmp_path)
-    out = render_tree(store, "1", depth=1, summary=True)
-    assert "2 Child  summary" in out
+    out = render_tree(store, "1-1", depth=1, summary=True)
+    assert "2-1 Child  summary" in out
 
 
 def test_tree_renders_explicit_root(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 7, title="Seven", contains=["8"])
+    write(nodes, 7, title="Seven", contains=["8-1"])
     write(nodes, 8, title="Eight")
     store = load(tmp_path)
-    out = render_tree(store, "7", depth=1)
-    assert out.startswith("7 Seven")
+    out = render_tree(store, "7-1", depth=1)
+    assert out.startswith("7-1 Seven")
 
 
 def _linked_tree(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, title="Root", contains=["2"])
-    write(nodes, 2, title="Child", links=[{"to": "10", "type": "history"}])
+    write(nodes, 1, title="Root", contains=["2-1"])
+    write(nodes, 2, title="Child", links=[{"to": "10-1", "type": "history"}])
     write(nodes, 10, title="Decisions")
     return load(tmp_path)
 
 
 def test_show_links_footer_lists_edges_leaving_the_view(write, tmp_path):
     store = _linked_tree(write, tmp_path)
-    assert "links:" not in render_show(store, "1", depth=1)
-    out = render_show(store, "1", depth=1, links=True)
-    assert out.endswith("links:\n- 2 -> 10  Decisions  (history)")
+    assert "links:" not in render_show(store, "1-1", depth=1)
+    out = render_show(store, "1-1", depth=1, links=True)
+    assert out.endswith("links:\n- 2-1 -> 10-1  Decisions  (history)")
 
 
 def test_tree_links_footer_lists_edges_leaving_the_view(write, tmp_path):
     store = _linked_tree(write, tmp_path)
-    assert "links:" not in render_tree(store, "1", depth=1)
-    out = render_tree(store, "1", depth=1, links=True)
-    assert out.endswith("links:\n- 2 -> 10  Decisions  (history)")
+    assert "links:" not in render_tree(store, "1-1", depth=1)
+    out = render_tree(store, "1-1", depth=1, links=True)
+    assert out.endswith("links:\n- 2-1 -> 10-1  Decisions  (history)")
 
 
-def test_show_links_footer_uses_the_target_type_for_a_bare_ref(write, tmp_path):
+def test_show_links_footer_uses_the_target_type_for_a_scalar_link(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, title="Root", contains=["2"])
-    write(nodes, 2, title="Child", links=["10"])
+    write(nodes, 1, title="Root", contains=["2-1"])
+    write(nodes, 2, title="Child", links=["10-1"])
     write(nodes, 10, title="Decisions", type="decision")
     store = load(tmp_path)
-    out = render_show(store, "1", depth=1, links=True)
-    assert out.endswith("links:\n- 2 -> 10  Decisions  (decision)")
+    out = render_show(store, "1-1", depth=1, links=True)
+    assert out.endswith("links:\n- 2-1 -> 10-1  Decisions  (decision)")
 
 
 def test_cli_show_links_flag(write, tmp_path, capsys):
     _linked_tree(write, tmp_path)
     assert (
-        main(["show", "1", "--depth", "1", "--links", "--root", str(tmp_path)]) == 0
+        main(["show", "1-1", "--depth", "1", "--links", "--root", str(tmp_path)]) == 0
     )
     out = capsys.readouterr().out
     assert "links:" in out
-    assert "- 2 -> 10  Decisions  (history)" in out
+    assert "- 2-1 -> 10-1  Decisions  (history)" in out
 
 
 def test_tree_default_uses_root_file(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2"])
+    write(nodes, 1, contains=["2-1"])
     write(nodes, 2)
-    write(nodes, 5, version=1, contains=["2"])
+    write(nodes, 5, version=1, contains=["2-1"])
     (tmp_path / "ROOT").write_text("5-1\n", encoding="utf-8")
     assert main(["tree", "--root", str(tmp_path)]) == 0
     assert capsys.readouterr().out.startswith("5-1")
@@ -221,12 +225,11 @@ def test_tree_default_uses_root_file(write, tmp_path, capsys):
 
 def test_root_command_show_set_clear(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2"])
+    write(nodes, 1, contains=["2-1"])
     write(nodes, 2)
-    write(nodes, 1, version=1, contains=["2"])
     assert main(["root", "--root", str(tmp_path)]) == 0
-    assert capsys.readouterr().out.split()[0] == "1"
-    assert main(["root", "1-1", "--root", str(tmp_path)]) == 0
+    assert capsys.readouterr().out.split()[0] == "1-1"
+    assert main(["root", "1", "--root", str(tmp_path)]) == 0
     assert capsys.readouterr().out.startswith("1-1")
     assert (tmp_path / "ROOT").read_text(encoding="utf-8").strip() == "1-1"
     assert main(["root", "--clear", "--root", str(tmp_path)]) == 0
@@ -246,14 +249,14 @@ def test_tree_columns_header_and_indentation(write, tmp_path, capsys):
     )
     lines = capsys.readouterr().out.splitlines()
     assert lines[0] == "ref  title"
-    assert lines[1].startswith("2  Child")
-    assert lines[2].startswith("3  Sibling")
-    assert not any(line.startswith("1  Root") for line in lines)
+    assert lines[1].startswith("2-1  Child")
+    assert lines[2].startswith("3-1  Sibling")
+    assert not any(line.startswith("1-1  Root") for line in lines)
 
 
 def test_tree_columns_default_root_and_summary_truncation(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, title="Root", contains=["2"])
+    write(nodes, 1, title="Root", contains=["2-1"])
     write(nodes, 2, title="Child", summary="s" * 150)
     assert (
         main(
@@ -282,9 +285,9 @@ def test_tree_columns_depth_zero_is_unlimited(write, tmp_path, capsys):
         == 0
     )
     lines = capsys.readouterr().out.splitlines()
-    assert lines[1].startswith("2  Child")
-    assert any(line.strip().startswith("4  Grandchild") for line in lines)
-    assert any(line.startswith("3  Sibling") for line in lines)
+    assert lines[1].startswith("2-1  Child")
+    assert any(line.strip().startswith("4-1  Grandchild") for line in lines)
+    assert any(line.startswith("3-1  Sibling") for line in lines)
 
 
 # -- find --------------------------------------------------------------------
@@ -296,7 +299,7 @@ def _find_tree(write, tmp_path):
         nodes,
         1,
         title="Root topic",
-        contains=["2"],
+        contains=["2-1"],
         layer="intent",
         body="alpha\ncredibility appears here\n",
     )
@@ -314,13 +317,13 @@ def _find_tree(write, tmp_path):
 def test_find_title_hit(write, tmp_path):
     store = _find_tree(write, tmp_path)
     out = render_find(store, "credibility child")
-    assert "2  1 > 2  Credibility child" in out
+    assert "2-1  1-1 > 2-1  Credibility child" in out
 
 
 def test_find_body_hit_has_line_number(write, tmp_path):
     store = _find_tree(write, tmp_path)
     out = render_find(store, "credibility body")
-    assert "1 > 2:2  credibility body line" in out
+    assert "1-1 > 2-1:2  credibility body line" in out
 
 
 def test_find_field_restricts_search(write, tmp_path):
@@ -355,9 +358,9 @@ def test_find_regex_opt_in(write, tmp_path):
 
 def _two_trees(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, title="First root", contains=["2"])
+    write(nodes, 1, title="First root", contains=["2-1"])
     write(nodes, 2, title="First child", body="needle first\n")
-    write(nodes, 5, title="Second root", contains=["6"])
+    write(nodes, 5, title="Second root", contains=["6-1"])
     write(nodes, 6, title="Second child", body="needle second\n")
     return load(tmp_path)
 
@@ -368,7 +371,7 @@ def test_find_default_scopes_to_root(write, tmp_path):
     assert "First child" in out
     assert "Second child" not in out
 
-    (tmp_path / "ROOT").write_text("5\n", encoding="utf-8")
+    (tmp_path / "ROOT").write_text("5-1\n", encoding="utf-8")
     store = load(tmp_path)
     out = render_find(store, "needle")
     assert "Second child" in out
@@ -377,7 +380,7 @@ def test_find_default_scopes_to_root(write, tmp_path):
 
 def test_find_view_restricts_to_named_closure(write, tmp_path):
     store = _two_trees(write, tmp_path)
-    out = render_find(store, "needle", view="5")
+    out = render_find(store, "needle", view="5-1")
     assert "Second child" in out
     assert "Second root" not in out
     assert "First child" not in out
@@ -393,7 +396,7 @@ def test_find_all_nodes_preserves_whole_store(write, tmp_path):
 def test_find_rejects_an_unknown_view(write, tmp_path):
     store = _two_trees(write, tmp_path)
     with pytest.raises(NavigationError):
-        render_find(store, "needle", view="99")
+        render_find(store, "needle", view="99-1")
 
 
 def test_find_regex_flag_uses_regex(write, tmp_path, capsys):
@@ -407,16 +410,16 @@ def test_find_regex_flag_uses_regex(write, tmp_path, capsys):
 
 def test_path_root_to_leaf(write, tmp_path):
     store = _tree(write, tmp_path)
-    assert render_path(store, "4") == "1  Root\n2  Child\n4  Grandchild"
+    assert render_path(store, "4-1") == "1-1  Root\n2-1  Child\n4-1  Grandchild"
 
 
 def test_path_version_ref(write, tmp_path):
-    store = _tree(write, tmp_path)
-    write(tmp_path / "nodes", 2, version=1, title="Child v1", body="v1\n")
+    nodes = tmp_path / "nodes"
+    _tree(write, tmp_path)
+    write(nodes, 2, version=2, title="Child v2", body="v2\n")
+    write(nodes, 1, version=1, title="Root", contains=["2-2"], body="root body\n")
     store = load(tmp_path)
-    assert render_path(store, "2-1") == (
-        "1  Root\n2  Child\n2-1  Child v1"
-    )
+    assert render_path(store, "2-2") == "1-1  Root\n2-2  Child v2"
 
 
 # -- views -------------------------------------------------------------------
@@ -424,8 +427,8 @@ def test_path_version_ref(write, tmp_path):
 
 def test_view_roots_lists_each_complete_tree(write, tmp_path):
     store = _two_trees(write, tmp_path)
-    assert [node.ref for node in view_roots(store)] == ["1", "5"]
+    assert [node.ref for node in view_roots(store)] == ["1-1", "5-1"]
 
-    write(tmp_path / "nodes", 5, version=1, title="Second root v1", contains=["6"])
+    write(tmp_path / "nodes", 5, version=2, title="Second root v2", contains=["6-1"])
     store = load(tmp_path)
-    assert [node.ref for node in view_roots(store)] == ["1", "5", "5-1"]
+    assert [node.ref for node in view_roots(store)] == ["1-1", "5-1", "5-2"]

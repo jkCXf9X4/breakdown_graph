@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from bd_tree.api import check
+import pytest
+
+from bd_tree.api import check, load, load_view
+from bd_tree.errors import BreakdownError
 from bd_tree.frontmatter import render_document
 
 
@@ -12,8 +15,10 @@ def test_filename_grammar_and_id_mismatch(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1)
     (nodes / "01.md").write_text("---\nid: 1\n---\n", encoding="utf-8")
+    (nodes / "2.md").write_text("---\nid: 2\n---\n", encoding="utf-8")
+    (nodes / "5-0.md").write_text("---\nid: 5\n---\n", encoding="utf-8")
     meta = {
-        "id": 3,
+        "id": 4,
         "type": "intent",
         "layer": "intent",
         "title": "two",
@@ -21,17 +26,20 @@ def test_filename_grammar_and_id_mismatch(write, tmp_path):
         "date": "2026-01-01",
         "status": "current",
     }
-    (nodes / "2.md").write_text(render_document(meta, "body\n"), encoding="utf-8")
+    (nodes / "3-1.md").write_text(render_document(meta, "body\n"), encoding="utf-8")
     codes = _codes(check(tmp_path))
     assert "invalid-filename" in codes
     assert "id-filename-mismatch" in codes
 
 
-def test_missing_main_for_version(write, tmp_path):
-    write(tmp_path / "nodes", 1)
-    write(tmp_path / "nodes", 3, version=1)
-    codes = _codes(check(tmp_path))
-    assert "missing-main" in codes
+def test_version_without_contains_is_a_leaf(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2)
+    result = check(tmp_path)
+    assert result.ok
+    assert "missing-main" not in _codes(result)
+    assert load(tmp_path).effective_contains("2-1") == []
 
 
 def test_dangling_link_and_external_link(write, tmp_path):
@@ -113,30 +121,59 @@ def test_per_view_two_parents_is_an_error(write, tmp_path):
     assert any(issue.code == "multiple-parents" for issue in result.errors)
 
 
-def test_main_and_version_may_be_parents_in_different_views(write, tmp_path):
+def test_peer_versions_may_be_parents_in_different_views(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2"])
-    write(nodes, 2, contains=["3"])
+    write(nodes, 1, contains=["2-1"])
+    write(nodes, 2, contains=["3-1"])
     write(nodes, 3)
-    write(nodes, 2, version=1, contains=["3"])
+    write(nodes, 1, version=2, contains=["2-2"])
+    write(nodes, 2, version=2, contains=["3-1"])
     result = check(tmp_path)
     assert not any(issue.code == "multiple-parents" for issue in result.issues)
     assert result.ok
 
 
-def test_default_root_ref_is_lowest_main(write, tmp_path):
+def test_view_with_two_versions_of_one_id_is_an_error(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2-1", "2-2"])
+    write(nodes, 2)
+    write(nodes, 2, version=2)
+    result = check(tmp_path)
+    assert any(issue.code == "duplicate-id" for issue in result.errors)
+    assert not result.ok
+
+
+def test_default_root_is_lowest_id_version(write, tmp_path):
     write(tmp_path / "nodes", 5, contains=["6"])
     write(tmp_path / "nodes", 6)
     result = check(tmp_path)
     assert result.ok
+    assert result.view == "5-1"
     assert result.nodes_scanned == 2
 
 
-def test_declared_root_wins_over_lowest_main(write, tmp_path):
+def test_default_root_orders_by_id_then_version(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 2, contains=["3"])
+    write(nodes, 3)
+    write(nodes, 1, version=2)
+    result = check(tmp_path)
+    assert result.view == "1-2"
+    assert not any(
+        issue.code == "unreachable-node" and issue.node == "1-2"
+        for issue in result.issues
+    )
+    assert any(
+        issue.code == "unreachable-node" and issue.node == "2-1"
+        for issue in result.warnings
+    )
+
+
+def test_declared_root_wins_over_lowest_id_version(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"])
     write(nodes, 2)
-    write(nodes, 1, version=4, contains=["2"])
+    write(nodes, 1, version=4, contains=["2-1"])
     (tmp_path / "ROOT").write_text("1-4\n", encoding="utf-8")
     result = check(tmp_path)
     assert result.ok
@@ -157,7 +194,14 @@ def test_invalid_root_file_is_an_error(write, tmp_path):
     assert any(issue.code == "invalid-root" for issue in result.errors)
 
 
-def test_alternative_branch_is_reachable_through_its_id(write, tmp_path):
+def test_bare_root_ref_is_reported(write, tmp_path):
+    write(tmp_path / "nodes", 1)
+    (tmp_path / "ROOT").write_text("1\n", encoding="utf-8")
+    result = check(tmp_path)
+    assert any(issue.code == "bare-ref" for issue in result.errors)
+
+
+def test_non_selected_version_of_a_reachable_id_is_not_an_issue(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"])
     write(nodes, 2)
@@ -165,18 +209,25 @@ def test_alternative_branch_is_reachable_through_its_id(write, tmp_path):
     write(nodes, 4)
     result = check(tmp_path)
     assert result.ok
+    assert not any(
+        issue.code == "unreachable-node" and issue.node == "1-3"
+        for issue in result.issues
+    )
+    assert any(
+        issue.code == "unreachable-node" and issue.node == "4-1"
+        for issue in result.warnings
+    )
 
 
-def test_orphan_id_with_no_alternative_still_errors(write, tmp_path):
+def test_orphan_id_with_no_alternative_still_warns(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"])
     write(nodes, 2)
-    write(nodes, 1, version=3, contains=["4"])
-    write(nodes, 4)
     write(nodes, 9)
     result = check(tmp_path)
     assert any(
-        issue.code == "unreachable" and issue.node == "9" for issue in result.errors
+        issue.code == "unreachable-node" and issue.node == "9-1"
+        for issue in result.warnings
     )
 
 
@@ -188,7 +239,7 @@ def test_link_target_outside_contains_is_reachable(write, tmp_path):
     write(nodes, 11)
     result = check(tmp_path)
     assert result.ok
-    assert not any(issue.code == "unreachable" for issue in result.issues)
+    assert not any(issue.code == "unreachable-node" for issue in result.issues)
     assert not any(issue.code == "external-link" for issue in result.issues)
 
 
@@ -200,9 +251,9 @@ def test_link_from_an_unreachable_node_rescues_nothing(write, tmp_path):
     write(nodes, 4)
     result = check(tmp_path)
     unreachable = {
-        issue.node for issue in result.errors if issue.code == "unreachable"
+        issue.node for issue in result.warnings if issue.code == "unreachable-node"
     }
-    assert {"3", "4"} <= unreachable
+    assert {"3-1", "4-1"} <= unreachable
 
 
 def test_dangling_link_still_errors(write, tmp_path):
@@ -211,20 +262,47 @@ def test_dangling_link_still_errors(write, tmp_path):
     assert any(issue.code == "dangling-link" for issue in result.errors)
 
 
-def test_bare_link_to_a_target_without_type_is_invalid(write, tmp_path):
+def test_scalar_link_to_a_target_without_type_is_invalid(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, links=["10"])
     write(nodes, 10)
     result = check(tmp_path)
     assert any(
         issue.code == "invalid-link"
-        and "implicit link to '10'" in issue.message
+        and "implicit link to '10-1'" in issue.message
         for issue in result.errors
     )
 
 
-def test_bare_link_to_a_missing_node_still_dangles(write, tmp_path):
+def test_scalar_link_to_a_missing_node_still_dangles(write, tmp_path):
     write(tmp_path / "nodes", 1, links=["99"])
     result = check(tmp_path)
     assert any(issue.code == "dangling-link" for issue in result.errors)
     assert not any(issue.code == "invalid-link" for issue in result.errors)
+
+
+def test_bare_ref_in_contains_is_an_error_and_blocks_the_view(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], raw_refs=True)
+    write(nodes, 2)
+    result = check(tmp_path)
+    assert any(issue.code == "bare-ref" for issue in result.errors)
+    with pytest.raises(BreakdownError, match="bare ref '2'"):
+        load_view(tmp_path, "1-1")
+
+
+def test_bare_ref_in_links_is_an_error_and_blocks_the_view(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=["2"], raw_refs=True)
+    write(nodes, 2)
+    result = check(tmp_path)
+    assert any(issue.code == "bare-ref" for issue in result.errors)
+    with pytest.raises(BreakdownError, match="bare ref '2'"):
+        load_view(tmp_path, "1-1")
+
+
+def test_invalid_ref_in_contains_and_links_is_an_error(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["x"], links=["y-z"], raw_refs=True)
+    result = check(tmp_path)
+    assert any(issue.code == "invalid-ref" for issue in result.errors)

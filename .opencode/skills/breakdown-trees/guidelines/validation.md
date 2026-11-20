@@ -9,10 +9,11 @@ targets.
 Validates filenames, front matter, `contains`, `links`, reachability, tree
 shape for every node-rooted view, placement paths, pins, and size. `--view REF`
 narrows reporting to one closure; all views are still checked. The checked root
-is `ROOT`, else the lowest main ref.
+is `ROOT`, else the lowest available node by `(id, version)`. A bare id on the
+command line is a selector; data refs must be full `id-version`.
 
 Exit 0 means no `error` issues. Warnings do not fail: `external-link`,
-`untracked-link`, `stale-link`, `oversize`.
+`untracked-link`, `stale-link`, `oversize`, `unreachable-node`.
 
 Useful flags: `--require FIELD` (missing field becomes an error),
 `--max-lines N` / `--max-chars N` (size budgets), `--view REF` (report only
@@ -24,18 +25,20 @@ that closure).
 |---|---|
 | `missing-nodes-dir` | No `nodes/` or `.bd_tree/nodes/` under the root |
 | `invalid-filename`, `invalid-id`, `id-filename-mismatch` | Filename grammar or `id` disagrees with the filename |
-| `duplicate-version`, `missing-main` | Version file repeated, or a version with no main |
-| `bad-frontmatter`, `invalid-contains`, `invalid-links`, `invalid-link`, `invalid-link-target`, `invalid-propagates`, `invalid-pin` | Front matter cannot be parsed or has the wrong shape; a bare link needs a non-empty `type` on its target |
+| `duplicate-version` | Version file repeated |
+| `bare-ref` | `contains`, `links`, or `ROOT` names a bare id instead of a full `id-version` |
+| `bad-frontmatter`, `invalid-contains`, `invalid-link`, `invalid-propagates`, `invalid-pin` | Front matter cannot be parsed or has the wrong shape; a scalar full-ref link needs a non-empty `type` on its target |
 | `missing-target` | A `contains` ref points at no file |
 | `containment-cycle`, `multiple-parents` | View is not a tree |
-| `unreachable`, `root-ref-missing` | Nothing reaches the node from the root, or `ROOT` names a missing ref |
+| `duplicate-id`, `root-ref-missing` | One view holds two versions of the same logical id, or `ROOT` names a missing ref |
 | `invalid-root`, `invalid-ref`, `view-root-missing` | `ROOT` or a view ref is malformed or absent |
 | `dangling-link` | A link points at no node at all |
 | `missing-field` | A `--require` field is absent |
 
-Note that reachability counts a shared id and outgoing links: main and its
-versions are one logical node, so a version reachable only through its main is
-not `unreachable`, and a history view linked from the root is reachable too.
+Reachability is per logical id and counts outgoing links: versions of one id are
+alternatives, so a non-selected version of a reachable id is not
+`unreachable-node`, and a history view linked from the root is reachable too. A
+bare data ref is a `bare-ref` error, not an `unreachable-node`.
 
 ### Warning codes
 
@@ -44,6 +47,7 @@ not `unreachable`, and a history view linked from the root is reachable too.
 | `external-link` | Link target lies outside the view and is not another containment root; it is not pulled in |
 | `untracked-link` | Propagating edge has no `pinned` hash |
 | `stale-link` | Propagating edge's pin differs from the target body |
+| `unreachable-node` | The node's logical id is not reachable from the root through containment or a link |
 | `oversize` | Node exceeds the line/character budget |
 
 ## `bd stale` and `bd reconcile`

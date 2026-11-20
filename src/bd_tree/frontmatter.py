@@ -151,10 +151,19 @@ def render_document(meta: dict[str, Any], body: str) -> str:
 _LINKS_KEY = re.compile(r"^links\s*:")
 
 
-def _link_scalar(value: str | int) -> str:
-    return yaml.safe_dump(
+def _inline_dump(value: Any) -> str:
+    """One flow-style YAML value, without PyYAML's scalar ``...`` terminator."""
+    dumped = yaml.safe_dump(
         value, default_flow_style=True, width=10**9, allow_unicode=True
-    ).strip()
+    )
+    lines = [
+        line for line in dumped.splitlines() if line.strip() not in ("...", "---")
+    ]
+    return "\n".join(lines).strip()
+
+
+def _link_scalar(value: str | int) -> str:
+    return _inline_dump(value)
 
 
 def _link_object(link: dict[str, Any] | str | int) -> str:
@@ -165,9 +174,7 @@ def _link_object(link: dict[str, Any] | str | int) -> str:
         if value is None and key != "pinned":
             continue
         data[key] = str(value) if key == "pinned" else value
-    return yaml.safe_dump(
-        data, default_flow_style=True, width=10**9, allow_unicode=True
-    ).strip()
+    return _inline_dump(data)
 
 
 def _format_link(link: dict[str, Any] | str | int) -> str:
@@ -183,9 +190,7 @@ def rewrite_contains(raw_fm: str, refs: list[str]) -> str:
     start = next(
         (i for i, line in enumerate(lines) if _CONTAINS_KEY.match(line)), None
     )
-    dumped = yaml.safe_dump(
-        list(refs), default_flow_style=True, width=10**9, allow_unicode=True
-    ).strip()
+    dumped = _inline_dump(list(refs))
     block = [f"contains: {dumped}"]
     if start is None:
         lines.extend(block)

@@ -20,7 +20,7 @@ this file is the short operating protocol.
    bd check
    ```
 
-3. See the shape: `bd tree --depth 1`, `bd find <term>`, `bd path <ref>`.
+3. See the shape: `bd tree 1-1 --depth 1`, `bd find <term>`, `bd path <ref>`.
    For the example layout and two complete trees over one store, run the commands
    in `examples/README.md`.
 4. For a solution: `bd solution new NAME`, `cd` into the printed worktree
@@ -44,13 +44,19 @@ behaviour change and update the docs listed at the bottom.
 
 - The files under a store's `nodes/` directory (`.bd_tree/nodes/` in a project
   layout) are the only source of truth.
-- A filename is identity and version: `<id>.md` is main, `<id>-<version>.md` is a
-  version.
+- A filename is identity and version: `<id>-<version>.md`, version >= 1. There
+  is no bare `<id>.md`; versions of one id are peers.
+- A ref is the full `id-version` (`5-1`, not `5`). `contains`, `links`, and
+  `ROOT` hold full refs only; a bare ref in data is a `check` error (`bare-ref`).
+  A bare id on the command line is a selector resolved inside the selected view;
+  it is never written to data.
 - `contains` is an ordered containment list. A view is the closure of one ref.
-- `contains` is a tree per view. `links` is a DAG and never adds nodes to a view;
+- `contains` is a tree per view, and one view holds at most one version per
+  logical id (`duplicate-id`); the chain selects what is current. `links` is a
+  DAG and never adds nodes to a view;
   it does keep an outgoing target reachable, and a link to another containment
-  root is not an `external-link`. A bare ref (`links: ['10']`) takes its type
-  from the target node's `type`.
+  root is not an `external-link`. A scalar link (`links: ['10-1']`) takes its
+  type from the target node's `type`.
 - Front matter is arbitrary; only the identity/containment/link/freshness keys
   (`id`, `legacy`, `contains`, `links`, `to`, `type`, `propagates`, `pinned`)
   are reserved. `folder`, `name`, and `title` are presentation fields: work and
@@ -69,17 +75,20 @@ behaviour change and update the docs listed at the bottom.
 - A view never crosses a branch, and neither does a version. Versions are node
   files inside one checkout; branches are git. Never resolve a ref through a
   branch name, never add a branch or per-node active-version selector, and never
-  promote across branches — merge first.
+  copy a node across branches — merge first.
+- The version current in a view is the one its parent's `contains` names. There
+  is no per-node pointer and no extra state file.
 - No JSON, TOML, lock, or state data files. Two exceptions, both one line of
-  text: a store-level `ROOT` file holding one ref (e.g. `1-4`), and a
+  text: a store-level `ROOT` file holding one ref (e.g. `1-1`), and a
   folder-level `.bd_root` pointer holding one store path, naming the store a
   working folder belongs to. Nothing else goes in either file. Derived output is
   disposable and gitignored.
-- The default view root is `ROOT` when present, else the lowest main ref; an
-  explicit ref where a command takes one wins over both. `bd check --view REF`
-  only narrows reporting. A declared but missing ref is `root-ref-missing`;
-  malformed content is `invalid-root`. This default is separate from the view
-  held by the work area, which changes only with `bd work REF`.
+- The default view root is `ROOT` when present, else the lowest available node
+  by `(id, version)`; an explicit ref where a command takes one wins over both.
+  `bd check --view REF` only narrows reporting. A declared but missing ref is
+  `root-ref-missing`; malformed content is `invalid-root`. This default is
+  separate from the view held by the work area, which changes only with
+  `bd work REF`.
 
 ## Where to work
 
@@ -102,7 +111,8 @@ behaviour change and update the docs listed at the bottom.
   choice; they are disposable exports, never the work area.
 - Switching trees: `bd root REF` changes the store default root, `bd work REF`
   changes the work-area view, or repoint one parent with `bd uncontain` /
-  `bd contain`. `bd promote` is not a switch; it copies one version onto main.
+  `bd contain`. These are the only switches; a view uses the version named by its
+  parent's `contains`.
 - Never hand-edit generated `INDEX.md`, `AGENTS.md`, or `REFS.md` inside a work or
   output directory.
 
@@ -122,8 +132,9 @@ behaviour change and update the docs listed at the bottom.
 | Switch/edit the work area | `bd work REF[+N]`, then open `bd edit REF` |
 | Repair symlinks | `bd work --status` / `bd work --writeback` |
 | Switch tree root | `bd root REF`, `bd root --clear` |
-| Show versions | `bd versions ID`, `bd fork ID`, `bd promote REF` |
+| Show versions | `bd versions ID`, `bd version REF`, `bd delete REF` |
 | New solution | `bd solution new NAME` |
+| Convert a classic store | `bd migrate [--dry-run]` |
 | Validate | `bd check`, `bd stale` |
 | Read-only agent pack | `bd export context --view REF --out DIR` |
 
@@ -136,16 +147,17 @@ installing, prefix each with `PYTHONPATH=src python3 -m bd_tree` instead of `bd`
 export BD_ROOT=examples
 python3 -m pytest -q
 bd check
-bd tree 1 --depth 1
-bd show 1+1 --max-chars 400
-bd contain 1 5 --after 6
-bd link 5 9 --type supports
-bd work 1                 # write the single <project>/bd_work area
-bd work 1+1               # same area, first two levels only
-bd current                # <project>/bd_work (view 1+1)
+bd tree 1-1 --depth 1
+bd show 1-1+1 --max-chars 400
+bd uncontain 1-1 5-1
+bd contain 1-1 5-1 --before 2-1
+bd link 5-1 6-1 --type supports
+bd work 1-1               # write the single <project>/bd_work area
+bd work 1-1+1             # same area, first two levels only
+bd current                # <project>/bd_work (view 1-1+1)
 bd current --path         # print that directory; read-only, no build
-bd edit 2                 # path of ref 2 in the active view
-bd work 1-1               # switch the same area to another view
+bd edit 2-1               # path of ref 2-1 in the active view
+bd work 1-2               # switch the same area to another view
 bd solution list
 ```
 
@@ -175,5 +187,5 @@ views, or generated output.
   branch/version separation contract.
 - [`docs/breakdown/`](docs/breakdown/) — product breakdown as a second `bd`
   project (store `docs/breakdown/.bd_tree/`): current state, open work,
-  scrutiny, and history. Run `bd tree --root docs/breakdown`, or `bd work 1`
+  scrutiny, and history. Run `bd tree --root docs/breakdown`, or `bd work 1-1`
   from that directory.

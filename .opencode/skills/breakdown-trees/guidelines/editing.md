@@ -14,15 +14,17 @@ $EDITOR "$(bd edit REF)"    # errors if REF is not in the active view
 
 `bd work REF` replaces the area's contents: stale links are removed and
 `INDEX.md`, `AGENTS.md`, `REFS.md` are regenerated. The area never accumulates
-two views, and a second work folder is not supported.
+two views, and a second work folder is not supported. A bare id such as
+`bd edit 5` is a selector resolved in the active view; the file it returns is
+the full `id-version`.
 
 `bd current --path` prints the directory without building anything;
 `bd work REF --clean` discards detached files while switching.
 
 ## Symlinks and generated files
 
-- Node `.md` files in the area are symlinks to `nodes/<ref>.md`; they are the
-  store.
+- Node `.md` files in the area are symlinks to `nodes/<ref>.md`, where `<ref>`
+  is the full `id-version`; they are the store.
 - `INDEX.md`, `AGENTS.md`, `REFS.md` are regular generated files. Never edit
   them; `bd work REF` rewrites them.
 - Never copy node content into the area and never add a sync layer.
@@ -44,8 +46,9 @@ corrupting the store.
 ## Direct store edits
 
 `bd edit REF` resolves the path inside the active view and fails for a ref
-outside it. Editing `.bd_tree/nodes/REF.md` directly works but bypasses the
-active-view check; use it only when no area is active and the ref is known.
+outside it. Editing `.bd_tree/nodes/<ref>.md` directly (full `id-version`)
+works but bypasses the active-view check; use it only when no area is active and
+the ref is known.
 
 Direct edits skip nothing else: the same `bd check` applies afterwards.
 

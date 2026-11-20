@@ -24,28 +24,37 @@ store-level default-view ref.
 ## Tree root
 
 ```sh
-bd root                             # print: <ref>  (ROOT|lowest main)
-bd root REF                         # write ROOT: one ref line, e.g. 1-4
-bd root --clear                     # delete ROOT; lowest main ref is the default
+bd root                             # print: <ref>  (ROOT|lowest)
+bd root REF                         # write ROOT: one full ref line, e.g. 1-1
+bd root --clear                     # delete ROOT; lowest (id, version) is the default
 ```
 
-`ROOT` sits at the store top level and holds one ref on one line, nothing else.
-It is the default view root for `tree`, `find`, `work`, `check`, `stale`, and
-`reconcile`. An explicit ref where a command takes one wins over `ROOT`; `ROOT`
-wins over the lowest main ref. `bd check --view REF` only narrows reporting; the
-checked root is `ROOT`, else the lowest main ref. A declared but missing ref is
+`ROOT` sits at the store top level and holds one full `id-version` ref on one
+line, nothing else. It is the default view root for `tree`, `find`, `work`,
+`check`, `stale`, and `reconcile`. An explicit ref where a command takes one
+wins over `ROOT`; `ROOT` wins over the lowest available node by
+`(id, version)`. `bd check --view REF` only narrows reporting; the checked root
+is `ROOT`, else the lowest `(id, version)`. A declared but missing ref is
 `root-ref-missing`; malformed content is `invalid-root`. `bd root` does not
 rewrite the view already in the work area; use `bd work REF` for that.
+
+Data refs are full `id-version`; `contains`, `links`, and `ROOT` never hold a
+bare id. A bare id on the command line is a selector resolved inside the
+selected view and is never written to data.
 
 ## Start
 
 ```sh
-bd init [DIR]                       # create .bd_tree/nodes/1.md and .gitignore
+bd init [DIR]                       # create .bd_tree/nodes/1-1.md and .gitignore
 bd new --parent REF --field KEY=VALUE ... [--body TEXT]
+bd migrate [--dry-run]              # convert a classic bare <id>.md store in place
 ```
 
-`bd new` assigns the next integer, appends to the parent's `contains`, and seeds
-`title` and `summary` as empty placeholders; `--field` overrides them.
+`bd new` allocates the next global integer at version 1, appends that full ref
+to the parent's `contains`, and seeds `title` and `summary` as empty
+placeholders; `--field` overrides them. `bd migrate` renames every bare
+`nodes/<id>.md` to the next free version and rewrites `contains`, `links`, and a
+bare `ROOT`; `--dry-run` prints the plan without touching disk.
 
 ## Inspect
 
@@ -58,14 +67,14 @@ bd find QUERY [--view REF|--all] [--field F] [--regex] [--where K=V ...] [--limi
 bd path REF
 ```
 
-- `show 5+2`: node 5 plus two levels of descendant bodies. With N > 0 the body
-  is capped at 4000 characters per node unless `--max-chars N` is given;
+- `show 5-1+2`: node 5-1 plus two levels of descendant bodies. With N > 0 the
+  body is capped at 4000 characters per node unless `--max-chars N` is given;
   `--max-chars 0` prints the full body.
 - `--links` appends a `links:` footer for edges that leave the view, one level,
   as `source -> target`. The target stays out of the closure; read it with
   `bd show REF` or switch with `bd work REF`.
-- `tree 5 --depth 0`: whole subtree. A missing ref uses the store root.
-- `tree 1 --columns ref,title,layer,status`: arbitrary fields as columns
+- `tree 5-1 --depth 0`: whole subtree. A missing ref uses the store root.
+- `tree 1-1 --columns ref,title,layer,status`: arbitrary fields as columns
   (tables default to depth 1); without `--columns`, `tree` prints the outline.
 - `find` searches title, summary, body, and all string fields; `--regex` treats
   the query as a pattern. It searches the default view unless `--view REF` or
@@ -83,8 +92,10 @@ bd unlink FROM TO [--type TYPE]
 - `contain` refuses cycles and duplicates; reorder with `uncontain` then `contain`.
 - `uncontain` writes `contains: []` when the list becomes empty.
 - `link --propagates` pins the target body hash immediately.
-- A bare ref is shorthand: `links: ['10']` takes the type from node 10's
-  `type`; `bd link` writes that form when the requested type matches.
+- A scalar link: `links: ['10-1']` takes the type from node `10-1`'s `type`;
+  `bd link` writes that form when the requested type matches.
+- `contain`, `uncontain`, `link`, `unlink`, and `new` accept a bare id as a
+  selector and resolve it in the selected view; they always write full refs.
 - Structural commands preserve body bytes and unrelated front matter.
 
 ## Work folders
@@ -105,9 +116,10 @@ bd edit REF
 - The generated `REFS.md`, `INDEX.md`, and `AGENTS.md` carry `REF+N`, so
   `bd current`, `--status`, `--writeback`, and `bd edit` recover the materialized
   depth.
-- Node `.md` files are symlinks to the store's `nodes/<ref>.md`
-  (`.bd_tree/nodes/<ref>.md` in a project layout). `INDEX.md`, `AGENTS.md`, and
-  `REFS.md` are regular generated files, never symlinks.
+- Node `.md` files are symlinks to the store's `nodes/<ref>.md`, where `<ref>`
+  is the full `id-version` (`.bd_tree/nodes/<ref>.md` in a project layout).
+  `INDEX.md`, `AGENTS.md`, and `REFS.md` are regular generated files, never
+  symlinks.
 - `bd current` is read-only: it prints `<project>/bd_work (view <ref>)`;
   `--path` prints only the path, `--view` only the ref. It errors if no work
   area exists.
@@ -127,13 +139,13 @@ bd edit REF
 Switch the one area between views:
 
 ```sh
-bd work 1                                      # write <project>/bd_work for view 1
-bd current                                     # <project>/bd_work (view 1)
-bd work 5                                      # switch the same area to view 5
-bd work 1+1                                    # root plus immediate children only
-bd work 1 --depth 0                            # root only
-bd work 1                                      # restore the full closure
-bd work 1 --path-template '{layer}/{ref}.md'
+bd work 1-1                                    # write <project>/bd_work for view 1-1
+bd current                                     # <project>/bd_work (view 1-1)
+bd work 5-1                                    # switch the same area to view 5-1
+bd work 1-1+1                                  # root plus immediate children only
+bd work 1-1 --depth 0                          # root only
+bd work 1-1                                    # restore the full closure
+bd work 1-1 --path-template '{layer}/{ref}.md'
 ```
 
 `folder` is the directory prefix and `name` the file stem; without a `name` the
@@ -179,20 +191,24 @@ sync with `git merge`.
 
 ```sh
 bd versions ID
-bd fork ID [--version N]
-bd promote REF [--keep]
-bd retire-version REF
+bd version REF [--version N]
+bd delete REF [--force]
 bd diff LEFT RIGHT
 ```
 
+Every node file is a version (`<id>-<version>.md`, version >= 1); versions of
+one id are peers. `bd versions ID` accepts `5` or `5-1` and uses the logical
+id. The version current in a view is the one its
+parent's `contains` names — there is no per-node pointer. `bd version REF` copies
+the source file, including its declared `contains`, to the next free version of
+the same logical id (or to `--version N`). `bd delete REF` removes one version
+and refuses a `ROOT`, a reachable ref, or one referenced by any
+`contains`/`links` unless `--force`.
+
 Versions are alternatives inside one branch, not the solution boundary, and they
-never sync across branches. `bd fork` materialises the effective `contains` list
-into the version, so later edits to main's containment do not change it; a
-hand-written version that omits `contains` still inherits main's list.
-`bd promote` copies one version onto main in the current checkout only, so check
-out or merge the branch first — it is not a way to switch trees. Switch the
-work area with `bd work REF`, the store default with `bd root REF`, or repoint
-one parent with `bd uncontain` / `bd contain`. See
+never sync across branches. To switch, repoint one parent with `bd uncontain` /
+`bd contain`, switch the work area with `bd work REF`, or switch the store
+default with `bd root REF`. See
 [Branches and versions](BRANCHES-AND-VERSIONS.md).
 
 ## Freshness
@@ -223,7 +239,7 @@ git worktree add ../sol-a -b sol-a
 git diff main..sol-a -- .bd_tree/nodes/    # or your default branch
 git merge sol-a
 git cherry-pick <commit>
-git restore --source=sol-a -- .bd_tree/nodes/5.md
+git restore --source=sol-a -- .bd_tree/nodes/5-1.md
 ```
 
 - The flat node path (`.bd_tree/nodes/` in a project layout) is the merge unit.
@@ -248,6 +264,8 @@ python3 -m pytest -q
 | `bd current` errors | No work area exists. Build one with `bd work [REF]`. |
 | `bd edit REF` errors | The ref is not in the active view. Switch with `bd work REF` or pass a ref that is present. |
 | `root-ref-missing` / `invalid-root` | The `ROOT` file names an absent ref or is malformed. Fix it, or run `bd root --clear`. |
+| `bare-ref` / `invalid-ref` in data | `contains`, `links`, and `ROOT` need full `id-version` refs. A classic bare-file store converts once with `bd migrate`. |
+| `duplicate-id` | One view holds two versions of the same logical id. `bd uncontain` the unwanted one; `bd contain` refuses this clash up front. |
 | Detached work file | `bd work --status`, then `bd work --writeback`. Switching views with detached files is refused until you do. |
 | Want two work folders | Not supported. `bd_work/` is the single area; switch with `bd work REF`. |
 | Stale layout after branch change | `bd work REF --clean`. |

@@ -15,8 +15,8 @@ def test_load_accepts_project_root_and_store_root(write, tmp_path):
     store = load(tmp_path / ".bd_tree")
     assert project.root == (tmp_path / ".bd_tree").resolve()
     assert project.root == store.root
-    assert set(project.nodes) == {"1"}
-    assert set(load_view(tmp_path, "1").nodes) == {"1"}
+    assert set(project.nodes) == {"1-1"}
+    assert set(load_view(tmp_path, "1-1").nodes) == {"1-1"}
 
 
 def test_discovery_walks_up_to_the_hidden_store(write, tmp_path, monkeypatch):
@@ -40,8 +40,8 @@ def test_root_option_and_env_accept_the_project_root(
 
     monkeypatch.setenv("BD_ROOT", str(tmp_path))
     assert _find_root(None) == (tmp_path / ".bd_tree").resolve()
-    assert main(["tree", "1"]) == 0
-    assert "1" in capsys.readouterr().out
+    assert main(["tree", "1-1"]) == 0
+    assert "1-1" in capsys.readouterr().out
 
 
 def test_classic_nodes_wins_over_a_hidden_store(write, tmp_path, monkeypatch):
@@ -52,7 +52,7 @@ def test_classic_nodes_wins_over_a_hidden_store(write, tmp_path, monkeypatch):
     store = load(tmp_path)
     assert store.root == tmp_path.resolve()
     assert store.project_root == tmp_path.resolve()
-    assert set(store.nodes) == {"1"}
+    assert set(store.nodes) == {"1-1"}
     assert _find_root(None) == tmp_path.resolve()
 
 
@@ -71,7 +71,7 @@ def test_single_store_below_cwd_is_found_and_used(write, tmp_path, monkeypatch, 
     assert _find_root(None) == (tmp_path / "proj" / ".bd_tree").resolve()
     assert main(["views"]) == 0
     captured = capsys.readouterr()
-    assert "1" in captured.out
+    assert "1-1" in captured.out
     assert "store has no containment roots" not in captured.out + captured.err
     assert "found below" in captured.err
 
@@ -124,7 +124,7 @@ def test_no_store_is_an_explicit_error(write, tmp_path, monkeypatch, capsys):
 
     assert main(["find", "anything"]) == 2
     err = capsys.readouterr().err
-    assert "store has no main nodes" not in err
+    assert "store has no nodes" not in err
 
 
 def test_root_and_env_take_precedence(write, tmp_path, monkeypatch):

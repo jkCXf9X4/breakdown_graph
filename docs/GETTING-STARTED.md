@@ -21,7 +21,7 @@ bd init
 `bd init` creates the store and ignores the work area:
 
 ```
-.bd_tree/nodes/1.md
+.bd_tree/nodes/1-1.md
 .gitignore          # bd_work/
 ```
 
@@ -36,44 +36,46 @@ contains: []
 State the intent of this graph here.
 ```
 
-`id` is identity and `contains` is the ordered child list. The rest of the front
-matter is arbitrary. `bd init` writes no `folder` or `name`, so the title `Root`
-lands at `1-root.md`; add `folder`/`name` only to place it elsewhere.
+The filename is identity and version: logical id `1`, version `1`. `contains` is
+the ordered child list of full refs. The rest of the front matter is arbitrary.
+`bd init` writes no `folder` or `name`, so the title `Root` lands at
+`1-1-root.md`; add `folder`/`name` only to place it elsewhere.
 
 Add two nodes and inspect the tree:
 
 ```sh
-bd new --parent 1 --field title="Why does this exist?" --field layer=intent
-bd new --parent 1 --field title="What is true?"       --field layer=claims
-bd tree 1
+bd new --parent 1-1 --field title="Why does this exist?" --field layer=intent
+bd new --parent 1-1 --field title="What is true?"       --field layer=claims
+bd tree 1-1
 ```
 
 ```
-1 Root
-+- 2 Why does this exist?
-`- 3 What is true?
+1-1 Root
++- 2-1 Why does this exist?
+`- 3-1 What is true?
 ```
 
-`bd new` assigns the next integer and appends it to the parent's `contains`. It
-seeds `title` and `summary` as empty placeholders; `--field` overrides them.
-`layer` is metadata only; the tool knows no layer vocabulary.
+`bd new` allocates the next global integer at version 1 and appends that full
+ref to the parent's `contains`. It seeds `title` and `summary` as empty
+placeholders; `--field` overrides them. `layer` is metadata only; the tool knows
+no layer vocabulary.
 
 ```sh
 bd check
 ```
 
 ```
-3 nodes, 0 errors, 0 warnings (view 1)
+3 nodes, 0 errors, 0 warnings (view 1-1)
 ```
 
 ## 2. Browse
 
 ```sh
-bd tree 1 --depth 2
-bd show 1+1 --max-chars 400
-bd tree 1 --columns ref,title,layer
+bd tree 1-1 --depth 2
+bd show 1-1+1 --max-chars 400
+bd tree 1-1 --columns ref,title,layer
 bd find true
-bd path 2
+bd path 2-1
 ```
 
 - `tree` is the map; `--columns F,F` prints a table instead.
@@ -90,14 +92,14 @@ return 2 on refusal.
 work area, `<project>/bd_work/`. Editing a link edits the store.
 
 ```sh
-bd work 1
-bd current                 # <project>/bd_work (view 1)
+bd work 1-1
+bd current                 # <project>/bd_work (view 1-1)
 work_dir=$(bd current --path)
 ls "$work_dir"
 ```
 
 ```
-1-root.md
+1-1-root.md
 intent/why-does-this-exist.md
 claims/what-is-true.md
 INDEX.md  AGENTS.md  REFS.md
@@ -110,7 +112,7 @@ a `name` the file stem is the `title` slug. With neither, the path is
 `--path-template` sets another route for the whole view:
 
 ```sh
-$EDITOR "$(bd edit 3)"
+$EDITOR "$(bd edit 3-1)"
 bd work --status
 bd check
 ```
@@ -145,15 +147,13 @@ materialized. A rebuild with a different depth, or a plain `bd work REF`,
 replaces the area.
 
 ```sh
-bd work 1+1        # root plus immediate children
-bd current --view  # 1+1
-bd work 1          # restore the full closure (headers drop the suffix)
+bd work 1-1+1      # root plus immediate children
+bd current --view  # 1-1+1
+bd work 1-1        # restore the full closure (headers drop the suffix)
 ```
 
-```sh
-bd work 1-1        # switch <project>/bd_work to another view
-bd work 1          # switch back
-```
+Section 5 creates a second root version; `bd work 1-2` switches this same area
+to that view.
 
 Read-only snapshots (`bd export tree`, `bd export context`, `bd export dot`) are
 separate disposable exports, not a second work area.
@@ -163,40 +163,41 @@ separate disposable exports, not a second work area.
 Reorder or move a child:
 
 ```sh
-bd uncontain 1 3
-bd contain 1 3 --before 2
-bd tree 1
+bd uncontain 1-1 3-1
+bd contain 1-1 3-1 --before 2-1
+bd tree 1-1
 ```
 
-`contain` refuses cycles and duplicates. It materialises an inherited `contains`
-list before editing, so a version never silently inherits a changed order.
+`contain` refuses cycles and duplicates, accepts a bare id as a selector, and
+writes full refs. `contains` is the declared list: nothing is inherited, so
+every version that has children lists them itself.
 
 Add a typed edge and track freshness:
 
 ```sh
-bd link 3 1 --type serves --propagates
+bd link 3-1 1-1 --type serves --propagates
 bd stale
 ```
 
 Then edit the intent body through the work area:
 
 ```sh
-printf '\nA new constraint.\n' >> "$(bd edit 1)"
+printf '\nA new constraint.\n' >> "$(bd edit 1-1)"
 bd stale
 ```
 
 Edit through `bd_work/`; `bd edit REF` resolves the path for you. A direct edit of
-`.bd_tree/nodes/1.md` is an escape hatch when no work area is active: it bypasses
-the active-view check, so prefer `bd edit REF`.
+`.bd_tree/nodes/1-1.md` is an escape hatch when no work area is active: it
+bypasses the active-view check, so prefer `bd edit REF`.
 
 ```
-3 -> 1 (serves): stale
+3-1 -> 1-1 (serves): stale
 ```
 
 Reconcile after reviewing the change:
 
 ```sh
-bd reconcile 3
+bd reconcile 3-1
 bd stale
 ```
 
@@ -206,7 +207,7 @@ hashes, so they survive a rebase.
 Remove an edge:
 
 ```sh
-bd unlink 3 1 --type serves
+bd unlink 3-1 1-1 --type serves
 ```
 
 ## 5. Switch between full trees
@@ -215,33 +216,33 @@ Two separate moves: change the default view root, or switch the view held by the
 work area. You can also repoint one parent.
 
 ```sh
-bd fork 1 --version 1        # alternative root; contains materialised now
-bd uncontain 1-1 3
-bd tree 1-1                  # inspect the alternative before switching
-bd root 1-1                  # write ROOT; tree, find, check default here
+bd version 1-1 --version 2   # copy the root to a second peer, keeping contains
+bd uncontain 1-2 3-1         # prune one child from the alternative
+bd tree 1-2                  # inspect the alternative before switching
+bd root 1-2                  # write ROOT; tree, find, check default here
 bd tree
-bd root                      # 1-1  (ROOT)
-bd work 1-1                  # switch the work area to the alternative view
-bd current                   # <project>/bd_work (view 1-1)
-bd root --clear              # back to the lowest main ref
+bd root                      # 1-2  (ROOT)
+bd work 1-2                  # switch the work area to the alternative view
+bd current                   # <project>/bd_work (view 1-2)
+bd root --clear              # back to the lowest (id, version), here 1-1
 ```
 
-`ROOT` is one ref on one line at the store top level. An explicit ref where a
-command takes one still wins over it; with no `ROOT`, the lowest main ref is the
-root. `bd check --view REF` only narrows reporting, not the checked root.
-`bd root` changes the default root used by commands but does not rewrite the
-view already in `<project>/bd_work/`; `bd work REF` does. `bd views` lists the
-containment roots and marks the default with `*`.
+`ROOT` is one full ref on one line at the store top level. An explicit ref where
+a command takes one still wins over it; with no `ROOT`, the lowest
+`(id, version)` is the root. `bd check --view REF` only narrows reporting, not
+the checked root. `bd root` changes the default root used by commands but does
+not rewrite the view already in `<project>/bd_work/`; run `bd work REF` for
+that. `bd views` lists the containment roots and marks the default with `*`.
 
 Repoint one parent when only part of the tree moves:
 
 ```sh
-bd uncontain 1 3
-bd contain 2 3               # node 3 now hangs under 2
+bd uncontain 1-1 3-1
+bd contain 2-1 3-1           # node 3-1 now hangs under 2-1
 ```
 
-`bd promote` is not a switch: it copies one version onto main. `bd versions 1`
-and `bd fork 1` show and create the alternatives.
+A parent's `contains` names the version that is current in that view. `bd versions 1` lists the peers and `bd version 1-1`
+creates a new one.
 
 ## 6. A second solution with git
 
@@ -262,7 +263,7 @@ worktree /home/you/graphs/sol-a
 branch sol-a
 project .
 cd /home/you/graphs/sol-a
-bd work 1
+bd work 1-1
 ```
 
 The project directory is printed relative to the worktree. In a nested project,
@@ -271,8 +272,8 @@ The project directory is printed relative to the worktree. In a nested project,
 
 ```sh
 cd ../sol-a
-bd work 1
-$EDITOR "$(bd edit 1)"
+bd work 1-1
+$EDITOR "$(bd edit 1-1)"
 bd check
 git add -A && git commit -m "sol-a: alternative intent"
 ```
@@ -303,11 +304,11 @@ Two modes:
 
 ```sh
 # writable: the single work area for one view
-bd work 1
+bd work 1-1
 bd current
 
 # read-only snapshot: fresh nodes, plus STALE.md and AGENTS.md
-bd export context --view 1 --out /tmp/bd-context-1
+bd export context --view 1-1 --out /tmp/bd-context-1-1
 ```
 
 `bd work` writes `<project>/bd_work/` and is the only work area; the export
@@ -321,26 +322,29 @@ with `bd work REF` and confirm with `bd current`.
 
 There is no generic importer yet. The pattern is:
 
-1. One file per node under the store's `nodes/` (`.bd_tree/nodes/` in a project
-   layout), named by a running integer.
-2. `id` matches the filename.
-3. `contains` lists the ordered children.
+1. One file per node version under the store's `nodes/` (`.bd_tree/nodes/` in a
+   project layout), named `<id>-<version>.md` with a running integer id and a
+   version starting at `1`.
+2. `id` matches the logical id in the filename.
+3. `contains` lists ordered children as full `id-version` refs.
 4. `folder` and `name` build the path (title slug by default). With neither, the
    path is `<ref>-<title-slug>.md`, and a node without a usable title lands at
    `<ref>.md`. `--path-template` sets another route for the whole view.
-5. `links` holds typed edges; prose citations are separate.
+5. `links` holds typed edges with full refs; prose citations are separate.
 
 `examples/` is a small worked project laid out this way, with its store under
-`examples/.bd_tree/`: one file per node, `contains` listing ordered children, and
-versions as alternatives.
+`examples/.bd_tree/`: one file per node version, `contains` listing ordered
+children, and peer versions as alternatives.
 
 ## Troubleshooting
 
 | Symptom | Cause and fix |
 | --- | --- |
-| `bd: unknown ref '1'` | No store found. Run from the project root or store root, or set `BD_ROOT` to the directory containing `nodes/` (or `.bd_tree/nodes/`). |
+| `bd: unknown ref '1-1'` | No store found, or the ref is absent from the selected view. Run from the project root or store root, or set `BD_ROOT` to the directory containing `nodes/` (or `.bd_tree/nodes/`). |
 | `bd check` sees the wrong store | `BD_ROOT` or `--root` points elsewhere. `bd` uses the nearest `nodes/` or `.bd_tree/nodes/` upward. |
 | `root-ref-missing` / `invalid-root` | The `ROOT` file names an absent ref or is malformed. Fix it, or run `bd root --clear`. |
+| `bare-ref` / `invalid-ref` in data | `contains`, `links`, and `ROOT` need full `id-version` refs. Convert a classic bare-file store once with `bd migrate`. |
+| `duplicate-id` | A view holds two versions of the same logical id. `bd uncontain` the unwanted one. |
 | `bd work` refuses to switch | `bd_work/` has detached or stray files. Run `--status`, then `--writeback` to keep them or `--clean` to discard them. |
 | `bd current` errors | No work area exists. Build one with `bd work [REF]`. |
 | `bd edit REF` errors | The ref is not in the active view. Switch with `bd work REF` or use a ref that is present. |

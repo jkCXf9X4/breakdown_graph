@@ -48,7 +48,7 @@ def _hidden_store(write, repo: Path) -> None:
     nodes = repo / ".bd_tree" / "nodes"
     write(nodes, 1, contains=["2"])
     write(nodes, 2)
-    (repo / ".bd_tree" / "ROOT").write_text("2\n", encoding="utf-8")
+    (repo / ".bd_tree" / "ROOT").write_text("2-1\n", encoding="utf-8")
 
 
 def test_new_creates_default_sibling_branch(write, tmp_path, capsys):
@@ -67,7 +67,7 @@ def test_new_creates_default_sibling_branch(write, tmp_path, capsys):
     assert "branch sol-a" in out
     assert "project ." in out
     assert f"cd {target}" in out
-    assert "bd work 1" in out
+    assert "bd work 1-1" in out
     assert "BD_ROOT=" not in out
 
 
@@ -157,7 +157,7 @@ def test_new_exposes_the_classic_project_and_view(write, tmp_path):
 
     assert result.store == "."
     assert result.project == "."
-    assert result.view == "1"
+    assert result.view == "1-1"
 
 
 def test_new_and_list_expose_hidden_store_project_and_view(write, tmp_path):
@@ -169,7 +169,7 @@ def test_new_and_list_expose_hidden_store_project_and_view(write, tmp_path):
 
     assert result.store == ".bd_tree"
     assert result.project == "."
-    assert result.view == "2"
+    assert result.view == "2-1"
 
     entries = solution_list(tmp_path / ".bd_tree")
     solved = next(entry for entry in entries if entry.branch == "sol-hidden")

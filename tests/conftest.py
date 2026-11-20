@@ -15,25 +15,58 @@ if str(ROOT / "src") not in sys.path:
 from bd_tree.frontmatter import body_hash, render_document  # noqa: E402
 
 
+def _qualify(value: Any, version: int) -> Any:
+    """Turn a bare id in test data into the full ref of ``version``.
+
+    Tests write readable data like ``contains=["2"]``; the store only accepts
+    full refs, so the fixture qualifies it to ``"2-1"`` unless a test asks for
+    raw data (``raw_refs=True``) to exercise rejection.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        text = str(value)
+    elif isinstance(value, str):
+        text = value.strip()
+    else:
+        return value
+    if text.isdigit() and text and text[0] != "0":
+        return f"{text}-{version}"
+    return value
+
+
+def _qualify_link(item: Any, version: int) -> Any:
+    if isinstance(item, dict):
+        if "to" not in item:
+            return item
+        return {**item, "to": _qualify(item["to"], version)}
+    return _qualify(item, version)
+
+
 def write_node(
     directory: Path,
     node_id: int,
     *,
-    version: int = 0,
+    version: int = 1,
     contains: list[str] | None = None,
     links: list[Any] | None = None,
     body: str = "body\n",
     meta: dict[str, Any] | None = None,
+    raw_refs: bool = False,
     **fields: Any,
 ) -> Path:
     """Write one node.  Fields are arbitrary; only what you pass is written.
+
+    Bare ids in ``contains``/``links`` are qualified to ``<id>-<version>``
+    because data refs are always full refs; pass ``raw_refs=True`` to write the
+    given text unchanged (for bare-ref validation tests).
 
     Convenience: when ``layer`` is given and ``folder`` is not, derive
     ``<layer>`` as the folder and ``<ref>`` as the name so path assertions stay
     readable.
     """
     directory.mkdir(parents=True, exist_ok=True)
-    ref = str(node_id) if version == 0 else f"{node_id}-{version}"
+    ref = f"{node_id}-{version}"
     data: dict[str, Any] = {
         "id": node_id,
         "title": fields.pop("title", f"Title of {ref}"),
@@ -46,9 +79,17 @@ def write_node(
     if meta:
         data.update(meta)
     if contains is not None:
-        data["contains"] = contains
+        data["contains"] = (
+            list(contains)
+            if raw_refs
+            else [_qualify(item, 1) for item in contains]
+        )
     if links is not None:
-        data["links"] = links
+        data["links"] = (
+            list(links)
+            if raw_refs
+            else [_qualify_link(item, 1) for item in links]
+        )
     path = directory / f"{ref}.md"
     path.write_text(render_document(data, body), encoding="utf-8", newline="")
     return path

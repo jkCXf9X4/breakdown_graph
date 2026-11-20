@@ -2,7 +2,8 @@
 
 A store is the full index of every node file: ``ref -> Node`` plus the logical
 ``id -> versions`` grouping.  A view is the containment closure of one ref: the
-nodes it reaches through effective ``contains`` lists.
+nodes it reaches through declared ``contains`` lists.  The containment chain
+from the view root is the only record of which version is current.
 
 The model is deliberately schema-agnostic: ``id``, ``legacy``, ``contains`` and
 ``links`` are structural; ``folder``, ``name`` and ``title`` are presentation
@@ -16,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .errors import BreakdownError
 from .frontmatter import body_hash
 
 
@@ -37,26 +39,18 @@ class Link:
 
 @dataclass
 class Node:
-    """One node file.  ``version`` is 0 for the mutable main file."""
+    """One node file.  ``version`` is always ``>= 1``; versions are peers."""
 
     id: int
     version: int
     ref: str
-    contains: list[str] | None  # declared list; None means inherit the main
+    contains: list[str]  # declared list; an omitted list is a leaf
     legacy: str | None
     links: list[Link]
     body: str
     path: Path
     raw_links: list[Any]
     meta: dict[str, Any]
-
-    @property
-    def is_main(self) -> bool:
-        return self.version == 0
-
-    @property
-    def main_ref(self) -> str:
-        return str(self.id)
 
     @property
     def body_hash(self) -> str:
@@ -153,41 +147,47 @@ class Store:
 
     @property
     def root_ref(self) -> str | None:
-        """The store's root: declared ``ROOT``, else the lowest main ref.
+        """The store's root: declared ``ROOT``, else the lowest node.
 
-        A declared root is returned even when its file is missing, so the
-        breakage is reported instead of silently falling back.
+        "Lowest" is by ``(id, version)``.  A declared root is returned even when
+        its file is missing, so the breakage is reported instead of silently
+        falling back.
         """
         if self.declared_root is not None:
             return self.declared_root
-        mains = [node for node in self.nodes.values() if node.is_main]
-        if not mains:
+        if not self.nodes:
             return None
-        return min(mains, key=lambda node: node.id).ref
-
-    def main(self, node_id: int) -> Node | None:
-        return self.nodes.get(str(node_id))
+        return min(
+            self.nodes.values(), key=lambda node: (node.id, node.version)
+        ).ref
 
     def versions(self, node_id: int) -> list[Node]:
-        """Every existing version of ``node_id``, main first."""
+        """Every existing version of ``node_id``, ascending by version."""
         return sorted(
             (node for node in self.nodes.values() if node.id == node_id),
             key=lambda node: node.version,
         )
 
     def effective_contains(self, ref: str) -> list[str]:
-        """Declared list, or the main version's list when this version omits one."""
+        """The node's declared ``contains`` list; an omitted list is a leaf.
+
+        Raises :class:`~.errors.BreakdownError` when the data holds a bare ref:
+        a view walk must never pick a version on the caller's behalf.
+        """
+        # Imported here because the loader imports this module.
+        from .errors import BreakdownError
+        from .loader import is_full_ref
+
         node = self.nodes.get(ref)
         if node is None:
             return []
-        if node.contains is not None:
-            return list(node.contains)
-        if node.version == 0:
-            return []
-        main = self.nodes.get(str(node.id))
-        if main is not None and main.contains is not None:
-            return list(main.contains)
-        return []
+        for child in node.contains:
+            if not is_full_ref(child):
+                raise BreakdownError(
+                    f"bare ref '{child}' in contains of '{ref}'; data refs "
+                    "must be full <id>-<version> refs"
+                )
+        return list(node.contains)
 
     def containment_roots(self) -> list[Node]:
         """Refs that no node lists in ``effective_contains``, sorted."""
@@ -235,6 +235,23 @@ class View:
     @property
     def root_ref(self) -> str:
         return self.ref
+
+    def current_ref(self, node_id: int) -> str | None:
+        """The ref of logical ``node_id`` inside this view, else ``None``.
+
+        A version-only chain selects one version per id.  Two versions of the
+        same id in one view would make "current" ambiguous, so that is an error
+        rather than a silent first-match.
+        """
+        matches = [
+            ref for ref, node in self.nodes.items() if node.id == node_id
+        ]
+        if len(matches) > 1:
+            raise BreakdownError(
+                f"view {self.ref} contains multiple versions of id {node_id}: "
+                + ", ".join(sorted(matches))
+            )
+        return matches[0] if matches else None
 
     def node_edges(self, ref: str, *, propagating_only: bool = False) -> list[Edge]:
         edges = [edge for edge in self.edges if edge.source == ref]

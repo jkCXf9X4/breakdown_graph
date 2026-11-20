@@ -37,15 +37,17 @@ run from the repo root with `PYTHONPATH=src python3 -m bd_tree`.
   and write node files.
 
 Validation is global; export and agent context are view-scoped. The default view
-root is `ROOT`, else the lowest main ref; an explicit ref where a command takes
-one wins, and `check --view` only narrows reporting. Reachability follows
-`contains` or a shared id, so main and its versions are one logical node.
+root is `ROOT`, else the lowest available node by `(id, version)`; an explicit
+ref where a command takes one wins, and `check --view` only narrows reporting.
+Reachability follows `contains` or a shared logical id, so versions of one id are
+one logical node. Data refs are full `id-version`; a bare id is a CLI selector
+resolved inside the selected view (`current_ref(view, id)`).
 
 ## Module map
 
 | Module | Responsibility |
 | --- | --- |
-| `loader.py` | Filename grammar, store scan, `ROOT`, view resolution, citation edges |
+| `loader.py` | Filename grammar, store scan, `ROOT`, view resolution, `current_ref`, citation edges |
 | `model.py` | `Node`, `Store`, `View`, `Edge`, `Issue`, `Link` |
 | `frontmatter.py` | Parse and rewrite front matter; body bytes are never re-serialised |
 | `checker.py` | Structural checks, per-view tree checks, `--require`, size limits |
@@ -54,7 +56,7 @@ one wins, and `check --view` only narrows reporting. Reachability follows
 | `exporter.py` | `tree`, `context`, `dot` projections, path templates, and `folder`/`name` resolution |
 | `work.py` | Single `<project>/bd_work/` area, `current`/`views`/`edit`, switching, `--status`, `--writeback`, git context |
 | `solutions.py` | Thin `git worktree` lifecycle wrapper |
-| `ops.py` | `init`, `new` (seeds empty `title`/`summary`, derives `folder`), `contain`, `uncontain`, `link`, `unlink`, versions, `diff` |
+| `ops.py` | `init`, `new` (seeds empty `title`/`summary`, derives `folder`), `contain`, `uncontain`, `link`, `unlink`, `version`, `delete`, `diff`, `migrate` |
 | `api.py` | Public Python functions |
 | `cli.py` | argparse wiring and output formatting |
 
@@ -72,11 +74,10 @@ Edge   source, target, type, pinned, origin ("link" or "reference")
 Issue  level, code, message, node, path
 ```
 
-`Node.meta` is the raw front matter; arbitrary fields live there and survive
-export. `contains is None` means "inherit the main version's list"; `[]` means
-"no children". `bd fork` materialises the effective list into the version; the
-loader inheritance rule is unchanged, so a hand-written version that omits
-`contains` still follows main.
+`Node.version` is always `>= 1`; `Node.ref` is the canonical `id-version` and
+`node_path` always emits the suffix. A node without `contains` has no children;
+there is no inheritance from another version. `bd version` copies the source
+file, so the new peer keeps its declared list.
 
 ## Add a CLI command
 
@@ -98,7 +99,7 @@ def render_count(view: View) -> str:
     return f"{len(view.nodes)} nodes"
 
 # api.py
-def count(root, view="1") -> int:
+def count(root, view="1-1") -> int:
     return len(_load_view(root, view).nodes)
 
 # cli.py
@@ -108,7 +109,7 @@ def _cmd_count(args):
 
 count = sub.add_parser("count", help="count nodes in a view")
 _add_root(count)
-count.add_argument("--view", default="1")
+count.add_argument("--view", default="1-1")
 count.set_defaults(func=_cmd_count)
 ```
 
@@ -156,9 +157,11 @@ Structural edits change front matter, never prose.
 
 Checklist:
 
-1. Load the store and resolve refs before writing.
+1. Load the store and resolve refs before writing; a bare CLI selector resolves
+   through `current_ref(view, id)`, and every data write uses the full ref.
 2. Refuse cycles, duplicates, and missing targets with `BreakdownError`.
-3. Materialise inherited `contains` before editing; write `[]` when clearing.
+3. Write the declared `contains` list directly; write `[]` when clearing. There
+   is no inheritance to materialise.
 4. Preserve body bytes and unrelated fields.
 5. Test that the body is unchanged byte-for-byte.
 
@@ -174,14 +177,18 @@ python3 -m pytest -q
 - `test_examples.py` runs the project at `examples/` (store under `.bd_tree/`)
   through `bd check` and view loading, asserting both complete trees.
 - Root tests cover the precedence: explicit ref where a command takes one >
-  `ROOT` > lowest main ref. They also cover `root-ref-missing`, `invalid-root`,
-  and `check --view` narrowing only the report.
+  `ROOT` > lowest `(id, version)`. They also cover `root-ref-missing`,
+  `invalid-root`, and `check --view` narrowing only the report.
 - Reachability tests assert all three paths: through `contains`, through another
-  file with the same id, or through a link from a reachable node. A main and its
-  versions are alternatives for one logical node, so an alternative branch is not
+  file with the same logical id, or through a link from a reachable node.
+  Versions of one id are alternatives, so a non-selected version is not
   `unreachable`; a linked history view is not one either.
-- Link tests cover both forms: a mapping with its own `type`, and a bare ref
-  whose type is read from the target node.
+- Filename tests reject a bare `<id>.md`, version `0`, and leading zeros; data
+  tests report `bare-ref` for a bare `contains`/`links`/`ROOT` entry,
+  `invalid-ref` for malformed syntax, and `duplicate-id` when one view holds
+  two versions of the same logical id.
+- Link tests cover both forms: a mapping with its own `type`, and a scalar full
+  ref whose type is read from the target node.
 - Git tests create a temporary repository, set local `user.name`/`user.email`, and
   use `pytest.mark.skipif(shutil.which("git") is None, ...)`.
 - Structural tests assert body bytes, not just field values.
@@ -205,7 +212,7 @@ git diff --check
 - `bd views` lists containment roots and marks the default; `bd current` reports
   the work area and the view actually in it.
 - `bd check --view REF` narrows reporting to one closure; every view is still
-  checked, and the default root is `ROOT` else the lowest main ref.
+  checked, and the default root is `ROOT` else the lowest `(id, version)`.
 - `bd tree`, `bd show`, `bd path` quickly show what the loader sees.
 - `bd show REF+N` caps each body at 4000 characters unless `--max-chars` is
   given; `--max-chars 0` prints full bodies. `bd tree --depth 0` is unlimited
@@ -230,20 +237,21 @@ Common mistakes:
 
 1. The store's `nodes/` directory (`.bd_tree/nodes/` in a project layout) is the
    only source of truth.
-2. Filename is identity and version.
+2. Filename is identity and version: every file is `<id>-<version>.md`, version
+   >= 1; a bare `<id>.md` is invalid.
 3. `contains` is an ordered tree per view; `links` is a DAG.
-4. Arbitrary front matter survives edits and exports.
-5. Body bytes survive structural edits.
-6. No JSON/TOML/lock/state data files; the only pointers are the store-level
-   `ROOT`, one ref on one line, and the folder-level `.bd_root`, one store path
-   on one line.
-7. A view never crosses a branch, and neither does a version; solutions are git
-   worktrees. `promote` is filesystem-only and never crosses a worktree; it is
-   not a way to switch trees.
-8. Generated files are disposable and never committed.
-9. A project has exactly one writable work area, `<project>/bd_work/`, holding
-   one view at a time. Its view changes only with `bd work`, not with `bd root`.
-   Read-only exports never become a second work area.
+4. Data refs are full `id-version`; a bare id is a CLI selector only.
+5. Arbitrary front matter survives edits and exports.
+6. Body bytes survive structural edits.
+7. No JSON/TOML/lock/state data files; the only pointers are the store-level
+   `ROOT`, one full ref on one line, and the folder-level `.bd_root`, one store
+   path on one line.
+8. A view never crosses a branch, and neither does a version; solutions are git
+   worktrees. A parent's `contains` names the version current in that view.
+9. Generated files are disposable and never committed.
+10. A project has exactly one writable work area, `<project>/bd_work/`, holding
+    one view at a time. Its view changes only with `bd work`, not with `bd root`.
+    Read-only exports never become a second work area.
 
 ## Style and commits
 
@@ -268,8 +276,8 @@ Keep examples executable. Run them before committing.
 
 ## Not built yet
 
-- No CI or generic importer. Packaging is `pyproject.toml` plus the `bd`
-  console script.
+- No CI or generic importer. `bd migrate` only converts a classic bare-file
+  store in place. Packaging is `pyproject.toml` plus the `bd` console script.
 - No three-way node merge; solutions merge with git.
 - No locking for concurrent agents.
 - No Windows-specific symlink path.

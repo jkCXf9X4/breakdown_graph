@@ -7,8 +7,9 @@ from typing import Any
 
 from .errors import BreakdownError
 from .frontmatter import parse_document, rewrite_links
-from .loader import load_view, ref_of, parse_ref
+from .loader import load, load_view
 from .model import Edge, Node, ReconcileChange, StaleEdge, View
+from .navigate import resolve_ref
 
 
 def edge_state(view: View, edge: Edge) -> str | None:
@@ -45,9 +46,11 @@ def stale_edge_list(view: View) -> list[StaleEdge]:
     return result
 
 
-def stale(root: str | Path, view: str | int = "1") -> list[StaleEdge]:
+def stale(root: str | Path, view: str | int | None = None) -> list[StaleEdge]:
     """List propagating edges whose pin is missing or out of date."""
-    return stale_edge_list(load_view(root, view))
+    store = load(root)
+    target = None if view is None else resolve_ref(store, view)
+    return stale_edge_list(load_view(store, target))
 
 
 def _reconcile_node(view: View, node: Node) -> list[ReconcileChange]:
@@ -86,21 +89,23 @@ def _reconcile_node(view: View, node: Node) -> list[ReconcileChange]:
 def reconcile(
     root: str | Path,
     refs: list[str] | None = None,
-    view: str | int = "1",
+    view: str | int | None = None,
     *,
     all_nodes: bool = False,
 ) -> list[ReconcileChange]:
     """Rewrite stale/untracked propagating pins, preserving body bytes."""
-    resolved = load_view(root, view)
+    store = load(root)
+    target_ref = None if view is None else resolve_ref(store, view)
+    resolved = load_view(store, target_ref)
     if all_nodes:
         targets = sorted(resolved.nodes)
     else:
         targets = []
         for ref in dict.fromkeys(refs or []):
             try:
-                canonical = ref_of(*parse_ref(ref))
-            except ValueError:
-                raise BreakdownError(f"invalid ref {ref!r}") from None
+                canonical = resolve_ref(store, ref, view_ref=resolved.ref)
+            except BreakdownError as exc:
+                raise BreakdownError(str(exc)) from None
             targets.append(canonical)
     if not all_nodes and not targets:
         raise BreakdownError("reconcile needs at least one ref or --all")

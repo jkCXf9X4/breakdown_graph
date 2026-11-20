@@ -22,7 +22,7 @@ def test_init_creates_hidden_store_and_gitignore(tmp_path):
     project = tmp_path / "store"
     root = init_store(project)
     assert root == project.resolve()
-    path = project / ".bd_tree" / "nodes" / "1.md"
+    path = project / ".bd_tree" / "nodes" / "1-1.md"
     assert path.is_file()
     assert path.read_text(encoding="utf-8") == EXPECTED
     assert (project / ".gitignore").read_text(encoding="utf-8") == GITIGNORE
@@ -40,7 +40,7 @@ def test_init_refuses_non_empty_hidden_store_and_keeps_it(tmp_path, capsys):
     assert main(["init", str(tmp_path)]) == 2
     assert "store already exists at" in capsys.readouterr().err
     assert existing.read_text(encoding="utf-8") == "keep me\n"
-    assert not (nodes / "1.md").exists()
+    assert not (nodes / "1-1.md").exists()
 
 
 def test_init_refuses_non_empty_legacy_store_and_keeps_it(tmp_path, capsys):
@@ -71,7 +71,7 @@ def test_init_does_not_duplicate_an_existing_gitignore_entry(tmp_path):
 def test_init_default_dir_is_cwd(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     assert main(["init"]) == 0
-    assert (tmp_path / ".bd_tree" / "nodes" / "1.md").is_file()
+    assert (tmp_path / ".bd_tree" / "nodes" / "1-1.md").is_file()
     assert "store initialized at" in capsys.readouterr().out
 
 
@@ -83,19 +83,19 @@ def test_init_prints_next_steps(tmp_path, capsys):
     assert (
         "next:\n"
         f"  cd {root}\n"
-        '  bd new --parent 1 --field title="First claim" --field layer=claims\n'
-        "  bd tree 1\n"
-        "  bd work 1\n"
+        '  bd new --parent 1-1 --field title="First claim" --field layer=claims\n'
+        "  bd tree 1-1\n"
+        "  bd work 1-1\n"
     ) in out
 
 
 def test_tree_shows_root_after_init(tmp_path, capsys):
     assert main(["init", str(tmp_path)]) == 0
     capsys.readouterr()
-    assert main(["tree", "1", "--root", str(tmp_path)]) == 0
+    assert main(["tree", "1-1", "--root", str(tmp_path)]) == 0
     assert "Root" in capsys.readouterr().out
     assert parse_document(
-        (tmp_path / ".bd_tree" / "nodes" / "1.md").read_text(encoding="utf-8")
+        (tmp_path / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")
     ).meta == {"id": 1, "title": "Root", "contains": []}
 
 
@@ -103,7 +103,7 @@ def test_init_root_has_no_placement_fields_and_fresh_store_checks_clean(tmp_path
     project = tmp_path / "store"
     init_store(project)
     meta = parse_document(
-        (project / ".bd_tree" / "nodes" / "1.md").read_text(encoding="utf-8")
+        (project / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")
     ).meta
     assert meta == {"id": 1, "title": "Root", "contains": []}
     result = check(project)

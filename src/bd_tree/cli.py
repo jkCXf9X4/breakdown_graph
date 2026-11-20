@@ -23,7 +23,7 @@ from .loader import (
 )
 from .navigate import (
     NavigationError,
-    main_root,
+    default_root,
     parse_ref_depth,
     parse_where,
     render_find,
@@ -31,6 +31,7 @@ from .navigate import (
     render_path,
     render_show,
     render_tree,
+    resolve_ref,
     view_roots,
 )
 
@@ -115,9 +116,9 @@ def _cmd_init(args: argparse.Namespace) -> int:
     print(f"store initialized at {root}")
     print("next:")
     print(f"  cd {root}")
-    print('  bd new --parent 1 --field title="First claim" --field layer=claims')
-    print("  bd tree 1")
-    print("  bd work 1")
+    print('  bd new --parent 1-1 --field title="First claim" --field layer=claims')
+    print("  bd tree 1-1")
+    print("  bd work 1-1")
     return 0
 
 
@@ -155,20 +156,21 @@ def _cmd_edit(args: argparse.Namespace) -> int:
 
 def _cmd_work(args: argparse.Namespace) -> int:
     root = _find_root(args.root)
+    store = api.load(root)
     ref = args.ref
     depth = args.depth
-    if ref is not None:
-        try:
+    try:
+        if ref is not None:
             parsed = parse_ref_depth(ref, args.depth)
-        except NavigationError as exc:
-            raise BreakdownError(str(exc)) from exc
-        ref, depth = parsed.ref, parsed.depth
-    elif not (args.status or args.writeback):
-        try:
-            parsed = parse_ref_depth(main_root(api.load(root)), args.depth)
-        except NavigationError as exc:
-            raise BreakdownError(str(exc)) from exc
-        ref, depth = parsed.ref, parsed.depth
+        elif not (args.status or args.writeback):
+            parsed = parse_ref_depth(default_root(store), args.depth)
+        else:
+            parsed = None
+    except NavigationError as exc:
+        # Malformed ref/depth syntax is a usage error (exit 2), not a miss.
+        raise BreakdownError(str(exc)) from exc
+    if parsed is not None:
+        ref, depth = resolve_ref(store, parsed.ref), parsed.depth
     result = api.work(
         root,
         ref,
@@ -252,6 +254,8 @@ def _cmd_export(args: argparse.Namespace) -> int:
     view = getattr(args, "ref", None) or args.view
     if view is None:
         raise BreakdownError("provide a view REF or --view REF")
+    store = api.load(_find_root(args.root))
+    view = resolve_ref(store, view)
     opts: dict[str, object] = {}
     if args.view_name in ("context", "tree"):
         opts.update(force=args.force, clean=args.clean, **_display_opts(args))
@@ -266,9 +270,18 @@ def _cmd_export(args: argparse.Namespace) -> int:
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
+    root = _find_root(args.root, allow_missing=True)
+    view = args.view
+    if view is not None:
+        try:
+            store = api.load(root)
+        except BreakdownError:
+            store = None
+        if store is not None:
+            view = resolve_ref(store, view)
     result = api.check(
-        _find_root(args.root, allow_missing=True),
-        args.view,
+        root,
+        view,
         require=args.require,
         max_lines=args.max_lines,
         max_chars=args.max_chars,
@@ -304,29 +317,37 @@ def _cmd_root(args: argparse.Namespace) -> int:
     store = api.load(root)
     if store.root_ref is None:
         raise BreakdownError("store has no nodes")
-    source = "ROOT" if store.declared_root else "lowest main"
+    source = "ROOT" if store.declared_root else "lowest node"
     print(f"{store.root_ref}  ({source})")
     return 0
 
 
-def _cmd_fork(args: argparse.Namespace) -> int:
+def _cmd_version(args: argparse.Namespace) -> int:
     root = _find_root(args.root)
-    path = api.fork(root, args.id, args.version)
+    path = api.version(root, args.ref, args.version)
     print(f"created {path.relative_to(root)}")
     return 0
 
 
-def _cmd_promote(args: argparse.Namespace) -> int:
+def _cmd_delete(args: argparse.Namespace) -> int:
     root = _find_root(args.root)
-    path = api.promote(root, args.ref, keep=args.keep)
-    print(f"promoted {args.ref} -> {path.relative_to(root)}")
+    path = api.delete(root, args.ref, force=args.force)
+    print(f"deleted {path.relative_to(root)}")
     return 0
 
 
-def _cmd_retire_version(args: argparse.Namespace) -> int:
+def _cmd_migrate(args: argparse.Namespace) -> int:
     root = _find_root(args.root)
-    path = api.retire_version(root, args.ref)
-    print(f"deleted {path.relative_to(root)}")
+    result = api.migrate(root, dry_run=args.dry_run)
+    for old, new in result.renames:
+        print(f"rename {old} -> {new}")
+    for line in result.rewrites:
+        print(f"rewrite {line}")
+    label = "dry run" if args.dry_run else "migrated"
+    print(
+        f"{label}: {len(result.renames)} renames, "
+        f"{len(result.rewrites)} rewrites"
+    )
     return 0
 
 
@@ -339,9 +360,9 @@ def _cmd_diff(args: argparse.Namespace) -> int:
 
 def _cmd_stale(args: argparse.Namespace) -> int:
     root = _find_root(args.root)
-    view = args.view or api.load(root).root_ref
-    if view is None:
-        raise BreakdownError("store has no root ref")
+    store = api.load(root)
+    view = args.view if args.view is not None else default_root(store)
+    view = resolve_ref(store, view)
     edges = api.stale(root, view)
     for edge in edges:
         print(edge.format())
@@ -355,9 +376,9 @@ def _cmd_reconcile(args: argparse.Namespace) -> int:
     if args.all and args.refs:
         raise BreakdownError("use either explicit refs or --all, not both")
     root = _find_root(args.root)
-    view = args.view or api.load(root).root_ref
-    if view is None:
-        raise BreakdownError("store has no root ref")
+    store = api.load(root)
+    view = args.view if args.view is not None else default_root(store)
+    view = resolve_ref(store, view)
     changes = api.reconcile(root, refs=args.refs, view=view, all_nodes=args.all)
     for change in changes:
         print(change.format())
@@ -388,44 +409,60 @@ def _cmd_new(args: argparse.Namespace) -> int:
 
 
 def _cmd_contain(args: argparse.Namespace) -> int:
+    root = _find_root(args.root)
+    store = api.load(root)
+    parent = resolve_ref(store, args.parent)
+    child = resolve_ref(store, args.child)
     api.contain(
-        _find_root(args.root),
-        args.parent,
-        args.child,
+        root,
+        parent,
+        child,
         before=args.before,
         after=args.after,
     )
-    print(f"contained {args.child} in {args.parent}")
+    print(f"contained {child} in {parent}")
     return 0
 
 
 def _cmd_uncontain(args: argparse.Namespace) -> int:
-    api.uncontain(_find_root(args.root), args.parent, args.child)
-    print(f"removed {args.child} from {args.parent}")
+    root = _find_root(args.root)
+    store = api.load(root)
+    parent = resolve_ref(store, args.parent)
+    child = resolve_ref(store, args.child)
+    api.uncontain(root, parent, child)
+    print(f"removed {child} from {parent}")
     return 0
 
 
 def _cmd_link(args: argparse.Namespace) -> int:
+    root = _find_root(args.root)
+    store = api.load(root)
+    source = resolve_ref(store, args.source)
+    target = resolve_ref(store, args.target)
     api.link(
-        _find_root(args.root),
-        args.source,
-        args.target,
+        root,
+        source,
+        target,
         link_type=args.type,
         propagates=args.propagates,
     )
-    print(f"linked {args.source} -> {args.target} ({args.type})")
+    print(f"linked {source} -> {target} ({args.type})")
     return 0
 
 
 def _cmd_unlink(args: argparse.Namespace) -> int:
+    root = _find_root(args.root)
+    store = api.load(root)
+    source = resolve_ref(store, args.source)
+    target = resolve_ref(store, args.target)
     api.unlink(
-        _find_root(args.root),
-        args.source,
-        args.target,
+        root,
+        source,
+        target,
         link_type=args.type,
     )
     suffix = f" ({args.type})" if args.type else ""
-    print(f"unlinked {args.source} -> {args.target}{suffix}")
+    print(f"unlinked {source} -> {target}{suffix}")
     return 0
 
 
@@ -441,11 +478,12 @@ def _field_list(text: str | None) -> list[str] | None:
 def _cmd_show(args: argparse.Namespace) -> int:
     store = api.load(_find_root(args.root))
     parsed = parse_ref_depth(args.ref, args.depth)
+    ref = resolve_ref(store, parsed.ref)
     depth = 0 if parsed.depth is None else parsed.depth
     print(
         render_show(
             store,
-            parsed.ref,
+            ref,
             depth=depth,
             fields=_field_list(args.fields),
             no_body=args.no_body,
@@ -458,13 +496,16 @@ def _cmd_show(args: argparse.Namespace) -> int:
 
 def _cmd_tree(args: argparse.Namespace) -> int:
     store = api.load(_find_root(args.root))
-    parsed = parse_ref_depth(args.ref or main_root(store), args.depth)
+    parsed = parse_ref_depth(
+        args.ref if args.ref is not None else default_root(store), args.depth
+    )
+    ref = resolve_ref(store, parsed.ref)
     if args.columns is not None:
         depth = 1 if parsed.depth is None else parsed.depth
         print(
             render_ls(
                 store,
-                parsed.ref,
+                ref,
                 depth=depth,
                 columns=_field_list(args.columns),
                 max_chars=args.max_chars,
@@ -475,7 +516,7 @@ def _cmd_tree(args: argparse.Namespace) -> int:
     print(
         render_tree(
             store,
-            parsed.ref,
+            ref,
             depth=depth,
             summary=args.summary,
             fields=_field_list(args.fields),
@@ -489,6 +530,7 @@ def _cmd_find(args: argparse.Namespace) -> int:
     if args.limit < 0:
         raise NavigationError("--limit must be non-negative")
     store = api.load(_find_root(args.root))
+    view = None if args.view is None else resolve_ref(store, args.view)
     output = render_find(
         store,
         args.query,
@@ -496,7 +538,7 @@ def _cmd_find(args: argparse.Namespace) -> int:
         regex=args.regex,
         where=parse_where(args.where),
         limit=args.limit,
-        view=args.view,
+        view=view,
         all_nodes=args.all_nodes,
     )
     if output:
@@ -507,7 +549,7 @@ def _cmd_find(args: argparse.Namespace) -> int:
 def _cmd_path(args: argparse.Namespace) -> int:
     store = api.load(_find_root(args.root))
     parsed = parse_ref_depth(args.ref)
-    print(render_path(store, parsed.ref))
+    print(render_path(store, resolve_ref(store, parsed.ref)))
     return 0
 
 
@@ -546,7 +588,7 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default=None,
         help="view root ref, optionally with +DEPTH (default: ROOT file, "
-        "else lowest main ref)",
+        "else lowest node)",
     )
     work.add_argument(
         "--depth",
@@ -685,7 +727,7 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument(
         "--view",
         default=None,
-        help="view root ref to report (default: ROOT file, else lowest main ref)",
+        help="view root ref to report (default: ROOT file, else lowest node)",
     )
     check.add_argument(
         "--require",
@@ -698,9 +740,11 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--max-chars", type=int, default=None)
     check.set_defaults(func=_cmd_check)
 
-    versions = sub.add_parser("versions", help="list main and version files of an id")
+    versions = sub.add_parser(
+        "versions", help="list the version files of a logical id"
+    )
     _add_root(versions)
-    versions.add_argument("id")
+    versions.add_argument("id", help="logical id, either 5 or 5-1")
     versions.set_defaults(func=_cmd_versions)
 
     root_cmd = sub.add_parser(
@@ -713,26 +757,40 @@ def build_parser() -> argparse.ArgumentParser:
     root_cmd.add_argument(
         "--clear",
         action="store_true",
-        help="remove ROOT; fall back to the lowest main ref",
+        help="remove ROOT; fall back to the lowest node",
     )
     root_cmd.set_defaults(func=_cmd_root)
 
-    fork = sub.add_parser("fork", help="copy a main node to the next free version")
-    _add_root(fork)
-    fork.add_argument("id")
-    fork.add_argument("--version", type=int, default=None)
-    fork.set_defaults(func=_cmd_fork)
+    version = sub.add_parser(
+        "version", help="copy a ref to the next free version of the same id"
+    )
+    _add_root(version)
+    version.add_argument("ref", help="source ref or bare selector")
+    version.add_argument(
+        "--version", type=int, default=None, help="explicit target version"
+    )
+    version.set_defaults(func=_cmd_version)
 
-    promote = sub.add_parser("promote", help="copy a version onto the main file")
-    _add_root(promote)
-    promote.add_argument("ref")
-    promote.add_argument("--keep", action="store_true", help="keep the version file")
-    promote.set_defaults(func=_cmd_promote)
+    delete = sub.add_parser(
+        "delete", help="delete one node file (refuses bound refs)"
+    )
+    _add_root(delete)
+    delete.add_argument("ref")
+    delete.add_argument(
+        "--force",
+        action="store_true",
+        help="delete even when the ref is the root or still referenced",
+    )
+    delete.set_defaults(func=_cmd_delete)
 
-    retire_version = sub.add_parser("retire-version", help="delete a non-main version")
-    _add_root(retire_version)
-    retire_version.add_argument("ref")
-    retire_version.set_defaults(func=_cmd_retire_version)
+    migrate = sub.add_parser(
+        "migrate", help="convert a classic bare-file store to version-only files"
+    )
+    _add_root(migrate)
+    migrate.add_argument(
+        "--dry-run", action="store_true", help="print the plan without touching disk"
+    )
+    migrate.set_defaults(func=_cmd_migrate)
 
     diff = sub.add_parser("diff", help="compare two containment views id by id")
     _add_root(diff)
@@ -756,7 +814,7 @@ def build_parser() -> argparse.ArgumentParser:
         "new", help="create the next global id under a parent (fields are arbitrary)"
     )
     _add_root(new)
-    new.add_argument("--parent", required=True, help="parent ref (e.g. 1 or 5-1)")
+    new.add_argument("--parent", required=True, help="parent ref (e.g. 1-1 or 5)")
     new.add_argument(
         "--field",
         action="append",
@@ -837,7 +895,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="print the containment outline, or a column table with --columns",
     )
     _add_root(tree)
-    tree.add_argument("ref", nargs="?", default=None, help="root ref (default: main root)")
+    tree.add_argument(
+        "ref", nargs="?", default=None, help="root ref (default: store root)"
+    )
     tree.add_argument(
         "--depth",
         type=int,

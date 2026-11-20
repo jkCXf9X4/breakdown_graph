@@ -22,6 +22,10 @@ bd uncontain P C
   `bd contain NEW C --before REF`.
 - `contain` refuses self-containment, cycles, duplicates, and unknown
   siblings. A node reachable twice in one view is `multiple-parents`.
+- A node without `contains` is a leaf; nothing is inherited. `contains` holds
+  full refs only, and `bd new` appends the full `<newid>-1`.
+- `contain` and `uncontain` accept a bare id as a selector and resolve it in the
+  selected view; they always write full refs.
 - `bd new` derives `folder` from `layer`/`group`/`type` when absent and
   refuses an explicit `id`.
 
@@ -30,10 +34,11 @@ does not get contained "for now" — it gets its own node in its own place.
 
 ## Links
 
-`links` is a DAG of typed edges. A link never pulls a node into a view, but it
-keeps its target reachable and a link to another containment root is not
-`external-link`. A bare ref (`links: ['10']`) takes its type from the target
-node's `type`; the mapping form carries an edge-specific label or freshness.
+`links` is a DAG of typed edges, and every `to` is a full ref. A link never
+pulls a node into a view, but it keeps its target reachable and a link to
+another containment root is not `external-link`. A scalar link
+(`links: ['10-1']`) takes its type from the target node's `type`; the mapping
+form carries an edge-specific label or freshness.
 
 ```bash
 bd link FROM TO --type supports --propagates
@@ -49,26 +54,28 @@ bd unlink FROM TO [--type TYPE]
 
 ## Versions
 
-A version is a node file in the same checkout, not a branch.
+A version is a node file in the same checkout, not a branch. Every file is
+`<id>-<version>.md`; versions of one id are peers.
 
 ```bash
-bd versions ID              # main and version files of one id
-bd fork ID                  # copy main to the next free version
-bd fork ID --version N      # explicit version slot
-bd promote REF              # copy version onto main, delete the version
-bd promote REF --keep       # keep the version file
-bd retire-version REF       # delete a non-main version
+bd versions ID              # peer files of one id, ascending by version
+bd version REF              # copy to the next free version of the same id
+bd version REF --version N  # explicit version slot
+bd delete REF               # delete a version (refuses ROOT/reachable/referenced)
+bd delete REF --force       # delete anyway
 bd diff LEFT RIGHT          # compare two views id by id
 ```
 
-- Every versioned id must have a main file; a version without one is
-  `missing-main`.
-- `fork`, `promote`, and `retire-version` each reject main-vs-version refs the
-  other way round.
-- `promote --keep` strips `contains` from the kept version so it inherits from
-  the promoted main again.
-- Version references inside `contains`/`links` are exact (`6-2`, not `6`) so a
-  view does not silently follow later main edits.
+- The version current in a view is the one its parent's `contains` names; there
+  is no per-node pointer and no copy step.
+- `bd version` copies the source file, including its declared `contains`; a
+  version that omits `contains` is a leaf, not an inheritor.
+- To make another version current, repoint the parent with `bd contain` /
+  `bd uncontain`.
+- Refs inside `contains`/`links` are full and exact (`6-2`, not `6`); a bare
+  data ref is `bare-ref`.
+- A classic store with bare `nodes/<id>.md` files converts once with
+  `bd migrate [--dry-run]`.
 
 ## Solutions
 
@@ -80,8 +87,8 @@ bd solution remove NAME|PATH --force
 
 Git owns the solution boundary: one worktree per solution, merge in git.
 `bd work` is a layout inside one checkout and never a branch mechanism. A
-solution never sees another branch's nodes or versions; merge before
-promoting.
+solution never sees another branch's nodes or versions; merge before repointing
+to them.
 
 ## Switching trees
 
@@ -93,4 +100,5 @@ Three distinct operations, often confused:
 | Change the view in the work area | `bd work REF` |
 | Repoint one parent | `bd uncontain P C` then `bd contain P C --before REF` |
 
-`bd promote` appears in none of them: it copies bytes onto main.
+None of them copies a file over another: the parent's `contains` is the record
+of which version a view uses.
