@@ -1,5 +1,0 @@
-# Verification — how bd_tree proves its claims
-
-This folder holds proof and acceptance: how each claim is checked, the acceptance criteria, the test strategy, and the evidence that a claim holds. It exists so confidence rests on recorded checks rather than assertion, and reviewers and maintainers read it to see which evidence backs which layer.
-
-Start at `INDEX.md` and open the one leaf that owns the question you have.

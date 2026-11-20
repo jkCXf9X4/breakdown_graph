@@ -223,7 +223,7 @@ src/bd_tree/               Python package
 tests/                     pytest suite
 examples/                 example project: .bd_tree/ store + ignored bd_work/
 docs/                      user, developer, design, branches/versions
-docs/breakdown/            product breakdown: state, open work, review
+docs/breakdown/            product breakdown: bd store (.bd_tree/) + ignored bd_work/
 ```
 
 ## Status

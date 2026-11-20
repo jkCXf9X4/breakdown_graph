@@ -1,5 +1,0 @@
-# Decisions — why bd_tree changed
-
-This folder holds dated decision records: the committed choices that changed the baseline, each with context, decision, rationale, alternatives, and consequences. Until an archive is configured, loose decision records live here; once one is, records move into the archive and the generated registers remain. Maintainers and reviewers read it to understand why the current state is the way it is.
-
-Start at `INDEX.md` and open the one leaf that owns the question you have.

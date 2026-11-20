@@ -1,5 +1,0 @@
-# Product — what bd_tree promises
-
-This folder holds the promised deliverable: capabilities and requirements others rely on, externally observable behavior, commitments to users and integrators, and user-visible use cases. It exists so promises stay distinct from the internal design and code that fulfil them, and readers come here to learn what bd_tree offers before asking how it is organized or built.
-
-Start at `INDEX.md` and open the one leaf that owns the question you have.

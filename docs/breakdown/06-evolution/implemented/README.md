@@ -1,5 +1,0 @@
-# Implemented — completed improvements
-
-This stage is a closed lookup of improvements that shipped. It preserves the record of what changed and why without serving as current state, which lives in the claim layers. Readers come here to trace a completed improvement back to its originating candidate.
-
-Start at `INDEX.md` and open the one leaf that owns the question you have.

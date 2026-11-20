@@ -158,5 +158,7 @@ views, or generated output.
 - [`docs/DESIGN.md`](docs/DESIGN.md) — model, decisions, invariants.
 - [`docs/BRANCHES-AND-VERSIONS.md`](docs/BRANCHES-AND-VERSIONS.md) — the
   branch/version separation contract.
-- [`docs/breakdown/README.md`](docs/breakdown/README.md) — product breakdown:
-  current state, open work, and review findings. Start at its `INDEX.md`.
+- [`docs/breakdown/`](docs/breakdown/) — product breakdown as a second `bd`
+  project (store `docs/breakdown/.bd_tree/`): current state, open work,
+  scrutiny, and history. Run `bd --root docs/breakdown tree`, or `bd work 1`
+  from that directory.
