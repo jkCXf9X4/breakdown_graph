@@ -103,7 +103,7 @@ def _issue(
 
 def _parse_links(
     meta: dict[str, Any], issues: list[Issue], path: Path, root: Path
-) -> tuple[list[Link], list[dict[str, Any]]]:
+) -> tuple[list[Link], list[Any]]:
     raw = meta.get("links")
     if raw is None:
         return [], []
@@ -111,14 +111,30 @@ def _parse_links(
         _issue(issues, "error", "invalid-links", "'links' must be a list", path=path, root=root)
         return [], []
     links: list[Link] = []
-    raws: list[dict[str, Any]] = []
+    raws: list[Any] = []
     for index, item in enumerate(raw):
+        if isinstance(item, (str, int)) and not isinstance(item, bool):
+            try:
+                target = ref_of(*parse_ref(item))
+            except ValueError:
+                _issue(
+                    issues,
+                    "error",
+                    "invalid-link",
+                    f"links[{index}] has invalid ref {item!r}",
+                    path=path,
+                    root=root,
+                )
+                continue
+            links.append(Link(to=target, type="", raw=item))
+            raws.append(item)
+            continue
         if not isinstance(item, dict):
             _issue(
                 issues,
                 "error",
                 "invalid-link",
-                f"links[{index}] must be a mapping",
+                f"links[{index}] must be a mapping or a ref",
                 path=path,
                 root=root,
             )
@@ -372,6 +388,33 @@ def _read_declared_root(root: Path, issues: list[Issue]) -> str | None:
         return None
 
 
+def _resolve_implicit_link_types(
+    nodes: dict[str, Node], issues: list[Issue]
+) -> None:
+    """Fill ``type=""`` links from the target node's own ``type`` field."""
+    for node in nodes.values():
+        for link in node.links:
+            if link.type:
+                continue
+            target = nodes.get(link.to)
+            if target is None:
+                link.type = "link"
+                continue
+            value = target.meta.get("type")
+            if isinstance(value, str) and value.strip():
+                link.type = value
+            else:
+                _issue(
+                    issues,
+                    "error",
+                    "invalid-link",
+                    f"implicit link to '{link.to}' needs a non-empty 'type' "
+                    "on the target",
+                    node=node.ref,
+                )
+                link.type = "link"
+
+
 def load(root: str | Path) -> Store:
     """Load the full store index at a project root or a store root."""
     root = Path(root).resolve()
@@ -382,6 +425,7 @@ def load(root: str | Path) -> Store:
     declared_root = _read_declared_root(root, issues)
     nodes = {record.node.ref: record.node for record in records if record.node is not None}
     nodes = dict(sorted(nodes.items(), key=lambda item: _ref_sort_key(item[1])))
+    _resolve_implicit_link_types(nodes, issues)
     return Store(
         root=root, nodes=nodes, issues=issues, declared_root=declared_root
     )

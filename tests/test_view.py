@@ -82,3 +82,15 @@ def test_linked_subtree_stays_out_of_the_view(write, tmp_path):
     write(nodes, 11)
     assert set(load_view(tmp_path, "1").nodes) == {"1", "2"}
     assert check(tmp_path).ok
+
+
+def test_bare_link_target_is_reachable_but_outside_the_view(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2, links=["10"])
+    write(nodes, 10, title="Decisions", type="history", contains=["11"])
+    write(nodes, 11)
+    assert set(load_view(tmp_path, "1").nodes) == {"1", "2"}
+    result = check(tmp_path)
+    assert result.ok
+    assert not any(issue.code == "external-link" for issue in result.issues)

@@ -47,7 +47,8 @@ behaviour change and update the docs listed at the bottom.
 - `contains` is an ordered containment list. A view is the closure of one ref.
 - `contains` is a tree per view. `links` is a DAG and never adds nodes to a view;
   it does keep an outgoing target reachable, and a link to another containment
-  root is not an `external-link`.
+  root is not an `external-link`. A bare ref (`links: ['10']`) takes its type
+  from the target node's `type`.
 - Front matter is arbitrary; only the identity/containment/link/freshness keys
   (`id`, `legacy`, `contains`, `links`, `to`, `type`, `propagates`, `pinned`)
   are reserved. `home`, `folder`, `name`, and `title` are presentation fields.

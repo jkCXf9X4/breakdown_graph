@@ -27,7 +27,7 @@ class Link:
     type: str
     pinned: str | None = None
     propagates: bool = False
-    raw: dict[str, Any] = field(default_factory=dict)
+    raw: Any = field(default_factory=dict)
 
     @property
     def propagating(self) -> bool:
@@ -47,7 +47,7 @@ class Node:
     links: list[Link]
     body: str
     path: Path
-    raw_links: list[dict[str, Any]]
+    raw_links: list[Any]
     meta: dict[str, Any]
 
     @property

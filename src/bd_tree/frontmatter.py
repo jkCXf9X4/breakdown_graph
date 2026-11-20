@@ -151,16 +151,27 @@ def render_document(meta: dict[str, Any], body: str) -> str:
 _LINKS_KEY = re.compile(r"^links\s*:")
 
 
-def _format_link(link: dict[str, Any]) -> str:
+def _link_scalar(value: str | int) -> str:
+    return yaml.safe_dump(
+        value, default_flow_style=True, width=10**9, allow_unicode=True
+    ).strip()
+
+
+def _link_object(link: dict[str, Any] | str | int) -> str:
+    if not isinstance(link, dict):
+        return _link_scalar(link)
     data: dict[str, Any] = {}
     for key, value in link.items():
         if value is None and key != "pinned":
             continue
         data[key] = str(value) if key == "pinned" else value
-    dumped = yaml.safe_dump(
+    return yaml.safe_dump(
         data, default_flow_style=True, width=10**9, allow_unicode=True
     ).strip()
-    return "  - " + dumped
+
+
+def _format_link(link: dict[str, Any] | str | int) -> str:
+    return "  - " + _link_object(link)
 
 
 _CONTAINS_KEY = re.compile(r"^contains\s*:")
@@ -192,11 +203,15 @@ def rewrite_contains(raw_fm: str, refs: list[str]) -> str:
     return rendered
 
 
-def rewrite_links(raw_fm: str, links: list[dict[str, Any]]) -> str:
+def rewrite_links(raw_fm: str, links: list[dict[str, Any] | str | int]) -> str:
     """Replace the ``links:`` block, leaving every other line untouched."""
     lines = raw_fm.splitlines()
     start = next((i for i, line in enumerate(lines) if _LINKS_KEY.match(line)), None)
-    block = ["links:"] + [_format_link(link) for link in links]
+    if len(links) == 1:
+        # One edge stays on one line; longer lists keep the block form.
+        block = [f"links: [{_link_object(links[0])}]"]
+    else:
+        block = ["links:"] + [_format_link(link) for link in links]
     if start is None:
         lines.extend(block)
     else:

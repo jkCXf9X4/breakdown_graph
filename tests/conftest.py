@@ -21,7 +21,7 @@ def write_node(
     *,
     version: int = 0,
     contains: list[str] | None = None,
-    links: list[dict[str, Any]] | None = None,
+    links: list[Any] | None = None,
     body: str = "body\n",
     meta: dict[str, Any] | None = None,
     **fields: Any,

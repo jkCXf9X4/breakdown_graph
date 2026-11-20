@@ -199,3 +199,22 @@ def test_dangling_link_still_errors(write, tmp_path):
     write(tmp_path / "nodes", 1, links=[{"to": "99", "type": "supports"}])
     result = check(tmp_path)
     assert any(issue.code == "dangling-link" for issue in result.errors)
+
+
+def test_bare_link_to_a_target_without_type_is_invalid(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=["10"])
+    write(nodes, 10)
+    result = check(tmp_path)
+    assert any(
+        issue.code == "invalid-link"
+        and "implicit link to '10'" in issue.message
+        for issue in result.errors
+    )
+
+
+def test_bare_link_to_a_missing_node_still_dangles(write, tmp_path):
+    write(tmp_path / "nodes", 1, links=["99"])
+    result = check(tmp_path)
+    assert any(issue.code == "dangling-link" for issue in result.errors)
+    assert not any(issue.code == "invalid-link" for issue in result.errors)

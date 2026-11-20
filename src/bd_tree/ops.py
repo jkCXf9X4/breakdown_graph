@@ -74,13 +74,38 @@ def _reaches(store: Store, start: str, target: str) -> bool:
     return False
 
 
-def _raw_links(document) -> list[dict[str, Any]]:
+def _raw_links(document) -> list[Any]:
     raw = document.meta.get("links")
     if raw is None:
         return []
-    if not isinstance(raw, list) or not all(isinstance(item, dict) for item in raw):
-        raise BreakdownError("'links' must be a list of mappings")
-    return [dict(item) for item in raw]
+    if not isinstance(raw, list) or not all(
+        isinstance(item, dict)
+        or (isinstance(item, (str, int)) and not isinstance(item, bool))
+        for item in raw
+    ):
+        raise BreakdownError("'links' must be a list of mappings or refs")
+    return [dict(item) if isinstance(item, dict) else item for item in raw]
+
+
+def _link_target(item: Any) -> str | None:
+    value = item.get("to") if isinstance(item, dict) else item
+    if value is None:
+        return None
+    try:
+        return ref_of(*parse_ref(value))
+    except ValueError:
+        return None
+
+
+def _link_type(item: Any, store: Store) -> str | None:
+    """An item's effective edge type: its own, or the target's ``type``."""
+    if isinstance(item, dict):
+        value = item.get("type")
+        return value if isinstance(value, str) else None
+    target = _link_target(item)
+    node = store.nodes.get(target) if target is not None else None
+    value = node.meta.get("type") if node is not None else None
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def _strip_contains(path: Path) -> None:
@@ -434,11 +459,10 @@ def link(
     document = parse_document(source_node.path.read_text(encoding="utf-8"))
     links = _raw_links(document)
     for item in links:
-        try:
-            existing = ref_of(*parse_ref(item.get("to")))
-        except ValueError:
-            continue
-        if existing == target_ref and item.get("type") == link_type:
+        if (
+            _link_target(item) == target_ref
+            and _link_type(item, store) == link_type
+        ):
             raise BreakdownError(
                 f"link {source_ref} -> {target_ref} ({link_type}) already exists; "
                 "use bd unlink first"
@@ -448,7 +472,14 @@ def link(
     if propagates:
         edge["propagates"] = True
         edge["pinned"] = target_node.body_hash
-    links.append(edge)
+    declared_type = target_node.meta.get("type")
+    bare = (
+        not propagates
+        and isinstance(declared_type, str)
+        and declared_type.strip()
+        and declared_type == link_type
+    )
+    links.append(target_ref if bare else edge)
     rewritten = rewrite_links(document.raw_fm, links)
     source_node.path.write_text(
         document.with_raw_fm(rewritten), encoding="utf-8", newline=""
@@ -473,16 +504,12 @@ def unlink(
 
     document = parse_document(source_node.path.read_text(encoding="utf-8"))
     links = _raw_links(document)
-    kept: list[dict[str, Any]] = []
+    kept: list[Any] = []
     removed = 0
     for item in links:
-        try:
-            existing = ref_of(*parse_ref(item.get("to")))
-        except ValueError:
-            kept.append(item)
-            continue
+        existing = _link_target(item)
         matches = existing == target_ref and (
-            link_type is None or item.get("type") == link_type
+            link_type is None or _link_type(item, store) == link_type
         )
         if matches:
             removed += 1

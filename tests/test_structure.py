@@ -156,6 +156,59 @@ def test_link_appends_an_edge_and_keeps_existing_fields(write, tmp_path):
     assert _doc(tmp_path, "1").body == BODIES[1]
 
 
+def test_single_link_is_written_inline(write, tmp_path):
+    _tree(write, tmp_path)
+    api.link(tmp_path, "1", "4", link_type="decision")
+    text = (tmp_path / "nodes" / "1.md").read_text(encoding="utf-8")
+    assert "links: [{to: '4', type: decision}]" in text
+    assert _meta(tmp_path, "1")["links"] == [{"to": "4", "type": "decision"}]
+
+
+def test_link_writes_a_bare_ref_when_the_target_declares_the_type(write, tmp_path):
+    nodes = _tree(write, tmp_path)
+    write(nodes, 10, type="decision", body="decision body\n")
+    api.link(tmp_path, "1", "10", link_type="decision")
+    text = (tmp_path / "nodes" / "1.md").read_text(encoding="utf-8")
+    assert "links: ['10']" in text
+    assert _meta(tmp_path, "1")["links"] == ["10"]
+    assert _doc(tmp_path, "1").body == BODIES[1]
+
+
+def test_link_keeps_a_mapping_when_the_type_does_not_match(write, tmp_path):
+    nodes = _tree(write, tmp_path)
+    write(nodes, 10, type="decision")
+    api.link(tmp_path, "1", "10", link_type="supports")
+    assert _meta(tmp_path, "1")["links"] == [{"to": "10", "type": "supports"}]
+
+
+def test_link_propagating_keeps_a_mapping_even_when_the_type_matches(
+    write, tmp_path
+):
+    nodes = _tree(write, tmp_path)
+    write(nodes, 10, type="decision", body="decision body\n")
+    api.link(tmp_path, "1", "10", link_type="decision", propagates=True)
+    link = _meta(tmp_path, "1")["links"][0]
+    assert link["to"] == "10"
+    assert link["propagates"] is True
+
+
+def test_unlink_removes_a_bare_link_by_type_and_by_target(write, tmp_path):
+    nodes = _tree(
+        write,
+        tmp_path,
+        links_1=["10", {"to": "3", "type": "reviews"}],
+    )
+    write(nodes, 10, type="decision", body="decision body\n")
+    api.unlink(tmp_path, "1", "10", link_type="decision")
+    assert _meta(tmp_path, "1")["links"] == [{"to": "3", "type": "reviews"}]
+    assert _doc(tmp_path, "1").body == BODIES[1]
+
+    nodes = _tree(write, tmp_path, links_1=["10"])
+    write(nodes, 10, type="decision", body="decision body\n")
+    api.unlink(tmp_path, "1", "10")
+    assert _meta(tmp_path, "1").get("links") in (None, [])
+
+
 def test_link_propagates_pins_the_target_now(write, tmp_path):
     _tree(write, tmp_path)
     api.link(tmp_path, "1", "4", link_type="depends", propagates=True)

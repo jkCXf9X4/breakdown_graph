@@ -83,6 +83,9 @@ Everything else is arbitrary and preserved on export. Typical fields: `title`,
 `summary`, `layer`, `type`, `status`, `date`, `phase`, `audience`, `order`,
 `tags`.
 
+A link may be a bare ref: `links: ['10']` takes its edge type from node `10`'s
+own `type` field. Use the mapping form for an edge-specific label or freshness.
+
 Edge object:
 
 ```yaml
@@ -91,7 +94,9 @@ links:
   - { to: 27, type: see_also }
 ```
 
-- `to`: ref. `type`: arbitrary label, never validated against an enum.
+- `to`: ref. `type`: arbitrary label, never validated against an enum. A bare
+  ref omits `type` and uses the target node's `type`; a history view's root
+  declares `type: decision`.
 - `propagates`: opt-in freshness participation. `pinned`: target body hash
   recorded at the last reconciliation, written by `bd reconcile` and never
   required by hand.

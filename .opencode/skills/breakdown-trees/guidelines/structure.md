@@ -32,7 +32,8 @@ does not get contained "for now" — it gets its own node in its own place.
 
 `links` is a DAG of typed edges. A link never pulls a node into a view, but it
 keeps its target reachable and a link to another containment root is not
-`external-link`.
+`external-link`. A bare ref (`links: ['10']`) takes its type from the target
+node's `type`; the mapping form carries an edge-specific label or freshness.
 
 ```bash
 bd link FROM TO --type supports --propagates

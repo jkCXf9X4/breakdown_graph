@@ -24,7 +24,7 @@ Useful flags: `--require FIELD` (missing field becomes an error),
 | `missing-nodes-dir` | No `nodes/` or `.bd_tree/nodes/` under the root |
 | `invalid-filename`, `invalid-id`, `id-filename-mismatch` | Filename grammar or `id` disagrees with the filename |
 | `duplicate-version`, `missing-main` | Version file repeated, or a version with no main |
-| `bad-frontmatter`, `invalid-contains`, `invalid-links`, `invalid-link`, `invalid-link-target`, `invalid-propagates`, `invalid-pin` | Front matter cannot be parsed or has the wrong shape |
+| `bad-frontmatter`, `invalid-contains`, `invalid-links`, `invalid-link`, `invalid-link-target`, `invalid-propagates`, `invalid-pin` | Front matter cannot be parsed or has the wrong shape; a bare link needs a non-empty `type` on its target |
 | `missing-target` | A `contains` ref points at no file |
 | `containment-cycle`, `multiple-parents` | View is not a tree |
 | `unreachable`, `root-ref-missing` | Nothing reaches the node from the root, or `ROOT` names a missing ref |

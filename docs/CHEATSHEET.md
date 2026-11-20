@@ -75,6 +75,8 @@ bd unlink FROM TO [--type TYPE]
 - `contain` refuses cycles and duplicates; reorder with `uncontain` then `contain`.
 - `uncontain` writes `contains: []` when the list becomes empty.
 - `link --propagates` pins the target body hash immediately.
+- A bare ref is shorthand: `links: ['10']` takes the type from node 10's
+  `type`; `bd link` writes that form when the requested type matches.
 - Structural commands preserve body bytes and unrelated front matter.
 
 ## Work folders

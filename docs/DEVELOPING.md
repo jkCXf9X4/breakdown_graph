@@ -175,6 +175,8 @@ python3 -m pytest -q
   file with the same id, or through a link from a reachable node. A main and its
   versions are alternatives for one logical node, so an alternative branch is not
   `unreachable`; a linked history view is not one either.
+- Link tests cover both forms: a mapping with its own `type`, and a bare ref
+  whose type is read from the target node.
 - Git tests create a temporary repository, set local `user.name`/`user.email`, and
   use `pytest.mark.skipif(shutil.which("git") is None, ...)`.
 - Structural tests assert body bytes, not just field values.

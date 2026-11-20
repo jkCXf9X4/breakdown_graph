@@ -190,6 +190,16 @@ def test_tree_links_footer_lists_edges_leaving_the_view(write, tmp_path):
     assert out.endswith("links:\n- 2 -> 10  Decisions  (history)")
 
 
+def test_show_links_footer_uses_the_target_type_for_a_bare_ref(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, title="Root", contains=["2"])
+    write(nodes, 2, title="Child", links=["10"])
+    write(nodes, 10, title="Decisions", type="decision")
+    store = load(tmp_path)
+    out = render_show(store, "1", depth=1, links=True)
+    assert out.endswith("links:\n- 2 -> 10  Decisions  (decision)")
+
+
 def test_cli_show_links_flag(write, tmp_path, capsys):
     _linked_tree(write, tmp_path)
     assert (

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from .errors import BreakdownError
 from .frontmatter import parse_document, rewrite_links
@@ -51,9 +52,9 @@ def stale(root: str | Path, view: str | int = "1") -> list[StaleEdge]:
 
 def _reconcile_node(view: View, node: Node) -> list[ReconcileChange]:
     changes: list[ReconcileChange] = []
-    new_links: list[dict] = []
+    new_links: list[Any] = []
     for link in node.links:
-        raw = dict(link.raw)
+        raw = dict(link.raw) if isinstance(link.raw, dict) else link.raw
         state = None
         target = view.nodes.get(link.to)
         if link.propagating and target is not None:
@@ -61,7 +62,7 @@ def _reconcile_node(view: View, node: Node) -> list[ReconcileChange]:
                 state = "untracked"
             elif link.pinned != target.body_hash:
                 state = "stale"
-        if state is not None and target is not None:
+        if state is not None and target is not None and isinstance(raw, dict):
             raw["pinned"] = target.body_hash
             changes.append(
                 ReconcileChange(
