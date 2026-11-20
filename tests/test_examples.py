@@ -27,4 +27,4 @@ def test_switch_trees_example_has_two_complete_trees():
     main = load_view(root, "1")
     alternative = load_view(root, "1-1")
     assert set(main.nodes) == {"1", "2", "3", "4", "5"}
-    assert set(alternative.nodes) == {"1-1", "2-1", "3-1", "4-1", "5-1", "6"}
+    assert set(alternative.nodes) == {"1-1", "2-1", "3-1", "4-1", "5-1", "6", "7"}

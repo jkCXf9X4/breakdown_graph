@@ -7,15 +7,16 @@ targets.
 ## `bd check`
 
 Validates filenames, front matter, `contains`, `links`, reachability, tree
-shape for every node-rooted view, placement paths, pins, and size. `--view` and
-`--root-ref` choose what is reported; all views are still checked.
+shape for every node-rooted view, placement paths, pins, and size. `--view REF`
+narrows reporting to one closure; all views are still checked. The checked root
+is `ROOT`, else the lowest main ref.
 
 Exit 0 means no `error` issues. Warnings do not fail: `external-link`,
 `untracked-link`, `stale-link`, `oversize`.
 
 Useful flags: `--require FIELD` (missing field becomes an error),
-`--max-lines N` / `--max-chars N` (size budgets), `--view REF`,
-`--root-ref REF`.
+`--max-lines N` / `--max-chars N` (size budgets), `--view REF` (report only
+that closure).
 
 ### Error codes
 

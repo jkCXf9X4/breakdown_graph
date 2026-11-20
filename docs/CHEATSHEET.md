@@ -7,7 +7,7 @@ or navigation failure, 2 structural refusal.
 
 ```sh
 export BD_ROOT=path/to/project       # or path/to/store
-bd --root path/to/project <command>  # explicit per command
+bd <command> --root path/to/project  # explicit per command
 ```
 
 `bd` resolves a store in this order: `--root`, `BD_ROOT`, then the upward walk
@@ -30,12 +30,12 @@ bd root --clear                     # delete ROOT; lowest main ref is the defaul
 ```
 
 `ROOT` sits at the store top level and holds one ref on one line, nothing else.
-It is the default view root for `tree`, `ls`, `find`, `grep`, `work`, `check`,
-`stale`, and `reconcile`, and the view root `bd check` reports. An explicit ref
-or `--root-ref` wins over `ROOT`; `ROOT` wins over the lowest main ref. A
-declared but missing ref is `root-ref-missing`; malformed content is
-`invalid-root`. `bd root` does not rewrite the view already in the work area;
-use `bd work REF` for that.
+It is the default view root for `tree`, `find`, `work`, `check`, `stale`, and
+`reconcile`. An explicit ref where a command takes one wins over `ROOT`; `ROOT`
+wins over the lowest main ref. `bd check --view REF` only narrows reporting; the
+checked root is `ROOT`, else the lowest main ref. A declared but missing ref is
+`root-ref-missing`; malformed content is `invalid-root`. `bd root` does not
+rewrite the view already in the work area; use `bd work REF` for that.
 
 ## Start
 
@@ -52,10 +52,9 @@ bd new --parent REF --field KEY=VALUE ... [--body TEXT]
 ```sh
 bd check [--view REF] [--require FIELD] [--max-lines N] [--max-chars N]
 bd tree [REF] [--depth N] [--summary] [--fields F,F] [--links]
-bd show REF[+N] [--max-chars N] [--no-body] [--fields F,F] [--path] [--links]
-bd ls [REF] [--depth N] [--columns F,F] [--max-chars N]
+bd tree [REF] --columns F,F [--depth N] [--max-chars N]
+bd show REF[+N] [--max-chars N] [--no-body] [--fields F,F] [--links]
 bd find QUERY [--view REF|--all] [--field F] [--regex] [--where K=V ...] [--limit N]
-bd grep PATTERN [--view REF|--all] [--field F] [--where K=V ...] [--limit N]
 bd path REF
 ```
 
@@ -65,12 +64,12 @@ bd path REF
 - `--links` appends a `links:` footer for edges that leave the view, one level,
   as `source -> target`. The target stays out of the closure; read it with
   `bd show REF` or switch with `bd work REF`.
-- `tree 5 --depth 0`: whole subtree. `ls 5 --depth 0` is also unlimited. A
-  missing ref uses the store root.
-- `ls 1 --columns ref,title,layer,status`: arbitrary fields as columns.
-- `find` searches title, summary, body, and all string fields. It searches the
-  default view unless `--view REF` or `--all` is given; output stays capped.
-- `grep` has the same view scope: default view, `--view REF`, or `--all`.
+- `tree 5 --depth 0`: whole subtree. A missing ref uses the store root.
+- `tree 1 --columns ref,title,layer,status`: arbitrary fields as columns
+  (tables default to depth 1); without `--columns`, `tree` prints the outline.
+- `find` searches title, summary, body, and all string fields; `--regex` treats
+  the query as a pattern. It searches the default view unless `--view REF` or
+  `--all` is given; output stays capped.
 
 ## Structure
 
@@ -91,7 +90,7 @@ bd unlink FROM TO [--type TYPE]
 ## Work folders
 
 ```sh
-bd work [REF[+N]] [--depth N] [--path-template T] [--status] [--writeback] [--clean] [--print]
+bd work [REF[+N]] [--depth N] [--path-template T] [--status] [--writeback] [--clean]
 bd current [--path|--view]
 bd views
 bd edit REF
@@ -112,8 +111,6 @@ bd edit REF
 - `bd current` is read-only: it prints `<project>/bd_work (view <ref>)`;
   `--path` prints only the path, `--view` only the ref. It errors if no work
   area exists.
-- `--print` prints only the directory, is read-only, does not build, and errors
-  if no area exists.
 - `--status` and `--writeback` inspect the view actually in the area, not the
   requested or default view.
 - `bd views` lists containment roots (`ref`, title), one per line, and marks the
@@ -156,7 +153,8 @@ name: custom-name         # optional override -> claims/custom-name.md
 `{name}` and `{slug}` are the explicit `name`, else the title slug, else the
 ref. A template such as `'{layer}/{ref}.md'` needs `layer` on every node in the
 view.
-`bd view` and `bd export` are read-only snapshots, not a second work area.
+`bd export tree` and the other `bd export` choices are read-only snapshots, not
+a second work area.
 
 ## Solutions (git worktrees)
 
@@ -210,13 +208,13 @@ a propagating target makes the source edge stale until reconciled.
 ## Read-only projections
 
 ```sh
-bd view REF --out DIR [--path-template T] [--clean]
+bd export tree REF --out DIR [--path-template T] [--title-field F] [--summary-field F] [--clean] [--force]
 bd export context --view REF --out DIR
 bd export dot     --view REF --out FILE [--color-by FIELD] [--shape-by FIELD]
 ```
 
-`bd view` is the single read-only tree projection. `context` writes fresh node
-bodies plus `STALE.md` and `AGENTS.md`. `dot` is Graphviz.
+`bd export tree` is the single read-only tree projection. `context` writes fresh
+node bodies plus `STALE.md` and `AGENTS.md`. `dot` is Graphviz.
 
 ## Git patterns
 

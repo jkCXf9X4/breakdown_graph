@@ -10,7 +10,8 @@ and `--max-chars` on any body dump.
 - Project layout: store at `<project>/.bd_tree/`, nodes under
   `.bd_tree/nodes/`. Classic layout: `nodes/` at the repo root.
 - The default view root is `ROOT` when present, else the lowest main ref. An
-  explicit ref argument, `--root-ref`, or `--view` wins over both.
+  explicit ref argument or `--view` wins over both; `bd check --view` only
+  narrows reporting.
 - `bd work REF` does **not** change the default root; it changes the view held
   by the work area. Track them separately.
 
@@ -19,7 +20,10 @@ and `--max-chars` on any body dump.
 `bd tree` — one node per line, `ref title`; `+-` marks a non-last child, `` `- ``
 the last, and `|` continues an ancestor column. Default depth is 2; `--depth 0`
 is unlimited. `--summary` appends summaries and `--fields F,F` appends field
-values. `--links` appends a `links:` footer for edges leaving the view:
+values. `--columns F,F` switches to the table view (`ref title summary` by
+default, depth 1), with descendants indented two spaces per level and cells
+capped by `--max-chars`. `--links` appends a `links:` footer for edges leaving
+the view:
 
 ```
 1 Root
@@ -29,13 +33,9 @@ values. `--links` appends a `links:` footer for edges leaving the view:
 
 `bd show REF+N` — the node plus N levels of descendant bodies, each capped at
 4000 characters when N > 0. `--max-chars 0` prints the full body; `--no-body`
-prints headings only; `--path` prepends the breadcrumb. `--links` appends the
+prints headings only; `bd path REF` gives the breadcrumb. `--links` appends the
 same footer, as `source -> target  title  (type)`; it is a pointer, not
 membership — open the target with `bd show REF`.
-
-`bd ls` — the table view: `ref title summary` by default, descendants indented
-two spaces per level. `--columns F,F` replaces the columns, `--max-chars` caps
-cells, `--depth 0` is unlimited.
 
 `bd current` — exactly `<project>/bd_work (view <ref>)`; `--path` prints only
 the path, `--view` only the ref, and it errors when no area exists.
@@ -55,9 +55,9 @@ closure; switch to it with `bd work REF` when you need to edit it.
 default view. Narrow with `--field F`, `--where K=V`, `--limit N`, `--view REF`,
 or widen with `--all`.
 
-`bd grep 'RE'` is the same scan with a regular expression. Both default to the
-default view, so a hit missing from your current area may simply be outside
-it — check `--view` before concluding it does not exist.
+`bd find 'RE' --regex` treats the query as a Python regular expression. It
+defaults to the default view, so a hit missing from your current area may
+simply be outside it — check `--view` before concluding it does not exist.
 
 ## Reading discipline
 

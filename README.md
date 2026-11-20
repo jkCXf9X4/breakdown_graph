@@ -23,17 +23,19 @@ These are deliberately separate:
 - **Merge unit: the flat `nodes/` store.** One file per node keeps a conflict
   local to the node that changed.
 - **Layout: `bd work`.** One writable symlink area at `<project>/bd_work/`;
-  `bd work REF` switches its contents to another view. Read-only projections
-  (`bd view`, `bd export`) may be many and are disposable; none is a copy.
+  `bd work REF` switches its contents to another view. Read-only `bd export`
+  projections (tree, context, dot) may be many and are disposable; none is a
+  copy.
 - **Versions are not a third axis.** `5-1` is an alternative file for node `5`
   inside the checked-out branch. Versions give no isolation and never cross a
   branch; git still owns every branch decision.
   [The full separation](docs/BRANCHES-AND-VERSIONS.md).
 
 A store-level `ROOT` file names one default view root (`bd root 1-4`), so
-`tree`, `ls`, `find`, `grep`, `work`, `check`, `stale`, and `reconcile` follow it
-without an argument. An explicit ref wins; with no `ROOT`, the lowest main ref is
-the root. The default root and the view in the work area are separate:
+`tree`, `find`, `work`, `check`, `stale`, and `reconcile` follow it without an
+argument. An explicit ref wins where a command takes one; with no `ROOT`, the
+lowest main ref is the root. `bd check --view REF` only narrows reporting. The
+default root and the view in the work area are separate:
 `bd root REF` changes the default used by commands, while `bd work REF` replaces
 the contents of `<project>/bd_work/`; the area keeps its view until you run
 `bd work` again. `bd promote` only copies one version onto main; it is not a
@@ -71,7 +73,7 @@ bd check                       # clean, two complete trees
 bd tree 1 --depth 1            # the main tree
 bd tree 1-1                    # the alternative tree
 bd show 1+1 --max-chars 300    # body plus one level
-bd ls 1                        # children as a table
+bd tree 1 --columns ref,title,summary  # children as a table
 bd find Method --limit 3
 bd path 3                      # ancestor chain to a leaf
 ```
@@ -150,7 +152,7 @@ anywhere in the checkout. `BD_ROOT=examples` and `--root` still override.
 Inspect:
 
 ```
-bd check | bd tree | bd show | bd ls | bd find | bd grep | bd path
+bd check | bd tree | bd show | bd find | bd path
 ```
 
 Edit and structure:
@@ -170,7 +172,7 @@ bd root [REF] [--clear]
 Layout:
 
 ```
-bd work [REF[+N]] [--depth N] [--path-template T] [--status] [--writeback] [--clean] [--print]
+bd work [REF[+N]] [--depth N] [--path-template T] [--status] [--writeback] [--clean]
 bd current [--path|--view]
 bd views
 bd edit REF
@@ -184,10 +186,9 @@ suffix `bd show`/`bd tree` use) or `--depth N`, where `0` is the root alone and
 `--depth` overrides a suffix. `REFS.md`, `INDEX.md`, and `AGENTS.md` carry the
 materialized expression (`REF+N`), so `bd current` and `bd edit` recover it. A
 rebuild with a different depth replaces the area. `bd current` is read-only and
-prints `<project>/bd_work (view <ref>)`;
-`--path` prints only the path and `--view` only the ref. `--print` also prints
-only the path, is read-only, does not build, and errors when no area exists.
-`--status` and `--writeback` inspect the view actually in the area, not the
+prints `<project>/bd_work (view <ref>)`; `--path` prints only the path and
+`--view` only the ref, and it errors when no area exists. `--status` and
+`--writeback` inspect the view actually in the area, not the
 requested or default view. `bd views` lists containment roots, marking the store
 default with `*`. `bd edit REF` prints the absolute path of that ref inside the
 current work area and errors if the ref is not in the materialized area.
@@ -224,12 +225,12 @@ bd stale | bd reconcile
 Read-only projections:
 
 ```
-bd view REF --out DIR
+bd export tree REF --out DIR
 bd export context|dot --view REF --out PATH
 ```
 
-`bd view REF --out DIR` is the single read-only tree projection; `bd export`
-keeps `context` and `dot`.
+`bd export tree REF --out DIR` is the single read-only tree projection;
+`context` and `dot` are the other export choices.
 
 Full syntax: [`docs/CHEATSHEET.md`](docs/CHEATSHEET.md) or `bd <command> --help`.
 
@@ -241,9 +242,9 @@ src/bd_tree/               Python package
   loader.py                filename grammar, store index, view resolution
   model.py                 Node, View, Edge, Issue
   checker.py               structural validation
-  exporter.py              context/dot projections; view renders the tree
+  exporter.py              tree/context/dot projections
   freshness.py             pins, stale edges, reconcile
-  navigate.py              show/tree/ls/find/grep/path
+  navigate.py              show/tree/find/path
   work.py                  single work area, current/views/edit, status, writeback
   solutions.py             git worktree wrapper
   ops.py                   init, new, structural edits, versions, diff

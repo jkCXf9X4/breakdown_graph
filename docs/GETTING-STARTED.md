@@ -71,14 +71,13 @@ bd check
 ```sh
 bd tree 1 --depth 2
 bd show 1+1 --max-chars 400
-bd ls 1 --columns ref,title,layer
+bd tree 1 --columns ref,title,layer
 bd find true
 bd path 2
 ```
 
-- `tree` is the map.
+- `tree` is the map; `--columns F,F` prints a table instead.
 - `show REF+N` prints the node body plus N levels of descendants.
-- `ls` is the table view.
 - `find` searches titles, summaries, bodies, and front-matter fields.
 - `path` prints the ancestor chain.
 
@@ -118,8 +117,7 @@ bd check
 
 `bd edit REF` prints the ref's absolute path inside the active view and errors if
 the ref is not there. `bd current` is read-only; `--path` prints only the path and
-`--view` only the ref. `bd work --print` also prints only the path, does not
-build, and errors if no area exists.
+`--view` only the ref, and it errors if no area exists.
 
 `--status` reports `ok`, `missing`, `wrong-target`, `detached`, `stray`, or
 `stale-ref`. If an editor replaces a symlink with a regular file:
@@ -157,8 +155,8 @@ bd work 1-1        # switch <project>/bd_work to another view
 bd work 1          # switch back
 ```
 
-Read-only snapshots (`bd view`, `bd export`) are separate disposable exports,
-not a second work area.
+Read-only snapshots (`bd export tree`, `bd export context`, `bd export dot`) are
+separate disposable exports, not a second work area.
 
 ## 4. Structure and typed links
 
@@ -220,7 +218,7 @@ work area. You can also repoint one parent.
 bd fork 1 --version 1        # alternative root; contains materialised now
 bd uncontain 1-1 3
 bd tree 1-1                  # inspect the alternative before switching
-bd root 1-1                  # write ROOT; tree, ls, check default here
+bd root 1-1                  # write ROOT; tree, find, check default here
 bd tree
 bd root                      # 1-1  (ROOT)
 bd work 1-1                  # switch the work area to the alternative view
@@ -228,8 +226,9 @@ bd current                   # <project>/bd_work (view 1-1)
 bd root --clear              # back to the lowest main ref
 ```
 
-`ROOT` is one ref on one line at the store top level. An explicit ref or
-`--root-ref` still wins over it; with no `ROOT`, the lowest main ref is the root.
+`ROOT` is one ref on one line at the store top level. An explicit ref where a
+command takes one still wins over it; with no `ROOT`, the lowest main ref is the
+root. `bd check --view REF` only narrows reporting, not the checked root.
 `bd root` changes the default root used by commands but does not rewrite the
 view already in `<project>/bd_work/`; `bd work REF` does. `bd views` lists the
 containment roots and marks the default with `*`.

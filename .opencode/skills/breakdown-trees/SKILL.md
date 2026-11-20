@@ -15,7 +15,7 @@ description: >
 
 `bd` stores a numeric containment graph on disk. Node files under `nodes/`
 (`.bd_tree/nodes/` in a project layout) are the only source of truth.
-Everything else — `bd_work/`, `bd view` and `bd export` output — is derived and
+Everything else — `bd_work/` and `bd export` output — is derived and
 disposable. One store per checkout; a git worktree has its own store.
 
 This skill is the mechanism: how to find the store, read one view, change
@@ -56,8 +56,8 @@ holds a prefix. `bd current` reports the area view as `REF+N`.
   area: no sync layer exists.
 - **Commit node files only** — `bd_work/` and exports are ignored derived
   output.
-- **A snapshot is not an area** — `bd view` and `bd export` write disposable
-  trees somewhere else.
+- **A snapshot is not an area** — `bd export tree`, `bd export context`, and
+  `bd export dot` write disposable output somewhere else.
 
 ## Versions and branches are disjoint
 
@@ -82,12 +82,12 @@ through a branch name.
 ## The loop
 
 ```bash
-export BD_ROOT=path/to/project       # or: bd --root path/to/project <cmd>
+export BD_ROOT=path/to/project       # or: bd <cmd> --root path/to/project
 bd check                             # exit 0 = no errors; do this first
 bd tree --depth 1                    # outline; default depth 2, 0 = unlimited
 bd show 5-1+2 --max-chars 800        # node plus 2 levels of descendant bodies
 bd find TERM --limit 5               # titles, summaries, bodies, string fields
-bd grep 'PATTERN' --view REF         # regex; --all searches every node
+bd find 'PATTERN' --regex --view REF # regex; --all searches every node
 bd path REF                          # ancestry, for orientation
 
 bd work REF                          # build/replace bd_work for one view
@@ -111,7 +111,7 @@ done with a failing `bd check`.
 
 | Ask | Read |
 |---|---|
-| How do I read `tree` / `ls` / `show` output, and which view am I in? | [`guidelines/browsing.md`](guidelines/browsing.md) |
+| How do I read `tree` / `show` output, and which view am I in? | [`guidelines/browsing.md`](guidelines/browsing.md) |
 | Where do I edit, and why did my edit not reach the store? | [`guidelines/editing.md`](guidelines/editing.md) |
 | Move a node, add an edge, cut or land a version | [`guidelines/structure.md`](guidelines/structure.md) |
 | `bd check` printed a code I do not recognise | [`guidelines/validation.md`](guidelines/validation.md) |

@@ -16,7 +16,7 @@ $EDITOR "$(bd edit REF)"    # errors if REF is not in the active view
 `INDEX.md`, `AGENTS.md`, `REFS.md` are regenerated. The area never accumulates
 two views, and a second work folder is not supported.
 
-`bd work REF --print` prints the directory without building anything;
+`bd current --path` prints the directory without building anything;
 `bd work REF --clean` discards detached files while switching.
 
 ## Symlinks and generated files

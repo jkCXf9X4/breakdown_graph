@@ -1,4 +1,4 @@
-"""Read-only navigation: show, tree, ls, find, grep and path."""
+"""Read-only navigation: show, tree (outline and columns), find, and path."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from bd_tree.navigate import (
     NavigationError,
     parse_ref_depth,
     render_find,
-    render_ls,
     render_path,
     render_show,
     render_tree,
@@ -121,10 +120,10 @@ def test_show_auto_cap_by_depth(write, tmp_path):
     assert "xxxxxxxxxx ... [truncated; bd show 1]" in explicit_cap
 
 
-def test_show_path_prepends_breadcrumb(write, tmp_path):
-    store = _tree(write, tmp_path)
-    out = render_show(store, "4", no_body=True, show_path=True)
-    assert out.startswith("path: 1 Root > 2 Child > 4 Grandchild")
+def test_path_command_prints_breadcrumb(write, tmp_path, capsys):
+    _tree(write, tmp_path)
+    assert main(["path", "4", "--root", str(tmp_path)]) == 0
+    assert capsys.readouterr().out == "1  Root\n2  Child\n4  Grandchild\n"
 
 
 # -- tree --------------------------------------------------------------------
@@ -234,34 +233,55 @@ def test_root_command_show_set_clear(write, tmp_path, capsys):
     assert not (tmp_path / "ROOT").exists()
 
 
-# -- ls ----------------------------------------------------------------------
+# -- tree --columns ----------------------------------------------------------
 
 
-def test_ls_header_columns_and_indentation(write, tmp_path):
-    store = _tree(write, tmp_path)
-    out = render_ls(store, "1", depth=1, columns=["ref", "title"])
-    lines = out.splitlines()
+def test_tree_columns_header_and_indentation(write, tmp_path, capsys):
+    _tree(write, tmp_path)
+    assert (
+        main(
+            ["tree", "1", "--columns", "ref,title", "--depth", "1", "--root", str(tmp_path)]
+        )
+        == 0
+    )
+    lines = capsys.readouterr().out.splitlines()
     assert lines[0] == "ref  title"
     assert lines[1].startswith("2  Child")
     assert lines[2].startswith("3  Sibling")
     assert not any(line.startswith("1  Root") for line in lines)
 
 
-def test_ls_default_root_and_summary_truncation(write, tmp_path, capsys):
+def test_tree_columns_default_root_and_summary_truncation(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
     write(nodes, 1, title="Root", contains=["2"])
     write(nodes, 2, title="Child", summary="s" * 150)
-    assert main(["ls", "--root", str(tmp_path)]) == 0
+    assert (
+        main(
+            [
+                "tree",
+                "--columns",
+                "ref,title,summary",
+                "--max-chars",
+                "100",
+                "--root",
+                str(tmp_path),
+            ]
+        )
+        == 0
+    )
     out = capsys.readouterr().out
     assert out.splitlines()[0] == "ref  title  summary"
     assert "s" * 97 + "..." in out
     assert "s" * 150 not in out
 
 
-def test_ls_depth_zero_is_unlimited(write, tmp_path):
-    store = _tree(write, tmp_path)
-    out = render_ls(store, "1", depth=0, columns=["ref", "title"])
-    lines = out.splitlines()
+def test_tree_columns_depth_zero_is_unlimited(write, tmp_path, capsys):
+    _tree(write, tmp_path)
+    assert (
+        main(["tree", "1", "--columns", "ref,title", "--depth", "0", "--root", str(tmp_path)])
+        == 0
+    )
+    lines = capsys.readouterr().out.splitlines()
     assert lines[1].startswith("2  Child")
     assert any(line.strip().startswith("4  Grandchild") for line in lines)
     assert any(line.startswith("3  Sibling") for line in lines)
@@ -376,9 +396,9 @@ def test_find_rejects_an_unknown_view(write, tmp_path):
         render_find(store, "needle", view="99")
 
 
-def test_grep_alias_uses_regex(write, tmp_path, capsys):
+def test_find_regex_flag_uses_regex(write, tmp_path, capsys):
     _find_tree(write, tmp_path)
-    assert main(["grep", "Cred.*child", "--root", str(tmp_path)]) == 0
+    assert main(["find", "Cred.*child", "--regex", "--root", str(tmp_path)]) == 0
     assert "Credibility child" in capsys.readouterr().out
 
 

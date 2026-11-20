@@ -64,8 +64,8 @@ behaviour change and update the docs listed at the bottom.
   `INDEX.md`, `AGENTS.md`, and `REFS.md` are regular generated files. Never copy
   node content into a work folder and never introduce a sync layer.
 - A project has exactly one writable work area, `<project>/bd_work/`. It holds
-  one view at a time; `bd work REF` replaces its contents. Read-only `bd view`
-  and `bd export` snapshots are not a second work area.
+  one view at a time; `bd work REF` replaces its contents. Read-only `bd export`
+  snapshots (tree, context, dot) are not a second work area.
 - A view never crosses a branch, and neither does a version. Versions are node
   files inside one checkout; branches are git. Never resolve a ref through a
   branch name, never add a branch or per-node active-version selector, and never
@@ -76,10 +76,10 @@ behaviour change and update the docs listed at the bottom.
   working folder belongs to. Nothing else goes in either file. Derived output is
   disposable and gitignored.
 - The default view root is `ROOT` when present, else the lowest main ref; an
-  explicit ref or `--root-ref` wins over both. A declared but missing ref is
-  `root-ref-missing`; malformed content is `invalid-root`. This default is
-  separate from the view held by the work area, which changes only with
-  `bd work REF`.
+  explicit ref where a command takes one wins over both. `bd check --view REF`
+  only narrows reporting. A declared but missing ref is `root-ref-missing`;
+  malformed content is `invalid-root`. This default is separate from the view
+  held by the work area, which changes only with `bd work REF`.
 
 ## Where to work
 
@@ -98,8 +98,8 @@ behaviour change and update the docs listed at the bottom.
   containment roots and marks the store default.
 - Find and edit inside the area: `bd edit REF` prints the absolute path of a ref
   in the active view and errors if it is absent.
-- Read-only snapshots: `bd view REF --out DIR` or `bd export ...`; they are
-  disposable exports, never the work area.
+- Read-only snapshots: `bd export tree REF --out DIR`, or another `bd export`
+  choice; they are disposable exports, never the work area.
 - Switching trees: `bd root REF` changes the store default root, `bd work REF`
   changes the work-area view, or repoint one parent with `bd uncontain` /
   `bd contain`. `bd promote` is not a switch; it copies one version onto main.
@@ -116,7 +116,7 @@ behaviour change and update the docs listed at the bottom.
 | Add an edge | `bd link FROM TO --type supports --propagates` |
 | Browse a subtree | `bd tree REF --depth 0` |
 | Read a node and children | `bd show REF+2 --max-chars 800` |
-| Search | `bd find TEXT`, `bd grep 'RE'`; add `--view REF` or `--all` |
+| Search | `bd find TEXT`, `bd find 'RE' --regex`; add `--view REF` or `--all` |
 | Show the work area | `bd current [--path\|--view]` |
 | List containment roots | `bd views` |
 | Switch/edit the work area | `bd work REF[+N]`, then open `bd edit REF` |
@@ -143,7 +143,7 @@ bd link 5 9 --type supports
 bd work 1                 # write the single <project>/bd_work area
 bd work 1+1               # same area, first two levels only
 bd current                # <project>/bd_work (view 1+1)
-bd work 1 --print         # print that directory; read-only, no build
+bd current --path         # print that directory; read-only, no build
 bd edit 2                 # path of ref 2 in the active view
 bd work 1-1               # switch the same area to another view
 bd solution list
@@ -175,5 +175,5 @@ views, or generated output.
   branch/version separation contract.
 - [`docs/breakdown/`](docs/breakdown/) — product breakdown as a second `bd`
   project (store `docs/breakdown/.bd_tree/`): current state, open work,
-  scrutiny, and history. Run `bd --root docs/breakdown tree`, or `bd work 1`
+  scrutiny, and history. Run `bd tree --root docs/breakdown`, or `bd work 1`
   from that directory.

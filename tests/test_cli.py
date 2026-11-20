@@ -10,10 +10,13 @@ def test_check_exit_status(write, tmp_path):
     assert main(["check", "--root", str(tmp_path)]) == 1
 
 
-def test_view_alias_exports_tree(write, tmp_path):
+def test_export_tree_writes_view_output_shape(write, tmp_path):
     write(tmp_path / "nodes", 1, title="Root", layer="intent")
     out = tmp_path / "out"
-    assert main(["view", "1", "--root", str(tmp_path), "--out", str(out), "--clean"]) == 0
+    assert (
+        main(["export", "tree", "1", "--root", str(tmp_path), "--out", str(out), "--clean"])
+        == 0
+    )
     assert (out / "INDEX.md").is_file()
     assert (out / "intent" / "1.md").is_file()
 
@@ -79,7 +82,8 @@ def test_check_require_flag_and_view_path_template(write, tmp_path):
     assert (
         main(
             [
-                "view",
+                "export",
+                "tree",
                 "1",
                 "--root",
                 str(tmp_path),
@@ -119,22 +123,19 @@ def test_current_views_and_edit_cli(write, tmp_path, capsys):
     assert capsys.readouterr().out == f"{(tmp_path / 'bd_work' / 'claims' / '2.md')}\n"
 
 
-def test_work_print_without_area_is_an_error(write, tmp_path, capsys):
+def test_current_path_without_area_is_an_error(write, tmp_path, capsys):
     write(tmp_path / "nodes", 1)
-    assert main(["work", "--print", "--root", str(tmp_path)]) == 2
+    assert main(["current", "--path", "--root", str(tmp_path)]) == 2
     assert "no work area" in capsys.readouterr().err
 
 
-def test_export_tree_is_gone(write, tmp_path):
-    import pytest
-
+def test_export_tree_is_available(write, tmp_path):
     write(tmp_path / "nodes", 1)
-    with pytest.raises(SystemExit):
+    assert (
         main(
             [
                 "export",
                 "tree",
-                "--view",
                 "1",
                 "--out",
                 str(tmp_path / "out"),
@@ -142,6 +143,45 @@ def test_export_tree_is_gone(write, tmp_path):
                 str(tmp_path),
             ]
         )
+        == 0
+    )
+    assert (tmp_path / "out" / "INDEX.md").is_file()
+
+
+def test_check_view_narrows_reporting(write, tmp_path, capsys):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3"])
+    write(nodes, 2, body="line\n" * 121)
+    write(nodes, 3)
+
+    assert main(["check", "--root", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "WARNING nodes/2.md" in out
+    assert "1 warnings" in out
+
+    assert main(["check", "--view", "3", "--root", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "WARNING nodes/2.md" not in out
+    assert "0 warnings" in out
+
+
+def test_removed_subcommands_and_flags_exit_2(write, tmp_path):
+    import pytest
+
+    write(tmp_path / "nodes", 1)
+    root = ["--root", str(tmp_path)]
+    removed = [
+        ["grep", "needle", *root],
+        ["view", "1", "--out", str(tmp_path / "out"), *root],
+        ["ls", *root],
+        ["work", "1", "--print", *root],
+        ["show", "1", "--path", *root],
+        ["check", "--root-ref", "1", *root],
+    ]
+    for argv in removed:
+        with pytest.raises(SystemExit) as exc:
+            main(argv)
+        assert exc.value.code == 2, argv
 
 
 def test_work_depth_suffix_reports_and_current_shows_it(write, tmp_path, capsys):

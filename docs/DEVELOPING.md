@@ -27,7 +27,7 @@ run from the repo root with `PYTHONPATH=src python3 -m bd_tree`.
    │                                      └─ load_view(store, ref) ─► View
    │                                                                  │
    ├─ checker / navigate / freshness ◄───────────────────────────────┤
-   ├─ exporter.context|dot, view tree ◄──────────────────────────────┤
+   ├─ exporter.tree|context|dot ◄────────────────────────────────────┤
    └─ work (symlinks) ◄──────────────────────────────────────────────┘
 ```
 
@@ -37,9 +37,9 @@ run from the repo root with `PYTHONPATH=src python3 -m bd_tree`.
   and write node files.
 
 Validation is global; export and agent context are view-scoped. The default view
-root is `ROOT`, else the lowest main ref; an explicit ref or `--root-ref` wins.
-Reachability follows `contains` or a shared id, so main and its versions are one
-logical node.
+root is `ROOT`, else the lowest main ref; an explicit ref where a command takes
+one wins, and `check --view` only narrows reporting. Reachability follows
+`contains` or a shared id, so main and its versions are one logical node.
 
 ## Module map
 
@@ -50,8 +50,8 @@ logical node.
 | `frontmatter.py` | Parse and rewrite front matter; body bytes are never re-serialised |
 | `checker.py` | Structural checks, per-view tree checks, `--require`, size limits |
 | `freshness.py` | Pins, stale edges, reconcile |
-| `navigate.py` | `show`, `tree`, `ls`, `find`, `grep`, `path` renderers |
-| `exporter.py` | `context`, `dot` projections, path templates, and `folder`/`name` resolution; `bd view` renders the tree |
+| `navigate.py` | `show`, `tree`, `find`, `path` renderers |
+| `exporter.py` | `tree`, `context`, `dot` projections, path templates, and `folder`/`name` resolution |
 | `work.py` | Single `<project>/bd_work/` area, `current`/`views`/`edit`, switching, `--status`, `--writeback`, git context |
 | `solutions.py` | Thin `git worktree` lifecycle wrapper |
 | `ops.py` | `init`, `new` (seeds empty `title`/`summary`, derives `folder`), `contain`, `uncontain`, `link`, `unlink`, versions, `diff` |
@@ -173,8 +173,9 @@ python3 -m pytest -q
 - Use `tmp_path` and real files. Do not mock the loader.
 - `test_examples.py` runs the project at `examples/` (store under `.bd_tree/`)
   through `bd check` and view loading, asserting both complete trees.
-- Root tests cover the precedence: explicit ref or `--root-ref` > `ROOT` >
-  lowest main ref, plus `root-ref-missing` and `invalid-root`.
+- Root tests cover the precedence: explicit ref where a command takes one >
+  `ROOT` > lowest main ref. They also cover `root-ref-missing`, `invalid-root`,
+  and `check --view` narrowing only the report.
 - Reachability tests assert all three paths: through `contains`, through another
   file with the same id, or through a link from a reachable node. A main and its
   versions are alternatives for one logical node, so an alternative branch is not
@@ -203,13 +204,15 @@ git diff --check
   `ROOT`. It does not rewrite the work area.
 - `bd views` lists containment roots and marks the default; `bd current` reports
   the work area and the view actually in it.
-- `bd check --view REF` narrows validation to one closure.
+- `bd check --view REF` narrows reporting to one closure; every view is still
+  checked, and the default root is `ROOT` else the lowest main ref.
 - `bd tree`, `bd show`, `bd path` quickly show what the loader sees.
 - `bd show REF+N` caps each body at 4000 characters unless `--max-chars` is
-  given; `--max-chars 0` prints full bodies. `bd ls --depth 0` and
-  `bd tree --depth 0` are unlimited.
-- `bd find`/`bd grep` default to the default view; `--view REF` narrows and
-  `--all` searches the whole store. Output stays capped.
+  given; `--max-chars 0` prints full bodies. `bd tree --depth 0` is unlimited
+  for both the outline and the `--columns` table.
+- `bd find` defaults to the default view; `--regex` treats the query as a
+  pattern, `--view REF` narrows, and `--all` searches the whole store. Output
+  stays capped.
 - `bd work --status` diagnoses symlink problems without touching the store and
   inspects the view actually in the area; `bd edit REF` resolves a ref inside
   that view.

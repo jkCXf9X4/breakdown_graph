@@ -133,10 +133,11 @@ edge.
 
 ### 3.4 Views
 
-A view is the containment closure rooted at one ref; `bd view`, `bd export`,
-and `bd work` take a root ref. The default root is the store's `ROOT` file when
-present, else the lowest main ref; an explicit ref or `--root-ref` wins over
-both. `bd root REF` writes the file, `bd root --clear` removes it, and
+A view is the containment closure rooted at one ref; `bd export tree`, the
+other `bd export` choices, and `bd work` take a root ref. The default root is
+the store's `ROOT` file when present, else the lowest main ref; an explicit ref
+where a command takes one wins over both. `bd check --view REF` only narrows
+reporting. `bd root REF` writes the file, `bd root --clear` removes it, and
 `bd root` prints `<ref>  (ROOT|lowest main)`. A declared but missing ref is
 `root-ref-missing`; malformed content is `invalid-root`. This default root is
 separate from the view the work area holds: `bd root` changes the default used
@@ -240,8 +241,7 @@ bd_work/claims/thesis-claim.md -> ../../.bd_tree/nodes/49.md
   removes links that are no longer materialized.
 - `bd current` is the read-only query for that area: it prints
   `<project>/bd_work (view <ref>)`, `--path` prints only the path, and `--view`
-  only the ref; it errors when no area exists. `bd work --print` also prints only
-  the path, is read-only, does not build, and errors when no area exists.
+  only the ref; it errors when no area exists.
   `bd edit REF` prints the absolute path of a ref in the active view and errors
   if it is not there. `bd views` lists containment roots and marks the store
   default with `*`.
@@ -281,7 +281,7 @@ leave two `INDEX.md`/`AGENTS.md` files claiming authority. The store is what
 scales; the context is not, and one work area is the interface that keeps them
 apart.
 
-Read-only projections remain: `bd view REF --out DIR` (the single tree
+Read-only projections remain: `bd export tree REF --out DIR` (the single tree
 projection, for review or publishing), `bd export context` (fresh nodes only,
 plus `STALE.md`, for an agent that must not write), and `bd export dot`
 (Graphviz). They are disposable snapshots, not a second work area; an agent
@@ -340,9 +340,9 @@ styling is chosen by arbitrary fields (`--color-by`, `--shape-by`); and
     [`BRANCHES-AND-VERSIONS.md`](BRANCHES-AND-VERSIONS.md).
 14. **One work area at a time.** `<project>/bd_work/` holds exactly one view;
     `bd work REF` switches it by replacing the contents. Two writable folders
-    never exist at once. Read-only `bd view`/`bd export` snapshots are not a
-    second work area. The area's view is independent of the store default root:
-    `bd root` sets the default, `bd work` sets what is in the area.
+    never exist at once. Read-only `bd export` snapshots (tree, context, dot) are
+    not a second work area. The area's view is independent of the store default
+    root: `bd root` sets the default, `bd work` sets what is in the area.
 
 ## 8. Rejected alternatives
 
@@ -426,7 +426,7 @@ These are enforced or assumed:
 4. How should two views be merged: promote one, or synthesize a third version?
 5. Should concurrent agent sessions share the one work area under leases, or
    each use a separate git worktree?
-6. Are the generic projections (`view`/`context`/`dot`) enough, or do we need
+6. Are the generic projections (`tree`/`context`/`dot`) enough, or do we need
    per-workflow report renderers (traceability matrix, claim-evidence table)?
 7. Should node-local versions be deprecated entirely in favour of git branches,
    or kept for cheap A/B variants inside one branch?

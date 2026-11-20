@@ -580,7 +580,7 @@ def test_stray_blocks_refresh_and_clean_discards(write, tmp_path):
     assert api.work(tmp_path, "1", out, status=True).ok
 
 
-def test_print_is_read_only(write, tmp_path, capsys):
+def test_current_path_is_read_only(write, tmp_path, capsys):
     _tree(write, tmp_path)
     api.work(tmp_path, "1")
     out = (tmp_path / "bd_work").resolve()
@@ -594,7 +594,7 @@ def test_print_is_read_only(write, tmp_path, capsys):
         }
 
     before = snapshot()
-    argv = ["work", "1", "--root", str(tmp_path), "--print"]
+    argv = ["current", "--path", "--root", str(tmp_path)]
     assert main(argv) == 0
     captured = capsys.readouterr()
     assert captured.out == f"{out}\n"
@@ -606,12 +606,13 @@ def test_print_is_read_only(write, tmp_path, capsys):
     assert snapshot() == before
 
 
-def test_print_is_mutually_exclusive_with_status(write, tmp_path):
+def test_current_path_and_view_are_mutually_exclusive(write, tmp_path):
     _tree(write, tmp_path)
     from bd_tree.cli import main
 
-    with pytest.raises(SystemExit):
-        main(["work", "1", "--root", str(tmp_path), "--print", "--status"])
+    with pytest.raises(SystemExit) as exc:
+        main(["current", "--path", "--view", "--root", str(tmp_path)])
+    assert exc.value.code == 2
 
 
 def test_force_overwrites_a_detached_file(write, tmp_path):

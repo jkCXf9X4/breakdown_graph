@@ -21,8 +21,9 @@ placement for stores that want directories.
 
 `bd work <ref>` writes `bd_work/`; a different ref replaces its contents.
 `bd current` reports the area and its view, and `bd edit REF` prints a ref's path
-inside that view. `bd view` and `bd export` produce read-only snapshots
-elsewhere (for example under `/tmp`), never another work area.
+inside that view. `bd export tree` and the other `bd export` choices produce
+read-only snapshots elsewhere (for example under `/tmp`), never another work
+area.
 
 ## Switch trees
 
@@ -60,7 +61,8 @@ These commands assume the package is installed (`pip install .` from the clone).
 alternative for the same logical node, so it needs no parent of its own to stay
 valid.
 
-`ROOT` holds one ref on one line. An explicit ref or `--root-ref` wins over it.
+`ROOT` holds one ref on one line. An explicit ref where a command takes one wins
+over it; with no explicit ref, `ROOT` wins over the lowest main ref.
 
 ## Render outputs
 
@@ -71,8 +73,8 @@ bd check
 bd work 1-1                       # write bd_work for the version tree
 bd current                        # confirm the view actually there
 bd work 1                         # switch the same area to the main tree
-bd view 1-1 --out /tmp/bd-view-1-1
-bd view 1 --out /tmp/bd-view-1
+bd export tree 1-1 --out /tmp/bd-tree-1-1
+bd export tree 1 --out /tmp/bd-tree-1
 bd export context --view 1-1 --out /tmp/bd-context-1-1
 bd export dot --view 1-1 --out /tmp/bd-graph-1-1.dot
 ```
