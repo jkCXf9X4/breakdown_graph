@@ -104,8 +104,10 @@ INDEX.md  AGENTS.md  REFS.md
 ```
 
 Only the node `.md` files are symlinks; `INDEX.md`, `AGENTS.md`, and `REFS.md`
-are regular generated files. The path comes from `home` when present, otherwise
-from a template:
+are regular generated files. Each node is placed at its `home` when present;
+otherwise `folder` and `name` build the path, with the `title` slug as the
+default file name. A node with none of these lands at `<ref>.md`;
+`--path-template` sets another route for the whole view:
 
 ```sh
 $EDITOR "$(bd edit 3)"
@@ -307,8 +309,9 @@ There is no generic importer yet. The pattern is:
    layout), named by a running integer.
 2. `id` matches the filename.
 3. `contains` lists the ordered children.
-4. Optional `home` gives the presentation path; otherwise use
-   `--path-template`.
+4. A node with `home` is placed there; otherwise `folder` and `name` build the
+   path (title slug by default), and nodes with neither land at `<ref>.md`.
+   `--path-template` sets another route for the whole view.
 5. `links` holds typed edges; prose citations are separate.
 
 `examples/` is a small worked project laid out this way, with its store under

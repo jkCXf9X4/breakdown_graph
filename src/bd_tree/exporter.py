@@ -8,7 +8,9 @@ here.
 
 from __future__ import annotations
 
+import re
 import shutil
+import unicodedata
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -95,6 +97,22 @@ def _text(value: object) -> str:
     return "" if value is None else str(value)
 
 
+def slugify(text: str) -> str:
+    """Lowercase ASCII filename stem; non-ASCII and punctuation collapse to ``-``."""
+    normalised = unicodedata.normalize("NFKD", text).lower()
+    ascii_text = "".join(
+        char if char.isascii() else "-"
+        for char in normalised
+        if not unicodedata.combining(char)
+    )
+    return re.sub(r"[^a-z0-9]+", "-", ascii_text).strip("-")
+
+
+def _placement_name(node: Node) -> str:
+    """Explicit ``name``, else the title slug, else the ref."""
+    return node.name or slugify(node.title) or node.ref
+
+
 def _template_fields(node: Node) -> dict[str, str]:
     fields = {key: _text(value) for key, value in node.meta.items()}
     fields.update(
@@ -103,18 +121,21 @@ def _template_fields(node: Node) -> dict[str, str]:
             "id": str(node.id),
             "version": str(node.version),
             "home": node.home or "",
+            "folder": node.folder or "",
+            "name": _placement_name(node),
+            "slug": _placement_name(node),
         }
     )
     return fields
 
 
-def resolve_template(view: View, template: str | None) -> str:
-    """Explicit template, else ``{home}`` when universal, else ``{ref}.md``."""
-    if template:
-        return template
-    if view.nodes and all(node.home for node in view.nodes.values()):
-        return "{home}"
-    return "{ref}.md"
+def _validated_path(node: Node, path: str) -> str:
+    problem = path_problem(path)
+    if problem:
+        raise ExportError(
+            f"node {node.ref} resolves to invalid path '{path}': {problem}"
+        )
+    return path
 
 
 def render_path(node: Node, template: str) -> str:
@@ -126,12 +147,17 @@ def render_path(node: Node, template: str) -> str:
         ) from None
     except (ValueError, IndexError) as exc:
         raise ExportError(f"invalid path template '{template}': {exc}") from None
-    problem = path_problem(path)
-    if problem:
-        raise ExportError(
-            f"node {node.ref} resolves to invalid path '{path}': {problem}"
-        )
-    return path
+    return _validated_path(node, path)
+
+
+def _default_path(node: Node) -> str:
+    """One placement rule: ``home``, then ``folder``/``name``, then ``<ref>.md``."""
+    if node.home:
+        return _validated_path(node, node.home)
+    if node.folder or node.name:
+        parts = [part for part in (node.folder, _placement_name(node)) if part]
+        return _validated_path(node, "/".join(parts) + ".md")
+    return _validated_path(node, f"{node.ref}.md")
 
 
 def _build_paths(
@@ -141,12 +167,11 @@ def _build_paths(
     *,
     reserved: frozenset[str] = frozenset(),
 ) -> dict[str, str]:
-    resolved = resolve_template(view, template)
     paths: dict[str, str] = {}
     used: dict[str, str] = {}
     for ref in refs:
         node = view.nodes[ref]
-        path = render_path(node, resolved)
+        path = render_path(node, template) if template else _default_path(node)
         if path in reserved:
             raise ExportError(f"node {ref} path collides with generated '{path}'")
         previous = used.get(path)
@@ -154,6 +179,12 @@ def _build_paths(
             raise ExportError(
                 f"nodes {previous} and {ref} both resolve to path '{path}'"
             )
+        for other, other_ref in used.items():
+            if path.startswith(other + "/") or other.startswith(path + "/"):
+                raise ExportError(
+                    f"nodes {other_ref} and {ref} resolve to conflicting paths "
+                    f"'{other}' and '{path}'"
+                )
         used[path] = ref
         paths[ref] = path
     return paths

@@ -130,11 +130,113 @@ def test_generic_store_without_layer_type_or_home(write, tmp_path):
 def test_default_path_falls_back_to_ref_when_home_is_absent(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"], layer="intent")
-    write(nodes, 2)  # no home anywhere -> {ref}.md for every node
+    write(nodes, 2)  # no home -> {ref}.md while 1 keeps its layer-derived home
     out = tmp_path / "fallback"
     export_view("tree", tmp_path, "1", out)
-    assert (out / "1.md").is_file()
+    assert (out / "intent" / "1.md").is_file()
     assert (out / "2.md").is_file()
+    assert not (out / "1.md").exists()
+
+
+def test_folder_and_title_slug_build_the_default_path(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], folder="claims", title="The Main Thesis")
+    write(nodes, 2, folder="06-evolution/suggested", title="Café: An Idea!")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1", out)
+    assert (out / "claims" / "the-main-thesis.md").is_file()
+    assert (out / "06-evolution" / "suggested" / "cafe-an-idea.md").is_file()
+
+
+def test_name_overrides_the_title_for_the_file_stem(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], title="Root")
+    write(nodes, 2, folder="claims", name="custom-name", title="Ignored")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1", out)
+    assert (out / "claims" / "custom-name.md").is_file()
+    assert not (out / "claims" / "ignored.md").exists()
+
+
+def test_name_only_places_the_node_flat(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2, name="flat-name", title="Ignored")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1", out)
+    assert (out / "flat-name.md").is_file()
+
+
+def test_home_wins_over_folder_and_name(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], title="Root")
+    write(
+        nodes,
+        2,
+        home="explicit/home.md",
+        folder="claims",
+        name="custom",
+        title="Ignored",
+    )
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1", out)
+    assert (out / "explicit" / "home.md").is_file()
+    assert not (out / "claims" / "custom.md").exists()
+
+
+def test_slug_falls_back_to_ref_when_title_has_no_slug(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3"])
+    write(nodes, 2, folder="odd", title="!!!")
+    write(nodes, 3, folder="odd", title="")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1", out)
+    assert (out / "odd" / "2.md").is_file()
+    assert (out / "odd" / "3.md").is_file()
+
+
+def test_folder_and_name_are_available_as_template_fields(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], folder="intent", title="Root")
+    write(nodes, 2, folder="claims", title="Deep Claim")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1", out, path_template="{folder}/{name}.md")
+    assert (out / "intent" / "root.md").is_file()
+    assert (out / "claims" / "deep-claim.md").is_file()
+
+
+def test_folder_paths_are_checked_for_duplicates(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3"])
+    write(nodes, 2, folder="claims", title="Same")
+    write(nodes, 3, folder="claims", title="Same")
+    out = tmp_path / "view"
+    with pytest.raises(ExportError, match="both resolve"):
+        export_view("tree", tmp_path, "1", out)
+
+
+def test_nested_home_is_honoured_by_view(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], home="top/1.md")
+    write(nodes, 2, home="deep/nested/2.md")
+    out = tmp_path / "view"
+    result = export_view("tree", tmp_path, "1", out)
+    assert result.nodes == 2
+    assert (out / "deep" / "nested" / "2.md").is_file()
+    index = (out / "INDEX.md").read_text(encoding="utf-8")
+    assert "[Title of 2](deep/nested/2.md)" in index
+
+
+def test_prefix_collision_is_refused(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], home="a.md")
+    write(nodes, 2, home="a.md/b.md")
+    out = tmp_path / "tree"
+    with pytest.raises(ExportError) as caught:
+        export_view("tree", tmp_path, "1", out)
+    message = str(caught.value)
+    assert "1" in message and "2" in message
+    assert "a.md" in message
 
 
 def test_dot_color_and_shape_by_arbitrary_fields(write, tmp_path):

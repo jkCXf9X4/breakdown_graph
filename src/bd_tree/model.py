@@ -4,9 +4,10 @@ A store is the full index of every node file: ``ref -> Node`` plus the logical
 ``id -> versions`` grouping.  A view is the containment closure of one ref: the
 nodes it reaches through effective ``contains`` lists.
 
-The model is deliberately schema-agnostic: only ``id``, ``legacy``,
-``contains``, ``links`` and ``home`` have meaning here.  Every other front-matter
-key is user metadata and is carried in ``Node.meta`` untouched.
+The model is deliberately schema-agnostic: ``id``, ``legacy``, ``contains``,
+``links`` and ``home`` are structural; ``folder`` and ``name`` are presentation
+fields exposed as properties.  Every other front-matter key is user metadata and
+is carried in ``Node.meta`` untouched.
 """
 
 from __future__ import annotations
@@ -72,6 +73,20 @@ class Node:
     @property
     def home(self) -> str | None:
         value = self.meta.get("home")
+        if isinstance(value, str) and value.strip():
+            return value
+        return None
+
+    @property
+    def folder(self) -> str | None:
+        value = self.meta.get("folder")
+        if isinstance(value, str) and value.strip():
+            return value
+        return None
+
+    @property
+    def name(self) -> str | None:
+        value = self.meta.get("name")
         if isinstance(value, str) and value.strip():
             return value
         return None

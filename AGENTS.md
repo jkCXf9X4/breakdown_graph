@@ -46,8 +46,10 @@ behaviour change and update the docs listed at the bottom.
   version.
 - `contains` is an ordered containment list. A view is the closure of one ref.
 - `contains` is a tree per view. `links` is a DAG and never adds nodes to a view.
-- Front matter is arbitrary; only `id`, `legacy`, `contains`, `links`, `home` are
-  reserved. Add no schema unless a project asks for one.
+- Front matter is arbitrary; only the identity/containment/link/freshness keys
+  (`id`, `legacy`, `contains`, `links`, `to`, `type`, `propagates`, `pinned`)
+  are reserved. `home`, `folder`, `name`, and `title` are presentation fields.
+  Add no schema unless a project asks for one.
 - Git owns the solution boundary: one branch/worktree per solution. The flat store
   is the merge unit; `bd work` is a layout inside one checkout, never a branch
   mechanism.

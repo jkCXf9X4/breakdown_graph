@@ -115,9 +115,22 @@ bd work 5                                      # switch the same area to view 5
 bd work 1 --path-template '{layer}/{ref}.md'
 ```
 
-`{layer}/{ref}.md` needs `layer` on every node in the view. The default uses
-`home` when all nodes have one. `bd view` and `bd export` are read-only
-snapshots, not a second work area.
+`home` is an explicit full path and wins over everything. Otherwise `folder` is
+the directory prefix and `name` the file stem; without a `name` the file uses
+the slug of `title`, falling back to the ref. With none of these, a node lands
+at `<ref>.md`. `bd new --field layer=...` derives `folder` from the first of
+`layer`, `group`, `type`:
+
+```yaml
+folder: claims            # 06-evolution/suggested also works
+title: The Main Thesis    # -> claims/the-main-thesis.md
+name: custom-name         # optional override -> claims/custom-name.md
+home: claims/2.md         # explicit full path; wins over folder/name
+```
+
+`--path-template '{folder}/{name}.md'` uses the computed fields directly; a
+template such as `'{layer}/{ref}.md'` needs `layer` on every node in the view.
+`bd view` and `bd export` are read-only snapshots, not a second work area.
 
 ## Solutions (git worktrees)
 

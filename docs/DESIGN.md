@@ -67,7 +67,7 @@ root or the store root, and discovery walks up recognising both `nodes/` and
 
 ### 3.2 Front matter
 
-Reserved keys:
+Built-in keys (structural keys are reserved; presentation keys are placement only):
 
 | Key | Type | Semantics |
 | --- | --- | --- |
@@ -75,7 +75,9 @@ Reserved keys:
 | `legacy` | string | Original identifier from an imported tree |
 | `contains` | list of refs | Ordered children for this view |
 | `links` | list of edge objects | Semantic edges |
-| `home` | string | Optional presentation path |
+| `home` | string | Explicit presentation path; wins over `folder` and `name` |
+| `folder` | string | Optional directory prefix for default placement |
+| `name` | string | Optional file stem; `.md` is appended |
 
 Everything else is arbitrary and preserved on export. Typical fields: `title`,
 `summary`, `layer`, `type`, `status`, `date`, `phase`, `audience`, `order`,
@@ -217,8 +219,11 @@ bd_work/claims/thesis-claim.md -> ../../.bd_tree/nodes/49.md
   `bd edit REF` prints the absolute path of a ref in the active view and errors
   if it is not there. `bd views` lists containment roots and marks the store
   default with `*`.
-- `--path-template` chooses presentation paths for that one area; it never names
-  another work area.
+- Each node is placed at its `home` when present. Otherwise `folder` and `name`
+  build the path: `folder` is an optional directory prefix, `name` the file stem
+  (default: the slug of `title`, then the ref), and `.md` is appended. A node
+  with none of these lands at `<ref>.md`; `--path-template` overrides the whole
+  area and never names another work area.
 - `--status` classifies paths as `ok`, `missing`, `wrong-target`, `detached`,
   `stray`, or `stale-ref`; `--writeback` re-links detached files and refuses
   invalid front matter or a mismatched `id`, so a body-only replacement cannot
@@ -261,8 +266,9 @@ branch is checked out where; `bd work` remains the layout inside one checkout.
 ## 6. Schema-agnostic by construction
 
 Nothing in the tool knows the article layers; `layer` is a field like any other.
-The only fixed vocabulary is structural: `contains`, `links`, `id`, `legacy`,
-`home`, and the freshness keys `to`, `type`, `propagates`, `pinned`.
+The only reserved vocabulary is structural: `id`, `legacy`, `contains`,
+`links`, and the freshness keys `to`, `type`, `propagates`, `pinned`. `home`,
+`folder`, `name`, and `title` are presentation fields.
 
 Consequences: any workflow can define layers (`phase`, `stage`, `stream`),
 ordering, and statuses; path templates read any front-matter field; dot

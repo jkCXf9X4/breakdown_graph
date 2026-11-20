@@ -346,6 +346,66 @@ def test_path_template_still_applies(write, tmp_path):
     assert "`claims/2.md`" in (out / "REFS.md").read_text(encoding="utf-8")
 
 
+def test_mixed_homes_produce_mixed_paths_and_rebuild_idempotently(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3"], layer="intent")
+    write(nodes, 2)  # no home -> 2.md
+    write(nodes, 3, home="deep/review/3.md")
+    out = tmp_path / "work"
+
+    result = api.work(tmp_path, "1", out)
+
+    assert result.symlinks == 3
+    expected = {
+        "intent/1.md": nodes / "1.md",
+        "2.md": nodes / "2.md",
+        "deep/review/3.md": nodes / "3.md",
+    }
+    for rel, source in expected.items():
+        dest = out / rel
+        assert dest.is_symlink()
+        assert dest.resolve() == source.resolve()
+        assert not os.path.isabs(os.readlink(dest))
+    assert api.work(tmp_path, "1", out, status=True).ok
+
+    before = _link_count(out)
+    again = api.work(tmp_path, "1", out)
+
+    assert again.symlinks == 3
+    assert _link_count(out) == before
+    assert api.work(tmp_path, "1", out, status=True).ok
+
+
+def test_folder_and_title_build_nested_named_work_area(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], folder="intent", title="Root Intent")
+    write(nodes, 2, folder="06-evolution/suggested", title="New Idea")
+    out = tmp_path / "work"
+
+    result = api.work(tmp_path, "1", out)
+
+    assert result.symlinks == 2
+    root_link = out / "intent" / "root-intent.md"
+    idea_link = out / "06-evolution" / "suggested" / "new-idea.md"
+    assert root_link.is_symlink() and root_link.resolve() == (nodes / "1.md").resolve()
+    assert idea_link.is_symlink() and idea_link.resolve() == (nodes / "2.md").resolve()
+    assert api.work(tmp_path, "1", out, status=True).ok
+
+    before = _link_count(out)
+    api.work(tmp_path, "1", out)
+    assert _link_count(out) == before
+    assert api.work(tmp_path, "1", out, status=True).ok
+
+    from bd_tree.work import edit_path
+
+    assert edit_path(tmp_path, "2", out) == idea_link
+    index = (out / "INDEX.md").read_text(encoding="utf-8")
+    refs = (out / "REFS.md").read_text(encoding="utf-8")
+    assert "[Root Intent](intent/root-intent.md)" in index
+    assert "[New Idea](06-evolution/suggested/new-idea.md)" in index
+    assert "`06-evolution/suggested/new-idea.md` | 2 |" in refs
+
+
 def test_status_and_writeback_use_refs_manifest_when_home_changes(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "work"

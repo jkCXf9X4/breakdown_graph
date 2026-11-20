@@ -51,10 +51,10 @@ logical node.
 | `checker.py` | Structural checks, per-view tree checks, `--require`, size limits |
 | `freshness.py` | Pins, stale edges, reconcile |
 | `navigate.py` | `show`, `tree`, `ls`, `find`, `grep`, `path` renderers |
-| `exporter.py` | `context`, `dot` projections and path templates; `bd view` renders the tree |
+| `exporter.py` | `context`, `dot` projections, path templates, and `home`/`folder`/`name` resolution; `bd view` renders the tree |
 | `work.py` | Single `<project>/bd_work/` area, `current`/`views`/`edit`, switching, `--status`, `--writeback`, git context |
 | `solutions.py` | Thin `git worktree` lifecycle wrapper |
-| `ops.py` | `init`, `new`, `contain`, `uncontain`, `link`, `unlink`, versions, `diff` |
+| `ops.py` | `init`, `new` (derives `folder`), `contain`, `uncontain`, `link`, `unlink`, versions, `diff` |
 | `api.py` | Public Python functions |
 | `cli.py` | argparse wiring and output formatting |
 

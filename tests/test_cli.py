@@ -52,7 +52,7 @@ def test_new_with_arbitrary_field_cli(write, tmp_path):
 
     doc = parse_document((nodes / "2.md").read_text(encoding="utf-8"))
     assert doc.meta["phase"] == "build"
-    assert doc.meta["home"] == "2.md"
+    assert "home" not in doc.meta and "folder" not in doc.meta
     assert doc.body == "hello\n"
     assert load(tmp_path).effective_contains("1") == ["2"]
 
