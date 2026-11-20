@@ -33,15 +33,15 @@ Useful flags: `--require FIELD` (missing field becomes an error),
 | `bad-home`, `duplicate-home` | `home` path invalid or claimed twice |
 | `missing-field` | A `--require` field is absent |
 
-Note that reachability counts a shared id: main and its versions are one
-logical node, so a version reachable only through its main is not
-`unreachable`.
+Note that reachability counts a shared id and outgoing links: main and its
+versions are one logical node, so a version reachable only through its main is
+not `unreachable`, and a history view linked from the root is reachable too.
 
 ### Warning codes
 
 | Code | Meaning |
 |---|---|
-| `external-link` | Link target lies outside the view; it is not pulled in |
+| `external-link` | Link target lies outside the view and is not another containment root; it is not pulled in |
 | `untracked-link` | Propagating edge has no `pinned` hash |
 | `stale-link` | Propagating edge's pin differs from the target body |
 | `oversize` | Node exceeds the line/character budget |

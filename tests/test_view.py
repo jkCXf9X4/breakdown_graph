@@ -72,3 +72,13 @@ def test_view_root_missing(write, tmp_path):
     assert any(issue.code == "view-root-missing" for issue in load_view(tmp_path, "9").issues)
     result = check(tmp_path, "9")
     assert any(issue.code == "view-root-missing" for issue in result.errors)
+
+
+def test_linked_subtree_stays_out_of_the_view(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2, links=[{"to": "10", "type": "history"}])
+    write(nodes, 10, title="Decisions", contains=["11"])
+    write(nodes, 11)
+    assert set(load_view(tmp_path, "1").nodes) == {"1", "2"}
+    assert check(tmp_path).ok

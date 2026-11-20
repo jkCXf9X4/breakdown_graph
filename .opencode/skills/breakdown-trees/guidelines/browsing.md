@@ -19,7 +19,7 @@ and `--max-chars` on any body dump.
 `bd tree` — one node per line, `ref title`; `+-` marks a non-last child, `` `- ``
 the last, and `|` continues an ancestor column. Default depth is 2; `--depth 0`
 is unlimited. `--summary` appends summaries and `--fields F,F` appends field
-values:
+values. `--links` appends a `links:` footer for edges leaving the view:
 
 ```
 1 Root
@@ -29,7 +29,9 @@ values:
 
 `bd show REF+N` — the node plus N levels of descendant bodies, each capped at
 4000 characters when N > 0. `--max-chars 0` prints the full body; `--no-body`
-prints headings only; `--path` prepends the breadcrumb.
+prints headings only; `--path` prepends the breadcrumb. `--links` appends the
+same footer, as `source -> target  title  (type)`; it is a pointer, not
+membership — open the target with `bd show REF`.
 
 `bd ls` — the table view: `ref title summary` by default, descendants indented
 two spaces per level. `--columns F,F` replaces the columns, `--max-chars` caps
@@ -39,7 +41,8 @@ cells, `--depth 0` is unlimited.
 the path, `--view` only the ref, and it errors when no area exists.
 
 `bd views` — containment roots, one `ref title` per line, store default marked
-`*`.
+`*`. A history or decisions view appears here without joining the default
+closure; switch to it with `bd work REF` when you need to edit it.
 
 `bd root` — `<ref>  (ROOT|lowest main)`.
 

@@ -461,6 +461,15 @@ def load_view(root: str | Path | Store, ref: str | int = "1") -> View:
 
     walk(canonical, None)
 
+    listed = {
+        child
+        for node in store.nodes.values()
+        for child in store.effective_contains(node.ref)
+    }
+    containment_roots = {
+        node.ref for node in store.nodes.values() if node.ref not in listed
+    }
+
     edges: list[Edge] = []
     for node in included.values():
         for link in node.links:
@@ -476,6 +485,8 @@ def load_view(root: str | Path | Store, ref: str | int = "1") -> View:
                     )
                 )
             elif link.to in store.nodes:
+                if link.to in containment_roots:
+                    continue
                 issues.append(
                     Issue(
                         "warning",

@@ -30,7 +30,9 @@ structure, and prove the result valid. It never decides what a node should say.
 - **`contains` is a tree per view** — two parents in one view is
   `multiple-parents`, not a graph feature.
 - **`links` is a DAG** — typed edges that never add nodes to a view; an edge
-  leaving the view is an `external-link` warning, and the target stays out.
+  leaving the view keeps its target out but keeps it reachable. A link to
+  another containment root is intentional and not an `external-link`; other
+  outside targets warn.
 - **Front matter is arbitrary** — only `id`, `legacy`, `contains`, `links`,
   `home` are reserved. Add no schema unless the project asks for one.
 - **Structural edits preserve bytes** — `bd` rewrites only its own block;
@@ -124,6 +126,8 @@ done with a failing `bd check`.
   reported, not what is checked.
 - **Warnings do not fail the build.** `external-link`, `untracked-link`,
   `stale-link`, `oversize` exit 0; only `error` issues exit 1.
+- **Links cross views.** A link to another containment root (for example a
+  history view) is not `external-link`; `bd show REF --links` lists it.
 - **A declared but missing `ROOT` is surfaced, never replaced.** That is
   `root-ref-missing`; clearing `ROOT` hides a real break.
 - **`promote` is not a switch.** It copies bytes onto main; it does not change

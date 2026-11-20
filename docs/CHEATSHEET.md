@@ -42,8 +42,8 @@ bd new --parent REF --field KEY=VALUE ... [--body TEXT]
 
 ```sh
 bd check [--view REF] [--require FIELD] [--max-lines N] [--max-chars N]
-bd tree [REF] [--depth N] [--summary] [--fields F,F]
-bd show REF[+N] [--max-chars N] [--no-body] [--fields F,F] [--path]
+bd tree [REF] [--depth N] [--summary] [--fields F,F] [--links]
+bd show REF[+N] [--max-chars N] [--no-body] [--fields F,F] [--path] [--links]
 bd ls [REF] [--depth N] [--columns F,F] [--max-chars N]
 bd find QUERY [--view REF|--all] [--field F] [--regex] [--where K=V ...] [--limit N]
 bd grep PATTERN [--view REF|--all] [--field F] [--where K=V ...] [--limit N]
@@ -53,6 +53,9 @@ bd path REF
 - `show 5+2`: node 5 plus two levels of descendant bodies. With N > 0 the body
   is capped at 4000 characters per node unless `--max-chars N` is given;
   `--max-chars 0` prints the full body.
+- `--links` appends a `links:` footer for edges that leave the view, one level,
+  as `source -> target`. The target stays out of the closure; read it with
+  `bd show REF` or switch with `bd work REF`.
 - `tree 5 --depth 0`: whole subtree. `ls 5 --depth 0` is also unlimited. A
   missing ref uses the store root.
 - `ls 1 --columns ref,title,layer,status`: arbitrary fields as columns.

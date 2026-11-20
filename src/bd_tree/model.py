@@ -196,6 +196,16 @@ class Store:
             return list(main.contains)
         return []
 
+    def containment_roots(self) -> list[Node]:
+        """Refs that no node lists in ``effective_contains``, sorted."""
+        listed = {
+            child
+            for node in self.nodes.values()
+            for child in self.effective_contains(node.ref)
+        }
+        roots = [node for node in self.nodes.values() if node.ref not in listed]
+        return sorted(roots, key=lambda node: (node.id, node.version))
+
     def node_edges(self, ref: str, *, propagating_only: bool = False) -> list[Edge]:
         edges = [
             Edge(

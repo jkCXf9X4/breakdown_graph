@@ -88,8 +88,8 @@ separate history.
 - Deleting a worktree never deletes a version; deleting a version never touches
   git history.
 - The invariant "every id is reachable from the global root" is evaluated per
-  checkout, through containment or a shared id. Another branch's nodes are not
-  missing; they are simply not present.
+  checkout, through containment, a shared id, or a link from a reachable node.
+  Another branch's nodes are not missing; they are simply not present.
 
 ## Why not one mechanism
 

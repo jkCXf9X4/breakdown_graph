@@ -108,11 +108,12 @@ def _check_targets_and_cycles(store: Store, issues: list[Issue]) -> None:
 
 
 def _check_reachability(store: Store, root_ref: str, issues: list[Issue]) -> None:
-    """Every file connected to the root through containment or a shared id.
+    """Every file connected to the root through containment, shared id or link.
 
     A main and its versions are alternatives for one logical node, so reaching
-    any of them reaches the others and the closures beneath them.  A ref with
-    no such path is an orphan and is reported.
+    any of them reaches the others and the closures beneath them.  An outgoing
+    link from a reached node is a reachability edge too.  A ref with no such
+    path is an orphan and is reported.
     """
     if root_ref not in store.nodes:
         issues.append(
@@ -141,6 +142,7 @@ def _check_reachability(store: Store, root_ref: str, issues: list[Issue]) -> Non
         reachable.add(ref)
         queue.extend(store.effective_contains(ref))
         queue.extend(peer for peer in by_id[reached.id] if peer != ref)
+        queue.extend(link.to for link in reached.links)
 
     for ref in sorted(store.nodes, key=lambda r: _sort_key(store.nodes[r])):
         if ref in reachable:
@@ -151,7 +153,7 @@ def _check_reachability(store: Store, root_ref: str, issues: list[Issue]) -> Non
                 "error",
                 "unreachable",
                 f"node '{ref}' is not reachable from root {root_ref} through "
-                "containment or another file of the same id",
+                "containment, another file of the same id, or a link",
                 node=ref,
                 path=str(node.path.relative_to(store.root)),
             )

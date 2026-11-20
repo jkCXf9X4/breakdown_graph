@@ -171,9 +171,10 @@ python3 -m pytest -q
   through `bd check` and view loading, asserting both complete trees.
 - Root tests cover the precedence: explicit ref or `--root-ref` > `ROOT` >
   lowest main ref, plus `root-ref-missing` and `invalid-root`.
-- Reachability tests assert both paths: through `contains`, or through another
-  file with the same id. A main and its versions are alternatives for one
-  logical node, so an alternative branch is not `unreachable`.
+- Reachability tests assert all three paths: through `contains`, through another
+  file with the same id, or through a link from a reachable node. A main and its
+  versions are alternatives for one logical node, so an alternative branch is not
+  `unreachable`; a linked history view is not one either.
 - Git tests create a temporary repository, set local `user.name`/`user.email`, and
   use `pytest.mark.skipif(shutil.which("git") is None, ...)`.
 - Structural tests assert body bytes, not just field values.

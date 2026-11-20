@@ -168,6 +168,38 @@ def test_tree_renders_explicit_root(write, tmp_path):
     assert out.startswith("7 Seven")
 
 
+def _linked_tree(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, title="Root", contains=["2"])
+    write(nodes, 2, title="Child", links=[{"to": "10", "type": "history"}])
+    write(nodes, 10, title="Decisions")
+    return load(tmp_path)
+
+
+def test_show_links_footer_lists_edges_leaving_the_view(write, tmp_path):
+    store = _linked_tree(write, tmp_path)
+    assert "links:" not in render_show(store, "1", depth=1)
+    out = render_show(store, "1", depth=1, links=True)
+    assert out.endswith("links:\n- 2 -> 10  Decisions  (history)")
+
+
+def test_tree_links_footer_lists_edges_leaving_the_view(write, tmp_path):
+    store = _linked_tree(write, tmp_path)
+    assert "links:" not in render_tree(store, "1", depth=1)
+    out = render_tree(store, "1", depth=1, links=True)
+    assert out.endswith("links:\n- 2 -> 10  Decisions  (history)")
+
+
+def test_cli_show_links_flag(write, tmp_path, capsys):
+    _linked_tree(write, tmp_path)
+    assert (
+        main(["show", "1", "--depth", "1", "--links", "--root", str(tmp_path)]) == 0
+    )
+    out = capsys.readouterr().out
+    assert "links:" in out
+    assert "- 2 -> 10  Decisions  (history)" in out
+
+
 def test_tree_default_uses_root_file(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"])

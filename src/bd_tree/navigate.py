@@ -79,13 +79,7 @@ def get_node(store: Store, ref: str) -> Node:
 
 def view_roots(store: Store) -> list[Node]:
     """Refs that no node lists in ``contains`` (containment roots), sorted."""
-    listed = {
-        child
-        for node in store.nodes.values()
-        for child in store.effective_contains(node.ref)
-    }
-    roots = [node for node in store.nodes.values() if node.ref not in listed]
-    return sorted(roots, key=lambda node: (node.id, node.version))
+    return store.containment_roots()
 
 
 def _base_ref(node: Node) -> str:
@@ -190,6 +184,35 @@ def _display_body(node: Node, max_chars: int) -> str:
     return body
 
 
+def _link_footer(store: Store, ref: str, printed: Iterable[str]) -> str:
+    """Links from printed nodes that leave the view (one level, no recursion)."""
+    inside = set(load_view(store, ref).nodes)
+    seen: set[tuple[str, str, str]] = set()
+    rows: list[tuple[str, str, str, Node]] = []
+    for source in printed:
+        node = store.nodes.get(source)
+        if node is None:
+            continue
+        for link in node.links:
+            target = store.nodes.get(link.to)
+            if target is None or link.to in inside:
+                continue
+            key = (source, link.to, link.type)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append((source, link.to, link.type, target))
+    if not rows:
+        return ""
+    rows.sort(key=lambda row: (row[0], row[1], row[2]))
+    lines = ["links:"]
+    lines.extend(
+        f"- {source} -> {target_ref}  {target.title}  ({link_type})"
+        for source, target_ref, link_type, target in rows
+    )
+    return "\n".join(lines)
+
+
 def render_show(
     store: Store,
     ref: str,
@@ -199,6 +222,7 @@ def render_show(
     no_body: bool = False,
     max_chars: int | None = None,
     show_path: bool = False,
+    links: bool = False,
 ) -> str:
     blocks: list[str] = []
     get_node(store, ref)
@@ -207,7 +231,9 @@ def render_show(
         cap = 0 if depth == 0 else 4000
     if show_path:
         blocks.append(f"path: {_breadcrumb(store, ref)}")
+    printed: list[str] = []
     for node, level in walk_containment(store, ref, depth):
+        printed.append(node.ref)
         heading = "#" * min(level + 1, 6)
         parts = [f"{heading} {node.ref}  {node.title}"]
         if node.summary:
@@ -219,6 +245,10 @@ def render_show(
             if body:
                 parts.append(body)
         blocks.append("\n".join(parts))
+    if links:
+        footer = _link_footer(store, ref, printed)
+        if footer:
+            blocks.append(footer)
     return "\n\n".join(blocks)
 
 
@@ -239,6 +269,7 @@ def render_tree(
     depth: int | None = 2,
     summary: bool = False,
     fields: Iterable[str] | None = None,
+    links: bool = False,
 ) -> str:
     root = get_node(store, ref)
     lines = [f"{root.ref} {root.title}{_outline_suffix(root, fields, summary)}"]
@@ -268,6 +299,11 @@ def render_tree(
             )
 
     walk(ref, 0, "")
+    if links:
+        footer = _link_footer(store, ref, seen)
+        if footer:
+            lines.append("")
+            lines.append(footer)
     return "\n".join(lines)
 
 

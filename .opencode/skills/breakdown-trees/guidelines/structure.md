@@ -30,7 +30,9 @@ does not get contained "for now" — it gets its own node in its own place.
 
 ## Links
 
-`links` is a DAG of typed edges. A link never pulls a node into a view.
+`links` is a DAG of typed edges. A link never pulls a node into a view, but it
+keeps its target reachable and a link to another containment root is not
+`external-link`.
 
 ```bash
 bd link FROM TO --type supports --propagates

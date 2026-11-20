@@ -431,6 +431,7 @@ def _cmd_show(args: argparse.Namespace) -> int:
             no_body=args.no_body,
             max_chars=args.max_chars,
             show_path=args.path,
+            links=args.links,
         )
     )
     return 0
@@ -447,6 +448,7 @@ def _cmd_tree(args: argparse.Namespace) -> int:
             depth=depth,
             summary=args.summary,
             fields=_field_list(args.fields),
+            links=args.links,
         )
     )
     return 0
@@ -823,6 +825,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="header fields to print (default: all non-reserved fields)",
     )
     show.add_argument("--path", action="store_true", help="prepend the breadcrumb")
+    show.add_argument(
+        "--links", action="store_true", help="list links that leave the view"
+    )
     show.set_defaults(func=_cmd_show)
 
     tree = sub.add_parser("tree", help="print the containment outline")
@@ -834,6 +839,9 @@ def build_parser() -> argparse.ArgumentParser:
     tree.add_argument("--summary", action="store_true", help="append node summaries")
     tree.add_argument(
         "--fields", default=None, metavar="F,F", help="append selected field values"
+    )
+    tree.add_argument(
+        "--links", action="store_true", help="list links that leave the view"
     )
     tree.set_defaults(func=_cmd_tree)
 

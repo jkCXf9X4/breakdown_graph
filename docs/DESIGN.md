@@ -106,14 +106,17 @@ browser do not re-sort it.
   later edits to main's containment do not silently change the alternative.
 - Containment is a tree **per view**: main and a version may both contain a node
   in different views, but one view must not reach it through two parents.
-- Global check: a ref is reachable from the root through `contains`, or through
+- Global check: a ref is reachable from the root through `contains`, through
   another file with the same id (main and its versions are alternatives for one
-  logical node). A ref connected by neither path is an `unreachable` error.
+  logical node), or through an outgoing link from a reachable node. A ref
+  connected by none of these paths is an `unreachable` error.
 
 Containment and semantics are separate: `contains` decides view membership and
 is a tree. `links` expresses provenance, support, contradiction, review, and
 other relations as a DAG that may cross subtrees. A semantic link outside the
-view is reported as `external-link` and does not pull the target in.
+view does not pull the target in. It is reported as `external-link` unless the
+target is itself a containment root — a link into another view, not a stray
+edge.
 
 ### 3.4 Views
 
@@ -353,10 +356,10 @@ These are enforced or assumed:
 2. Main exists for every id that has a version.
 3. `contains` order is display order.
 4. Containment is a tree per view; no node is reached twice in one view.
-5. Every id is reachable from the global root through containment or through
-   another file of the same id.
-6. Semantic links resolve in the store; links outside a view warn, never pull
-   in.
+5. Every id is reachable from the global root through containment, through
+   another file of the same id, or through a link from a reachable node.
+6. Semantic links resolve in the store; links outside a view never pull in and
+   warn unless the target is another containment root.
 7. Arbitrary front matter is preserved on export.
 8. Work trees contain node `.md` symlinks plus regular generated files.
 9. Generated files (`INDEX.md`, `AGENTS.md`, `REFS.md`) are never hand-edited.

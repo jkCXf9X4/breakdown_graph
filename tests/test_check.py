@@ -168,3 +168,34 @@ def test_orphan_id_with_no_alternative_still_errors(write, tmp_path):
     assert any(
         issue.code == "unreachable" and issue.node == "9" for issue in result.errors
     )
+
+
+def test_link_target_outside_contains_is_reachable(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2, links=[{"to": "10", "type": "history"}])
+    write(nodes, 10, title="Decisions", contains=["11"])
+    write(nodes, 11)
+    result = check(tmp_path)
+    assert result.ok
+    assert not any(issue.code == "unreachable" for issue in result.issues)
+    assert not any(issue.code == "external-link" for issue in result.issues)
+
+
+def test_link_from_an_unreachable_node_rescues_nothing(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2)
+    write(nodes, 3, links=[{"to": "4", "type": "supports"}])
+    write(nodes, 4)
+    result = check(tmp_path)
+    unreachable = {
+        issue.node for issue in result.errors if issue.code == "unreachable"
+    }
+    assert {"3", "4"} <= unreachable
+
+
+def test_dangling_link_still_errors(write, tmp_path):
+    write(tmp_path / "nodes", 1, links=[{"to": "99", "type": "supports"}])
+    result = check(tmp_path)
+    assert any(issue.code == "dangling-link" for issue in result.errors)
