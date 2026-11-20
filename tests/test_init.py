@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from breakdown.api import check, init_store
-from breakdown.cli import main
-from breakdown.frontmatter import parse_document
+from bd_tree.api import check, init_store
+from bd_tree.cli import main
+from bd_tree.frontmatter import parse_document
 
 EXPECTED = (
     "---\n"

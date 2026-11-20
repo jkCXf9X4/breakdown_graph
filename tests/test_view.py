@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from breakdown.api import check, load_view
+from bd_tree.api import check, load_view
 
 
 def _tree(write, tmp_path):

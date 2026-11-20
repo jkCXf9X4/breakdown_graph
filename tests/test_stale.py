@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from breakdown.api import reconcile, stale
-from breakdown.errors import BreakdownError
-from breakdown.frontmatter import parse_document
+from bd_tree.api import reconcile, stale
+from bd_tree.errors import BreakdownError
+from bd_tree.frontmatter import parse_document
 
 
 def test_stale_then_reconcile_keeps_body(write, tmp_path, pin):

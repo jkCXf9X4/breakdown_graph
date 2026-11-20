@@ -2,14 +2,10 @@ from __future__ import annotations
 
 import os
 import shutil
-from pathlib import Path
 
 import pytest
 
-from breakdown import api
-
-ROOT = Path(__file__).resolve().parents[1]
-CORPUS = ROOT / "workspace" / "licentiate-n"
+from bd_tree import api
 
 
 def _tree(write, tmp_path):
@@ -51,7 +47,7 @@ def test_work_links_every_node_and_writes_generated_files(write, tmp_path):
 def test_work_cli_builds_the_same_tree(write, tmp_path, capsys):
     _tree(write, tmp_path)
     out = tmp_path / "cli"
-    from breakdown.cli import main
+    from bd_tree.cli import main
 
     assert main(["work", "1", "--root", str(tmp_path), "--out", str(out)]) == 0
     output = capsys.readouterr().out
@@ -148,16 +144,6 @@ def test_clean_rebuilds_without_touching_store_files(write, tmp_path):
         path.name: path.read_bytes() for path in (tmp_path / "nodes").glob("*.md")
     }
     assert store_before == store_after
-
-
-def test_corpus_smoke_work_tree(write, tmp_path):
-    out = tmp_path / "corpus-work"
-    result = api.work(CORPUS, "1", out)
-    assert result.nodes == 128
-    assert result.symlinks == 128
-    assert sum(1 for path in out.rglob("*.md") if path.is_symlink()) == 128
-    generated = {path.name for path in out.iterdir() if path.is_file()}
-    assert {"INDEX.md", "AGENTS.md", "REFS.md"} <= generated
 
 
 def test_default_out_is_under_build_work(write, tmp_path):
@@ -289,7 +275,7 @@ def test_detached_file_blocks_refresh_until_writeback(write, tmp_path):
     original = dest.read_text(encoding="utf-8")
     dest.unlink()
     dest.write_text(original + "detached edit\n", encoding="utf-8")
-    from breakdown.cli import main
+    from bd_tree.cli import main
 
     assert main(["work", "1", "--root", str(tmp_path), "--out", str(out)]) == 2
     assert not dest.is_symlink()
@@ -317,7 +303,7 @@ def test_detached_file_blocks_refresh_until_writeback(write, tmp_path):
 
 
 def test_stray_blocks_refresh_and_clean_discards(write, tmp_path):
-    from breakdown.errors import ExportError
+    from bd_tree.errors import ExportError
 
     _tree(write, tmp_path)
     out = tmp_path / "work"
@@ -345,7 +331,7 @@ def test_name_suffixes_the_default_directory(write, tmp_path):
 
 def test_out_and_name_are_mutually_exclusive(write, tmp_path, capsys):
     _tree(write, tmp_path)
-    from breakdown.cli import main
+    from bd_tree.cli import main
 
     code = main(
         [
@@ -366,7 +352,7 @@ def test_out_and_name_are_mutually_exclusive(write, tmp_path, capsys):
 @pytest.mark.parametrize("name", ["", ".hidden", "-dash", "bad/name", "a b"])
 def test_invalid_name_is_rejected(write, tmp_path, name):
     _tree(write, tmp_path)
-    from breakdown.cli import main
+    from bd_tree.cli import main
 
     assert (
         main(["work", "1", "--root", str(tmp_path), f"--name={name}"]) == 2
@@ -376,7 +362,7 @@ def test_invalid_name_is_rejected(write, tmp_path, name):
 def test_print_outputs_only_the_directory(write, tmp_path, capsys):
     _tree(write, tmp_path)
     out = tmp_path / "printed"
-    from breakdown.cli import main
+    from bd_tree.cli import main
 
     argv = ["work", "1", "--root", str(tmp_path), "--out", str(out), "--print"]
     assert main(argv) == 0
@@ -389,7 +375,7 @@ def test_print_outputs_only_the_directory(write, tmp_path, capsys):
 
 def test_print_is_mutually_exclusive_with_status(write, tmp_path):
     _tree(write, tmp_path)
-    from breakdown.cli import main
+    from bd_tree.cli import main
 
     with pytest.raises(SystemExit):
         main(["work", "1", "--root", str(tmp_path), "--print", "--status"])
@@ -466,7 +452,7 @@ def test_work_without_git_omits_git_context(write, tmp_path, capsys):
     agents = (out / "AGENTS.md").read_text(encoding="utf-8")
     assert "Git branch:" not in agents
 
-    from breakdown.cli import main
+    from bd_tree.cli import main
 
     cli_out = tmp_path / "cli"
     assert main(["work", "1", "--root", str(tmp_path), "--out", str(cli_out)]) == 0
@@ -499,7 +485,7 @@ def test_work_records_git_branch_commit_and_toplevel(write, tmp_path):
 def test_work_cli_prints_the_branch(write, tmp_path, capsys):
     repo = _git_repo(write, tmp_path)
     branch = _run_git(repo, "rev-parse", "--abbrev-ref", "HEAD")
-    from breakdown.cli import main
+    from bd_tree.cli import main
 
     out = tmp_path / "cli"
     assert main(["work", "1", "--root", str(repo), "--out", str(out)]) == 0

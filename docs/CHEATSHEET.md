@@ -12,6 +12,20 @@ bd --root path/to/store <command>   # explicit per command
 
 `bd` walks up from the current directory to find `nodes/`; one store per checkout.
 
+## Tree root
+
+```sh
+bd root                             # print: <ref>  (ROOT|lowest main)
+bd root REF                         # write ROOT: one ref line, e.g. 1-4
+bd root --clear                     # delete ROOT; lowest main ref is the default
+```
+
+`ROOT` sits at the store top level and holds one ref on one line, nothing else.
+It is the default view root for `tree`, `ls`, `work`, `check`, `stale`, and
+`reconcile`, and the view root `bd check` reports. An explicit ref or
+`--root-ref` wins over `ROOT`; `ROOT` wins over the lowest main ref. A declared
+but missing ref is `root-ref-missing`; malformed content is `invalid-root`.
+
 ## Start
 
 ```sh
@@ -34,7 +48,7 @@ bd path REF
 ```
 
 - `show 5+2`: node 5 plus two levels of descendant bodies.
-- `tree 5 --depth 0`: whole subtree.
+- `tree 5 --depth 0`: whole subtree. A missing ref uses the store root.
 - `ls 1 --columns ref,title,layer,status`: arbitrary fields as columns.
 - `find` searches title, summary, body, and all string fields.
 
@@ -110,8 +124,12 @@ bd diff LEFT RIGHT
 ```
 
 Versions are alternatives inside one branch, not the solution boundary, and they
-never sync across branches. `bd promote` copies files in the current checkout
-only, so check out or merge the branch first. See
+never sync across branches. `bd fork` materialises the effective `contains` list
+into the version, so later edits to main's containment do not change it; a
+hand-written version that omits `contains` still inherits main's list.
+`bd promote` copies one version onto main in the current checkout only, so check
+out or merge the branch first — it is not a way to switch trees. Switching is
+`bd root REF` or repointing one parent with `bd uncontain` / `bd contain`. See
 [Branches and versions](BRANCHES-AND-VERSIONS.md).
 
 ## Freshness
@@ -165,6 +183,7 @@ python3 -m pytest -q
 | Problem | Fix |
 | --- | --- |
 | Wrong store | `BD_ROOT` or `--root`; `bd` uses the nearest `nodes/` upward. |
+| `root-ref-missing` / `invalid-root` | The `ROOT` file names an absent ref or is malformed. Fix it, or run `bd root --clear`. |
 | Detached work file | `bd work REF --status`, then `--writeback`. |
 | Stale layout after branch change | `bd work REF --clean`. |
 | Dangling link after removing a node | `bd check`, then `bd unlink` or restore the node. |

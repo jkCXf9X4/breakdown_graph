@@ -3,10 +3,10 @@
 This guide goes from no store to a browsable, editable graph with a work folder,
 typed links, and a second solution in a git worktree.
 
-You need Python 3.10+ and PyYAML. The repository ships `bin/bd`; no install step.
+You need Python 3.10+ and PyYAML. From a clone, install the package:
 
 ```sh
-export PATH="/path/to/info_graph/bin:$PATH"
+pip install .
 bd --help
 ```
 
@@ -176,7 +176,34 @@ Remove an edge:
 bd unlink 3 1 --type serves
 ```
 
-## 5. A second solution with git
+## 5. Switch between full trees
+
+Two moves: point the store at another root ref, or repoint one parent.
+
+```sh
+bd fork 1 --version 1        # alternative root; contains materialised now
+bd uncontain 1-1 3
+bd tree 1-1                  # inspect the alternative before switching
+bd root 1-1                  # write ROOT; tree, ls, work, check default here
+bd tree
+bd root                      # 1-1  (ROOT)
+bd root --clear              # back to the lowest main ref
+```
+
+`ROOT` is one ref on one line at the store top level. An explicit ref or
+`--root-ref` still wins over it; with no `ROOT`, the lowest main ref is the root.
+
+Repoint one parent when only part of the tree moves:
+
+```sh
+bd uncontain 1 3
+bd contain 2 3               # node 3 now hangs under 2
+```
+
+`bd promote` is not a switch: it copies one version onto main. `bd versions 1`
+and `bd fork 1` show and create the alternatives.
+
+## 6. A second solution with git
 
 A solution is a git branch in a worktree; the flat store is the merge unit.
 
@@ -221,9 +248,9 @@ bd solution remove sol-a
 ```
 
 If the store is nested inside the repo, `BD_ROOT` is the store path relative to
-the worktree, for example `workspace/licentiate-n`.
+the worktree, for example `examples/switch-trees`.
 
-## 6. Feed an agent
+## 7. Feed an agent
 
 Two modes:
 
@@ -238,7 +265,7 @@ bd work 1
 Both produce an `AGENTS.md`; the work folder also records the branch, commit, and
 worktree. Tell the agent not to read outside that directory.
 
-## 7. Use an existing markdown tree
+## 8. Use an existing markdown tree
 
 There is no generic importer yet. The pattern is:
 
@@ -249,16 +276,16 @@ There is no generic importer yet. The pattern is:
    `--path-template`.
 5. `links` holds typed edges; prose citations are separate.
 
-`workspace/licentiate/` and `tools/migrate_licentiate.py` are a worked example:
-typed ids were renumbered, containment was derived from the citation graph, and
-bodies were checked byte-for-byte after id substitution.
+`examples/switch-trees/` is a small worked store laid out this way: one file per
+node, `contains` listing ordered children, and versions as alternatives.
 
 ## Troubleshooting
 
 | Symptom | Cause and fix |
 | --- | --- |
 | `bd: unknown ref '1'` | No store found. Run from the store root or set `BD_ROOT` to the directory containing `nodes/`. |
-| `bd check` sees the wrong corpus | `BD_ROOT` or `--root` points elsewhere. `bd` uses the nearest `nodes/` upward. |
+| `bd check` sees the wrong store | `BD_ROOT` or `--root` points elsewhere. `bd` uses the nearest `nodes/` upward. |
+| `root-ref-missing` / `invalid-root` | The `ROOT` file names an absent ref or is malformed. Fix it, or run `bd root --clear`. |
 | `bd work` refuses a directory | It has detached or stray files. Run `--status`, then `--writeback` or `--clean`. |
 | Edit did not reach the node | The editor replaced the symlink. Run `--status`, then `--writeback`. |
 | `build/` appears in git status | Add `build/` to `.gitignore`. |

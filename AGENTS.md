@@ -1,13 +1,16 @@
 # Agent operating rules
 
-This repository is both a tool (`bd`) and a reference store corpus. Read
-[`README.md`](README.md) and [`docs/DESIGN.md`](docs/DESIGN.md) before changing
-behaviour. The design document is authoritative for the model; this file is the
-short operating protocol.
+This repository is both a tool (`bd_tree`, command `bd`) and a reference example
+store. Read [`README.md`](README.md) and [`docs/DESIGN.md`](docs/DESIGN.md) before
+changing behaviour. The design document is authoritative for the model; this file
+is the short operating protocol.
 
 ## First session
 
-1. Locate the store: `export BD_ROOT=workspace/licentiate-n` or pass `--root`.
+1. Locate the store: `export BD_ROOT=examples/switch-trees` or pass `--root`.
+   Install once from the clone with `pip install -e '.[test]'`, then use `bd`.
+   Without installing, run from the repo root with
+   `PYTHONPATH=src python3 -m bd_tree`.
 2. Confirm the baseline:
 
    ```sh
@@ -15,8 +18,10 @@ short operating protocol.
    bd check
    ```
 
-3. See the shape: `bd tree 1 --depth 1`, `bd find <term>`, `bd path <ref>`.
-4. For a solution: `bd solution new NAME`, `cd` into it, `bd work 1`.
+3. See the shape: `bd tree --depth 1`, `bd find <term>`, `bd path <ref>`.
+   For two complete trees over one store, run the commands in
+   `examples/switch-trees/README.md`.
+4. For a solution: `bd solution new NAME`, `cd` into it, `bd work`.
 5. For edits: edit through a work folder or `nodes/<ref>.md`; change structure
    with `bd contain` / `bd uncontain` / `bd link` / `bd unlink`.
 6. Validate: `bd check`, `bd stale`.
@@ -46,10 +51,14 @@ behaviour change and update the docs listed at the bottom.
   never introduce a sync layer.
 - A view never crosses a branch, and neither does a version. Versions are node
   files inside one checkout; branches are git. Never resolve a ref through a
-  branch name, never add a branch or active-version selector, and never promote
-  across branches — merge first.
-- No JSON, TOML, lock, or state data files. Derived output is disposable and
-  gitignored.
+  branch name, never add a branch or per-node active-version selector, and never
+  promote across branches — merge first.
+- No JSON, TOML, lock, or state data files. The one exception is a store-level
+  `ROOT` file: one ref on one line (e.g. `1-4`), nothing else. Derived output is
+  disposable and gitignored.
+- The default view root is `ROOT` when present, else the lowest main ref; an
+  explicit ref or `--root-ref` wins over both. A declared but missing ref is
+  `root-ref-missing`; malformed content is `invalid-root`.
 
 ## Where to work
 
@@ -57,8 +66,9 @@ behaviour change and update the docs listed at the bottom.
   `git worktree add ../NAME -b NAME`); one worktree per solution.
 - Writable layout: `bd work REF` creates `build/work/<ref>`; edit through symlinks.
 - Read-only views: `bd view REF --out DIR` or `bd export ...`.
-- Never edit `workspace/licentiate/` directly; it is the legacy typed-id source.
-  Use `tools/migrate_licentiate.py` to regenerate `workspace/licentiate-n/`.
+- Switching trees: `bd root REF` for the whole store, or repoint one parent with
+  `bd uncontain` / `bd contain`. `bd promote` is not a switch; it copies one
+  version onto main.
 - Never hand-edit generated `INDEX.md`, `AGENTS.md`, or `REFS.md` inside a work or
   output directory.
 
@@ -75,22 +85,27 @@ behaviour change and update the docs listed at the bottom.
 | Search | `bd find TEXT`, `bd grep 'RE'` |
 | Edit a view | `bd work REF`, then edit through the symlinks |
 | Repair symlinks | `bd work REF --status` / `--writeback` |
+| Switch tree root | `bd root REF`, `bd root --clear` |
+| Show versions | `bd versions ID`, `bd fork ID`, `bd promote REF` |
 | New solution | `bd solution new NAME` |
 | Validate | `bd check`, `bd stale` |
 | Read-only agent pack | `bd export context --view REF --out DIR` |
 
 ## Commands
 
+Commands assume `bd` is installed (`pip install -e '.[test]'`); without
+installing, prefix each with `PYTHONPATH=src python3 -m bd_tree` instead of `bd`.
+
 ```sh
-export BD_ROOT=workspace/licentiate-n
+export BD_ROOT=examples/switch-trees
 python3 -m pytest -q
-./bin/bd check
-./bin/bd tree 1 --depth 1
-./bin/bd show 1+1 --max-chars 400
-./bin/bd contain 1 5 --after 6
-./bin/bd link 5 9 --type supports
-./bin/bd work 1 --print
-./bin/bd solution list
+bd check
+bd tree 1 --depth 1
+bd show 1+1 --max-chars 400
+bd contain 1 5 --after 6
+bd link 5 9 --type supports
+bd work 1 --print
+bd solution list
 ```
 
 ## Code style
@@ -106,7 +121,7 @@ python3 -m pytest -q
 
 Short conventional prefixes, matching history: `feat:`, `fix:`, `chore:`,
 `docs:`. One concern per commit. Do not commit caches, `build/`, exported views,
-or generated corpora output.
+or generated output.
 
 ## Docs map
 
@@ -117,4 +132,3 @@ or generated corpora output.
 - [`docs/DESIGN.md`](docs/DESIGN.md) — model, decisions, invariants.
 - [`docs/BRANCHES-AND-VERSIONS.md`](docs/BRANCHES-AND-VERSIONS.md) — the
   branch/version separation contract.
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — next work.

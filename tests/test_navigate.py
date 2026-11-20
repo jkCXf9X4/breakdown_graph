@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
-from breakdown.cli import main
-from breakdown.loader import load
-from breakdown.navigate import (
+from bd_tree.cli import main
+from bd_tree.loader import load
+from bd_tree.navigate import (
     NavigationError,
     parse_ref_depth,
     render_find,
@@ -17,9 +15,6 @@ from breakdown.navigate import (
     render_show,
     render_tree,
 )
-
-ROOT = Path(__file__).resolve().parents[1]
-CORPUS = ROOT / "workspace" / "licentiate-n"
 
 
 def _tree(write, tmp_path, body_by_id: dict[int, str] | None = None):
@@ -139,13 +134,37 @@ def test_tree_summary_flag(write, tmp_path):
     assert "2 Child  summary" in out
 
 
-def test_tree_default_root_is_lowest_main(write, tmp_path):
+def test_tree_renders_explicit_root(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 7, title="Seven", contains=["8"])
     write(nodes, 8, title="Eight")
     store = load(tmp_path)
     out = render_tree(store, "7", depth=1)
     assert out.startswith("7 Seven")
+
+
+def test_tree_default_uses_root_file(write, tmp_path, capsys):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2)
+    write(nodes, 5, version=1, contains=["2"])
+    (tmp_path / "ROOT").write_text("5-1\n", encoding="utf-8")
+    assert main(["tree", "--root", str(tmp_path)]) == 0
+    assert capsys.readouterr().out.startswith("5-1")
+
+
+def test_root_command_show_set_clear(write, tmp_path, capsys):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2)
+    write(nodes, 1, version=1, contains=["2"])
+    assert main(["root", "--root", str(tmp_path)]) == 0
+    assert capsys.readouterr().out.split()[0] == "1"
+    assert main(["root", "1-1", "--root", str(tmp_path)]) == 0
+    assert capsys.readouterr().out.startswith("1-1")
+    assert (tmp_path / "ROOT").read_text(encoding="utf-8").strip() == "1-1"
+    assert main(["root", "--clear", "--root", str(tmp_path)]) == 0
+    assert not (tmp_path / "ROOT").exists()
 
 
 # -- ls ----------------------------------------------------------------------
@@ -259,21 +278,3 @@ def test_path_version_ref(write, tmp_path):
     assert render_path(store, "2-1") == (
         "1  Root\n2  Child\n2-1  Child v1"
     )
-
-
-# -- corpus smoke ------------------------------------------------------------
-
-
-def test_corpus_tree_show_and_find(capsys):
-    assert main(["tree", "1", "--depth", "1", "--root", str(CORPUS)]) == 0
-    out = capsys.readouterr().out
-    assert "+- 2 " in out
-    assert "`- 128 " in out
-
-    assert main(["show", "1+1", "--root", str(CORPUS), "--no-body"]) == 0
-    out = capsys.readouterr().out
-    assert "## 2  What does the licentiate cover?" in out
-
-    assert main(["find", "credibility", "--limit", "3", "--root", str(CORPUS)]) == 0
-    blocks = capsys.readouterr().out.split("\n\n")
-    assert 1 <= len(blocks) <= 3

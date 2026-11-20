@@ -1,4 +1,4 @@
-"""Shared fixtures for the breakdown test suite."""
+"""Shared fixtures for the bd_tree test suite."""
 
 from __future__ import annotations
 
@@ -9,10 +9,10 @@ from typing import Any
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
 
-from breakdown.frontmatter import body_hash, render_document  # noqa: E402
+from bd_tree.frontmatter import body_hash, render_document  # noqa: E402
 
 
 def write_node(

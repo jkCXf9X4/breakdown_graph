@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from breakdown.api import check
-from breakdown.frontmatter import render_document
+from bd_tree.api import check
+from bd_tree.frontmatter import render_document
 
 
 def _codes(result):
@@ -120,3 +120,51 @@ def test_default_root_ref_is_lowest_main(write, tmp_path):
     result = check(tmp_path)
     assert result.ok
     assert result.nodes_scanned == 2
+
+
+def test_declared_root_wins_over_lowest_main(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2)
+    write(nodes, 1, version=4, contains=["2"])
+    (tmp_path / "ROOT").write_text("1-4\n", encoding="utf-8")
+    result = check(tmp_path)
+    assert result.ok
+    assert result.view == "1-4"
+
+
+def test_missing_declared_root_is_an_error(write, tmp_path):
+    write(tmp_path / "nodes", 1)
+    (tmp_path / "ROOT").write_text("1-9\n", encoding="utf-8")
+    result = check(tmp_path)
+    assert any(issue.code == "root-ref-missing" for issue in result.errors)
+
+
+def test_invalid_root_file_is_an_error(write, tmp_path):
+    write(tmp_path / "nodes", 1)
+    (tmp_path / "ROOT").write_text("not-a-ref\n", encoding="utf-8")
+    result = check(tmp_path)
+    assert any(issue.code == "invalid-root" for issue in result.errors)
+
+
+def test_alternative_branch_is_reachable_through_its_id(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2)
+    write(nodes, 1, version=3, contains=["4"])
+    write(nodes, 4)
+    result = check(tmp_path)
+    assert result.ok
+
+
+def test_orphan_id_with_no_alternative_still_errors(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2)
+    write(nodes, 1, version=3, contains=["4"])
+    write(nodes, 4)
+    write(nodes, 9)
+    result = check(tmp_path)
+    assert any(
+        issue.code == "unreachable" and issue.node == "9" for issue in result.errors
+    )

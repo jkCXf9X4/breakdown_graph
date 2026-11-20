@@ -5,6 +5,5 @@ __pycache__/
 
 # derived views and exports
 build/
-workspace/licentiate-tree/
-workspace/licentiate-context/
-workspace/*.dot
+dist/
+*.egg-info/

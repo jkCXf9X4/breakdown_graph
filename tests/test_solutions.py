@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from breakdown.api import solution_list, solution_new, solution_remove
-from breakdown.cli import main
-from breakdown.errors import BreakdownError
+from bd_tree.api import solution_list, solution_new, solution_remove
+from bd_tree.cli import main
+from bd_tree.errors import BreakdownError
 
 pytestmark = pytest.mark.skipif(
     shutil.which("git") is None, reason="git is not available"

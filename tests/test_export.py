@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from breakdown.api import export_view
-from breakdown.errors import ExportError
+from bd_tree.api import export_view
+from bd_tree.errors import ExportError
 
 
 def test_tree_view_writes_nodes_and_one_index(write, tmp_path):
@@ -81,7 +81,7 @@ def test_dot_export(write, tmp_path):
     result = export_view("dot", tmp_path, "1", out)
     assert result.nodes == 2
     text = out.read_text(encoding="utf-8")
-    assert "digraph breakdown" in text
+    assert "digraph bd_tree" in text
     assert '"2" -> "1" [label="supports"' in text
     assert 'label="1\\nTitle of 1"' in text
 
@@ -93,7 +93,7 @@ def test_generic_store_without_layer_type_or_home(write, tmp_path):
     write(nodes, 3, phase="review", audience="team", order=3, title="Review")
     write(nodes, 4, phase="build", audience="dev", order=4, title="Detail")
 
-    from breakdown.api import check
+    from bd_tree.api import check
 
     result = check(tmp_path)
     assert result.ok

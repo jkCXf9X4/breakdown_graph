@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from breakdown.loader import (
+from bd_tree.loader import (
     FilenameError,
     node_path,
     parse_filename,

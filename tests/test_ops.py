@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from breakdown.api import (
+from bd_tree.api import (
     diff,
     fork,
     load,
@@ -11,8 +11,8 @@ from breakdown.api import (
     retire_version,
     versions,
 )
-from breakdown.errors import BreakdownError
-from breakdown.frontmatter import parse_document
+from bd_tree.errors import BreakdownError
+from bd_tree.frontmatter import parse_document
 
 
 def test_fork_creates_next_and_explicit_versions(write, tmp_path):
@@ -28,18 +28,23 @@ def test_fork_creates_next_and_explicit_versions(write, tmp_path):
         fork(tmp_path, 9)
 
 
-def test_fork_of_a_parent_inherits_containment(write, tmp_path):
+def test_fork_materialises_containment(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"])
     write(nodes, 2, contains=["3"])
     write(nodes, 3)
     path = fork(tmp_path, 2)
-    assert "contains" not in parse_document(path.read_text(encoding="utf-8")).meta
+    assert parse_document(path.read_text(encoding="utf-8")).meta["contains"] == ["3"]
     assert set(load(tmp_path).effective_contains("2-1")) == {"3"}
-    from breakdown.api import check, load_view
+    from bd_tree.api import check, load_view
 
     assert check(tmp_path).ok
     assert set(load_view(tmp_path, "2-1").nodes) == {"2-1", "3"}
+
+    # A materialised list must not follow later edits to main.
+    write(nodes, 2, contains=["4"])
+    write(nodes, 4)
+    assert set(load(tmp_path).effective_contains("2-1")) == {"3"}
 
 
 def test_promote_preserves_effective_containment(write, tmp_path):

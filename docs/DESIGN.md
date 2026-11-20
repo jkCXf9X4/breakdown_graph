@@ -5,10 +5,10 @@ behind it, and the invariants the implementation relies on.
 
 ## 1. Originating problem
 
-The motivating corpus is a licentiate thesis organised as a layered breakdown:
+The motivating case is a layered project breakdown:
 intent → claims → argument → evidence → manuscript → verification → operation,
 plus a work layer of investigations, selected improvements, and implemented
-changes. The thesis argues that credibility belongs to the chain that produces a
+changes. The case argues that credibility belongs to the chain that produces a
 result, not to a single model, and that a handover loss is neither repaired nor
 detected downstream by default. The same failure appears in the documentation:
 
@@ -34,7 +34,8 @@ declared closure, and make stale material visible rather than silently present.
 5. **Work in the store.** Writable work trees are symlink views, not copies;
    there is no sync-back.
 6. **No sidecar state.** No JSON manifests, TOML view configs, lock files, or
-   active-branch files; everything needed is in the node files or derived.
+   active-branch files; the only store-level pointer is `ROOT`, one ref on one
+   line. Everything else needed is in the node files or derived.
 7. **Freshness is opt-in per edge.** A semantic link participates in staleness
    only when it declares `propagates: true`.
 8. **Git owns the solution boundary; the flat store is the merge unit; views are
@@ -90,11 +91,13 @@ links:
 browser do not re-sort it.
 
 - Missing `contains` on a version inherits main's list; `contains: []` means no
-  children.
+  children. `bd fork` materialises the effective list into the new version, so
+  later edits to main's containment do not silently change the alternative.
 - Containment is a tree **per view**: main and a version may both contain a node
   in different views, but one view must not reach it through two parents.
-- Global check: every file is reachable from the root through the main tree, and
-  every version's main is reachable.
+- Global check: a ref is reachable from the root through `contains`, or through
+  another file with the same id (main and its versions are alternatives for one
+  logical node). A ref connected by neither path is an `unreachable` error.
 
 Containment and semantics are separate: `contains` decides view membership and
 is a tree. `links` expresses provenance, support, contradiction, review, and
@@ -104,7 +107,11 @@ view is reported as `external-link` and does not pull the target in.
 ### 3.4 Views
 
 A view is the containment closure rooted at one ref; `bd view`, `bd export`,
-and `bd work` take a root ref. The default root is `1` or the lowest main ref.
+and `bd work` take a root ref. The default root is the store's `ROOT` file when
+present, else the lowest main ref; an explicit ref or `--root-ref` wins over
+both. `bd root REF` writes the file, `bd root --clear` removes it, and
+`bd root` prints `<ref>  (ROOT|lowest main)`. A declared but missing ref is
+`root-ref-missing`; malformed content is `invalid-root`.
 `bd check` validates the global tree and the view; `bd diff A B` compares
 closures by logical id. A view is not a substitute for a git branch: a version
 of the root (intent) node with its own `contains` list gives an alternative
@@ -123,9 +130,11 @@ can coexist in one store and one working tree. Two axes, deliberately separate:
 
 - `5.md` is the mutable main version, the current truth. `5-1.md` and `5-2.md`
   are alternatives or snapshots, immutable by convention, not enforcement.
-- `bd fork 5` copies main to the next free version; `bd promote 5-2` copies the
-  version onto main (`--keep` retains it); `bd retire-version 5-2` deletes a
-  non-main version.
+- `bd fork 5` copies main to the next free version and materialises the effective
+  `contains` list; `bd promote 5-2` copies the version onto main (`--keep`
+  retains it); `bd retire-version 5-2` deletes a non-main version.
+- Switching between full trees is `bd root REF` (whole store) or repointing one
+  parent with `bd uncontain` / `bd contain`. `bd promote` is not a switch.
 
 Version references in `contains` and `links` are exact (`6-2`, not `6`); this
 makes a view independent of later edits to main.
@@ -217,18 +226,19 @@ styling is chosen by arbitrary fields (`--color-by`, `--shape-by`); and
    validation.
 8. **Freshness per edge, opt-in.** No hardcoded `serves`/`supports` semantics.
 9. **Work trees with symlinks are the primary interface.** No sync-back.
-10. **No JSON/TOML/lock/state sidecars.** Derived output is disposable.
-11. **Derived spanning tree for migration.** The 128-node corpus had no
-    containment; a one-off parent-selection rule materialized it.
-12. **Writeback requires valid front matter.** Protects `contains` from
+10. **No JSON/TOML/lock/state sidecars.** The one exception is the store-level
+    `ROOT` file: one ref on one line. Derived output is disposable.
+11. **Writeback requires valid front matter.** Protects `contains` from
     body-only replacements.
-13. **Git owns solutions; `bd work` owns layout.** Worktrees isolate branches;
+12. **Git owns solutions; `bd work` owns layout.** Worktrees isolate branches;
     symlink folders shape the view inside one branch. Structural edits go
     through `bd contain` / `bd uncontain` / `bd link` / `bd unlink`.
-14. **Branches and versions are disjoint layers.** Branches isolate whole
+13. **Branches and versions are disjoint layers.** Branches isolate whole
     checkouts; versions are alternative files for single nodes. No cross-branch
-    refs, no branch selector, no active-version pointer, no promote across
-    branches. See [`BRANCHES-AND-VERSIONS.md`](BRANCHES-AND-VERSIONS.md).
+    refs, no branch selector, no per-node active-version selector, no promote
+    across branches. The one store-level pointer is `ROOT`, a single ref line
+    naming the default view root. See
+    [`BRANCHES-AND-VERSIONS.md`](BRANCHES-AND-VERSIONS.md).
 
 ## 8. Rejected alternatives
 
@@ -245,12 +255,16 @@ styling is chosen by arbitrary fields (`--color-by`, `--shape-by`); and
 - **Writable views with sync-back.** Requires path→ref, new/deleted/moved
   semantics, and conflict handling; creates a second source of truth.
 - **Content-addressed store, SQLite graph, CRDT, Dolt.** More machinery than a
-  128-node repository needs; markdown review and git diffs matter more.
+  small markdown repository needs; markdown review and git diffs matter more.
 - **Extending the older `pb` tool.** Its checks, registers, and archive model
   are bound to the article schema and a single tree.
 - **A custom merge engine and `based_on` lineage.** Git already has commits,
   branches, and three-way merges; node-local merge would duplicate that with
   worse conflict handling.
+- **Root/active-version pointers.** A per-node selector that chooses among
+  alternatives implicitly stays rejected: refs and diffs must show the choice.
+  A single store-level `ROOT` ref line is accepted as the default view root; it
+  selects no version, only the ref a bare command starts from (§7.10).
 - **`use` selection maps for cross-branch mixes.** A solution is a branch;
   mixing is a merge or `git restore --source`; a selector would be a second
   branch mechanism.
@@ -266,7 +280,8 @@ These are enforced or assumed:
 2. Main exists for every id that has a version.
 3. `contains` order is display order.
 4. Containment is a tree per view; no node is reached twice in one view.
-5. Every node is reachable from the global root.
+5. Every id is reachable from the global root through containment or through
+   another file of the same id.
 6. Semantic links resolve in the store; links outside a view warn, never pull
    in.
 7. Arbitrary front matter is preserved on export.
@@ -280,30 +295,7 @@ These are enforced or assumed:
     disposable.
 13. Structural edits preserve body bytes and all unrelated front matter.
 
-## 10. Evaluation corpus and migration
-
-Source: the licentiate breakdown (`/home/eriro/pwa/notes/phd/licentiate/docs/breakdown`),
-imported read-only.
-
-- `workspace/licentiate/` — legacy typed ids, 128 nodes, one file per node.
-- `workspace/licentiate-n/` — numeric ids, 128 nodes, derived containment.
-- `tools/migrate_licentiate.py` — one-off migration.
-
-Migration rule:
-
-1. Root is the original intent node.
-2. Parent is the cited target with the lowest strictly lower layer index; ties
-   by lowest old numeric suffix; no candidate means root.
-3. DFS pre-order from the root, children by (layer index, old id), assigns 1..N.
-4. Bodies and string fields are rewritten from old typed ids to new refs.
-5. Gate: every new body equals the old body after token substitution.
-
-Result: 128 nodes, max depth 4, max 29 children, 19 nodes attached directly to
-the root, 0 body mismatches.
-
-The migration is domain-specific; the tool is not.
-
-## 11. Known limits
+## 10. Known limits
 
 - Node-local versions do not sync across branches; git merges sync solutions.
 - No three-way merge between node versions: promotion is a copy; synthesis is
@@ -314,14 +306,15 @@ The migration is domain-specific; the tool is not.
 - Symlinks require a POSIX filesystem; Windows needs developer mode.
 - Editors that replace symlinks need `--status`/`--writeback`.
 - `bd check` validates every node-rooted view, costing more on large stores.
-- There is no CI configuration and no packaging metadata yet.
+- There is no CI configuration yet; packaging is a `pyproject.toml` with the
+  `bd` console script.
 
-## 12. Open questions
+## 11. Open questions
 
 1. Are versions immutable snapshots enforced by convention, or should the tool
    create a new version on every edit of a non-main file?
-2. Should a version inherit `contains` by default (current) or require the full
-   list?
+2. Should a hand-written version inherit `contains` by default (current) or
+   require the full list? `bd fork` already materialises it.
 3. Do we need filtered views (selectors over fields) in addition to closures?
 4. How should two views be merged: promote one, or synthesize a third version?
 5. Should the store support concurrent agent sessions with leases or locks?

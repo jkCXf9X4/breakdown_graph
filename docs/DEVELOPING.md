@@ -6,14 +6,16 @@ This guide is for changing the tool itself. To use the tool, read
 ## Quick start
 
 ```sh
-git clone https://github.com/jkCXf9X4/info_graph
-cd info_graph
+git clone https://github.com/jkCXf9X4/breakdown-tree
+cd breakdown-tree
+pip install -e '.[test]'
 python3 -m pytest -q
-BD_ROOT=workspace/licentiate-n ./bin/bd check
+BD_ROOT=examples/switch-trees bd check
 ```
 
 Requirements: Python 3.10+, PyYAML, pytest. Graphviz `dot` only for dot export.
-There is no packaging step; `bin/bd` inserts the repository root on `sys.path`.
+Install once with `pip install -e '.[test]'` from the clone; without installing,
+run from the repo root with `PYTHONPATH=src python3 -m bd_tree`.
 
 ## The data flow
 
@@ -34,13 +36,16 @@ nodes/*.md
 - Every read-only command works on a `View`; structural edits work on `Store`
   and write node files.
 
-Validation is global; export and agent context are view-scoped.
+Validation is global; export and agent context are view-scoped. The default view
+root is `ROOT`, else the lowest main ref; an explicit ref or `--root-ref` wins.
+Reachability follows `contains` or a shared id, so main and its versions are one
+logical node.
 
 ## Module map
 
 | Module | Responsibility |
 | --- | --- |
-| `loader.py` | Filename grammar, store scan, branch/view resolution, citation edges |
+| `loader.py` | Filename grammar, store scan, `ROOT`, view resolution, citation edges |
 | `model.py` | `Node`, `Store`, `View`, `Edge`, `Issue`, `Link` |
 | `frontmatter.py` | Parse and rewrite front matter; body bytes are never re-serialised |
 | `checker.py` | Structural checks, per-view tree checks, `--require`, size limits |
@@ -53,13 +58,14 @@ Validation is global; export and agent context are view-scoped.
 | `api.py` | Public Python functions |
 | `cli.py` | argparse wiring and output formatting |
 
-Data comes from `nodes/`; there are no hidden stores, caches, or state files.
+Data comes from `nodes/`; there are no hidden stores, caches, or state files. The
+one exception is the store-level `ROOT` file: one ref on one line.
 
 ## Key types
 
 ```python
 Node   id, version, ref, meta, contains, links, body, path
-Store  root, nodes: dict[ref, Node], edges, issues
+Store  root, nodes: dict[ref, Node], edges, issues, declared_root
 View   store, ref, nodes: dict[ref, Node], edges, issues
 Edge   source, target, type, pinned, origin ("link" or "reference")
 Issue  level, code, message, node, path
@@ -67,7 +73,9 @@ Issue  level, code, message, node, path
 
 `Node.meta` is the raw front matter; arbitrary fields live there and survive
 export. `contains is None` means "inherit the main version's list"; `[]` means
-"no children".
+"no children". `bd fork` materialises the effective list into the version; the
+loader inheritance rule is unchanged, so a hand-written version that omits
+`contains` still follows main.
 
 ## Add a CLI command
 
@@ -158,7 +166,13 @@ python3 -m pytest -q
 - `tests/conftest.py` provides `write_node`, a helper that writes arbitrary front
   matter and derives `home` from `layer`.
 - Use `tmp_path` and real files. Do not mock the loader.
-- `test_corpus.py` runs the 128-node corpus through `bd check` and view export.
+- `test_examples.py` runs `examples/switch-trees` through `bd check` and view
+  loading, asserting both complete trees.
+- Root tests cover the precedence: explicit ref or `--root-ref` > `ROOT` >
+  lowest main ref, plus `root-ref-missing` and `invalid-root`.
+- Reachability tests assert both paths: through `contains`, or through another
+  file with the same id. A main and its versions are alternatives for one
+  logical node, so an alternative branch is not `unreachable`.
 - Git tests create a temporary repository, set local `user.name`/`user.email`, and
   use `pytest.mark.skipif(shutil.which("git") is None, ...)`.
 - Structural tests assert body bytes, not just field values.
@@ -168,14 +182,15 @@ Before a commit:
 
 ```sh
 python3 -m pytest -q
-BD_ROOT=workspace/licentiate-n ./bin/bd check
+BD_ROOT=examples/switch-trees bd check
 git diff --check
 ```
 
 ## Debugging
 
-- `python3 -m breakdown ...` is identical to `bin/bd`.
+- `PYTHONPATH=src python3 -m bd_tree ...` is identical to `bd`.
 - `BD_ROOT`/`--root` choose the store (default: nearest parent with `nodes/`).
+- `bd root` shows or switches the store root; `bd root --clear` removes `ROOT`.
 - `bd check --view REF` narrows validation to one closure.
 - `bd tree`, `bd show`, `bd path` quickly show what the loader sees.
 - `bd work --status` diagnoses symlink problems without touching the store.
@@ -196,9 +211,11 @@ Common mistakes:
 3. `contains` is an ordered tree per view; `links` is a DAG.
 4. Arbitrary front matter survives edits and exports.
 5. Body bytes survive structural edits.
-6. No JSON/TOML/lock/state data files.
+6. No JSON/TOML/lock/state data files; the only store-level pointer is `ROOT`,
+   one ref on one line.
 7. A view never crosses a branch, and neither does a version; solutions are git
-   worktrees. `promote` is filesystem-only and never crosses a worktree.
+   worktrees. `promote` is filesystem-only and never crosses a worktree; it is
+   not a way to switch trees.
 8. Generated files are disposable and never committed.
 
 ## Style and commits
@@ -218,16 +235,14 @@ The repo is documentation-driven. When behaviour changes:
 - `docs/CHEATSHEET.md` — command reference.
 - `docs/DESIGN.md` — model, decisions, invariants.
 - `docs/BRANCHES-AND-VERSIONS.md` — branch/version separation contract.
-- `docs/ROADMAP.md` — next work.
 - `AGENTS.md` — operating rules for agents.
 
 Keep examples executable. Run them before committing.
 
 ## Not built yet
 
-- No `pyproject.toml`, console script, CI, or generic importer.
+- No CI or generic importer. Packaging is `pyproject.toml` plus the `bd`
+  console script.
 - No three-way node merge; solutions merge with git.
 - No locking for concurrent agents.
 - No Windows-specific symlink path.
-
-See [`ROADMAP.md`](ROADMAP.md).

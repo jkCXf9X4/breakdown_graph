@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from breakdown.cli import main
+from bd_tree.cli import main
 
 
 def test_check_exit_status(write, tmp_path):
@@ -47,8 +47,8 @@ def test_new_with_arbitrary_field_cli(write, tmp_path):
         )
         == 0
     )
-    from breakdown.api import load
-    from breakdown.frontmatter import parse_document
+    from bd_tree.api import load
+    from bd_tree.frontmatter import parse_document
 
     doc = parse_document((nodes / "2.md").read_text(encoding="utf-8"))
     assert doc.meta["phase"] == "build"
