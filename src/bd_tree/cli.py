@@ -14,7 +14,13 @@ from pathlib import Path
 
 from . import api
 from .errors import BreakdownError
-from .loader import resolve_store_root
+from .loader import (
+    DISCOVERY_DEPTH,
+    resolve_store_root,
+    root_pointer_at,
+    store_root_at,
+    stores_below,
+)
 from .navigate import (
     NavigationError,
     main_root,
@@ -29,7 +35,7 @@ from .navigate import (
 )
 
 
-def _find_root(explicit: str | None) -> Path:
+def _find_root(explicit: str | None, *, allow_missing: bool = False) -> Path:
     if explicit:
         return resolve_store_root(Path(explicit))
     env = os.environ.get("BD_ROOT")
@@ -37,19 +43,42 @@ def _find_root(explicit: str | None) -> Path:
         return resolve_store_root(Path(env))
     current = Path.cwd()
     for candidate in [current, *current.parents]:
-        if (candidate / "nodes").is_dir():
-            return candidate.resolve()
-        if (candidate / ".bd_tree" / "nodes").is_dir():
-            return (candidate / ".bd_tree").resolve()
-    return current
+        root = store_root_at(candidate)
+        if root is not None:
+            return root
+        pointer = root_pointer_at(candidate)
+        if pointer is not None:
+            return pointer
+
+    below = stores_below(current)
+    if len(below) > 1:
+        listed = ", ".join(str(store) for store in below)
+        raise BreakdownError(
+            f"multiple stores found below {current}: {listed}; "
+            "choose one with --root PATH, BD_ROOT=PATH, or a .bd_root pointer"
+        )
+    if below:
+        print(
+            f"bd: using store {below[0]} found below {current}",
+            file=sys.stderr,
+        )
+        return below[0]
+    if allow_missing:
+        return current
+    raise BreakdownError(
+        f"no store found from {current}: walked up to the filesystem root and "
+        f"scanned downward to depth {DISCOVERY_DEPTH}, but found no nodes/, "
+        ".bd_tree/nodes, or .bd_root pointer; use --root PATH or BD_ROOT=PATH"
+    )
 
 
 def _add_root(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--root",
         default=None,
-        help="store or project root (default: $BD_ROOT or nearest parent "
-        "with nodes/ or .bd_tree/nodes)",
+        help="store or project root (default: $BD_ROOT, nearest parent with "
+        "nodes/ or .bd_tree/nodes or a .bd_root pointer, else a unique store "
+        "below cwd)",
     )
 
 
@@ -246,7 +275,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
 
 def _cmd_check(args: argparse.Namespace) -> int:
     result = api.check(
-        _find_root(args.root),
+        _find_root(args.root, allow_missing=True),
         args.view,
         root_ref=args.root_ref,
         require=args.require,

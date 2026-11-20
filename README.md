@@ -108,17 +108,30 @@ layout inside `DIR`. Front matter is arbitrary: use `layer`, `phase`, `status`,
 ## Where is my store?
 
 `bd` walks up from the current directory looking for a store: `nodes/` or
-`.bd_tree/nodes/`.
+`.bd_tree/nodes/`. At each directory a store there wins; otherwise a `.bd_root`
+pointer there names the store. If neither appears upward, it scans below the
+current directory to depth 3 and uses the store when exactly one is found.
 
 - Project layout: `.bd_tree/` at the project root; `bd` accepts the project root
   or the store root.
 - Classic layout: `nodes/` at the repo root; the project root is that directory.
-- If the store is nested, set `BD_ROOT=path/to/project` (or its store root) or
-  pass `--root`.
+- `.bd_root` is a one-line pointer a working folder may hold to name its store;
+  a relative path is resolved from the folder holding the file. It is the
+  folder-level way to choose among several stores. `ROOT` is a different file:
+  the store-level default-view ref.
+- An ancestor store or `.bd_root` always wins over a store found below the
+  current directory.
+- Several stores below the current directory are a refusal: `bd` lists all of
+  them and asks for `--root PATH`, `BD_ROOT=PATH`, or a `.bd_root` pointer.
+- If the store is nested, set `BD_ROOT=path/to/project` (or its store root),
+  pass `--root`, or add a `.bd_root` pointer.
 - One store per checkout. A git worktree has its own store.
 
-The example project is at `examples/`, with its store at `examples/.bd_tree/`;
-`BD_ROOT=examples` works.
+The example project is at `examples/`, with its store at `examples/.bd_tree/`.
+Two stores sit below the repo root, so the repo root holds a committed
+`.bd_root` naming `examples`; `docs/` holds one naming `breakdown`, and
+`docs/breakdown/` finds its own store first. Plain `bd` therefore works from
+anywhere in the checkout. `BD_ROOT=examples` and `--root` still override.
 
 ## Choose your path
 
@@ -231,8 +244,9 @@ docs/breakdown/            product breakdown: bd store (.bd_tree/) + ignored bd_
 - The suite passes: `python3 -m pytest -q`.
 - The committed example project `examples/` has a `.bd_tree/nodes/` tree, a
   `.bd_tree/ROOT` file, and a gitignored `bd_work/`; `bd check` passes for it.
-- No JSON, TOML, lock, or state data files; the only exception is a store-level
-  `ROOT` file with one ref line. Derived output is gitignored.
+- No JSON, TOML, lock, or state data files; the only exceptions are a
+  store-level `ROOT` file with one ref line and a folder-level `.bd_root`
+  pointer with one store path. Derived output is gitignored.
 - Structural edits, the git-aware single work area, and the `bd solution` wrapper
   are in place.
 

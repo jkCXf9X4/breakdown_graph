@@ -7,10 +7,12 @@ this file is the short operating protocol.
 
 ## First session
 
-1. Locate the store: `export BD_ROOT=examples` (the project root; the store is
-   `examples/.bd_tree`) or pass `--root`. Install once from the clone with
-   `pip install -e '.[test]'`, then use `bd`. Without installing, run from the
-   repo root with `PYTHONPATH=src python3 -m bd_tree`.
+1. Locate the store: plain `bd` works from the repo root because the committed
+   `.bd_root` pointer names `examples` (the project root; the store is
+   `examples/.bd_tree`). Equivalent: `export BD_ROOT=examples`, or pass
+   `--root`. Install once from the clone with `pip install -e '.[test]'`, then
+   use `bd`. Without installing, run from the repo root with
+   `PYTHONPATH=src python3 -m bd_tree`.
 2. Confirm the baseline:
 
    ```sh
@@ -66,8 +68,10 @@ behaviour change and update the docs listed at the bottom.
   files inside one checkout; branches are git. Never resolve a ref through a
   branch name, never add a branch or per-node active-version selector, and never
   promote across branches — merge first.
-- No JSON, TOML, lock, or state data files. The one exception is a store-level
-  `ROOT` file: one ref on one line (e.g. `1-4`), nothing else. Derived output is
+- No JSON, TOML, lock, or state data files. Two exceptions, both one line of
+  text: a store-level `ROOT` file holding one ref (e.g. `1-4`), and a
+  folder-level `.bd_root` pointer holding one store path, naming the store a
+  working folder belongs to. Nothing else goes in either file. Derived output is
   disposable and gitignored.
 - The default view root is `ROOT` when present, else the lowest main ref; an
   explicit ref or `--root-ref` wins over both. A declared but missing ref is

@@ -10,8 +10,16 @@ export BD_ROOT=path/to/project       # or path/to/store
 bd --root path/to/project <command>  # explicit per command
 ```
 
-`bd` walks up from the current directory and recognises both `nodes/` and
-`.bd_tree/nodes/`; one store per checkout.
+`bd` resolves a store in this order: `--root`, `BD_ROOT`, then the upward walk
+from the current directory. At each directory a store (`nodes/` or
+`.bd_tree/nodes/`) wins, otherwise a `.bd_root` pointer there names the store;
+after that comes a unique store below the current directory (depth 3, symlinks
+not followed). Several stores below cwd are refused with the list; one store per
+checkout.
+
+`.bd_root` is a one-line pointer a working folder may hold to name its store; a
+relative path is resolved from that folder. `ROOT` is a different file: the
+store-level default-view ref.
 
 ## Tree root
 
@@ -225,7 +233,7 @@ python3 -m pytest -q
 
 | Problem | Fix |
 | --- | --- |
-| Wrong store | `BD_ROOT` or `--root`; `bd` uses the nearest `nodes/` or `.bd_tree/nodes/` upward. |
+| Wrong store | `BD_ROOT` or `--root`; otherwise `bd` uses the nearest `nodes/`, `.bd_tree/nodes/`, or `.bd_root` upward. |
 | `bd current` errors | No work area exists. Build one with `bd work [REF]`. |
 | `bd edit REF` errors | The ref is not in the active view. Switch with `bd work REF` or pass a ref that is present. |
 | `root-ref-missing` / `invalid-root` | The `ROOT` file names an absent ref or is malformed. Fix it, or run `bd root --clear`. |

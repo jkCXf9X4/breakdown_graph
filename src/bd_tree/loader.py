@@ -9,6 +9,7 @@ version that omits ``contains`` inherits the main version's list.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,7 @@ from .model import (
 
 NODE_SUFFIX = ".md"
 ROOT_FILE = "ROOT"
+ROOT_POINTER = ".bd_root"
 STORE_DIR = ".bd_tree"
 
 FILENAME = re.compile(r"^(?P<id>[1-9]\d*)(?:-(?P<version>[1-9]\d*))?\.md$")
@@ -69,6 +71,18 @@ def node_path(root: str | Path, node_id: int, version: int = 0) -> Path:
     return Path(root) / "nodes" / f"{ref_of(node_id, version)}{NODE_SUFFIX}"
 
 
+def store_root_at(candidate: Path) -> Path | None:
+    """Return the store root for a classic or project candidate, else ``None``.
+
+    The classic ``nodes/`` layout wins when a candidate has both.
+    """
+    if (candidate / "nodes").is_dir():
+        return candidate.resolve()
+    if (candidate / STORE_DIR / "nodes").is_dir():
+        return (candidate / STORE_DIR).resolve()
+    return None
+
+
 def resolve_store_root(path: str | Path) -> Path:
     """Return the store root for a project root or a store root.
 
@@ -78,11 +92,96 @@ def resolve_store_root(path: str | Path) -> Path:
     the missing directory themselves.
     """
     candidate = Path(path)
-    if (candidate / "nodes").is_dir():
-        return candidate.resolve()
-    if (candidate / STORE_DIR / "nodes").is_dir():
-        return (candidate / STORE_DIR).resolve()
-    return candidate.resolve()
+    root = store_root_at(candidate)
+    return root if root is not None else candidate.resolve()
+
+
+def root_pointer_at(directory: str | Path) -> Path | None:
+    """Read ``<directory>/.bd_root`` and return the store it names.
+
+    The file holds one store path, resolved relative to ``directory`` unless
+    absolute.  A missing file returns ``None``; a malformed or non-store
+    pointer raises :class:`BreakdownError` with the ``invalid-bd-root:``
+    prefix.
+    """
+    base = Path(directory).resolve()
+    pointer = base / ROOT_POINTER
+    if not pointer.is_file():
+        return None
+    try:
+        text = pointer.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise BreakdownError(f"invalid-bd-root: cannot read {pointer}: {exc}") from exc
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        raise BreakdownError(
+            f"invalid-bd-root: {pointer} is empty (expected one store path)"
+        )
+    if len(lines) > 1:
+        raise BreakdownError(
+            f"invalid-bd-root: {pointer} must hold one path line, found {len(lines)}"
+        )
+    target = Path(lines[0])
+    if not target.is_absolute():
+        target = base / target
+    store = store_root_at(target)
+    if store is None:
+        raise BreakdownError(
+            f"invalid-bd-root: {pointer} names {target}, which is not a store "
+            "(expected nodes/ or .bd_tree/nodes/)"
+        )
+    return store
+
+
+DISCOVERY_DEPTH = 3
+DISCOVERY_PRUNE = frozenset(
+    {
+        ".bd_tree",
+        ".cache",
+        ".git",
+        ".hg",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".svn",
+        ".tox",
+        ".venv",
+        "__pycache__",
+        "bd_work",
+        "build",
+        "dist",
+        "node_modules",
+        "site-packages",
+        "venv",
+    }
+)
+
+
+def stores_below(base: Path, *, max_depth: int = DISCOVERY_DEPTH) -> list[Path]:
+    """Find stores strictly below ``base``, bounded by ``max_depth``.
+
+    The downward fallback is deterministic (paths sorted), does not follow
+    symlinks, and prunes heavy or irrelevant directories.  A candidate is a
+    directory holding ``nodes/`` or ``.bd_tree/nodes/`` and is returned in the
+    same store-root form as :func:`resolve_store_root`.
+    """
+    if max_depth < 1:
+        return []
+    base = base.resolve()
+    found: set[Path] = set()
+    for dirpath, dirnames, _files in os.walk(base):
+        current = Path(dirpath)
+        depth = len(current.relative_to(base).parts)
+        dirnames[:] = sorted(name for name in dirnames if name not in DISCOVERY_PRUNE)
+        if depth >= max_depth:
+            dirnames[:] = []
+        if depth < 1:
+            continue
+        store = store_root_at(current)
+        if store is not None:
+            found.add(store)
+            dirnames[:] = []
+    return sorted(found, key=str)
 
 
 def _issue(

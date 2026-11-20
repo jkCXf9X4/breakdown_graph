@@ -152,9 +152,7 @@ def init_store(root: str | Path = ".") -> Path:
     hidden.mkdir(parents=True, exist_ok=True)
     target = node_path(project / STORE_DIR, 1, 0)
     target.write_text(
-        render_document(
-            {"id": 1, "title": "Root", "home": "1.md", "contains": []}, _ROOT_BODY
-        ),
+        render_document({"id": 1, "title": "Root", "contains": []}, _ROOT_BODY),
         encoding="utf-8",
         newline="",
     )

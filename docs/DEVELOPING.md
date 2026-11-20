@@ -193,8 +193,8 @@ git diff --check
 ## Debugging
 
 - `PYTHONPATH=src python3 -m bd_tree ...` is identical to `bd`.
-- `BD_ROOT`/`--root` choose the store (default: nearest parent with `nodes/` or
-  `.bd_tree/nodes/`).
+- `BD_ROOT`/`--root` choose the store (default: nearest parent with `nodes/`,
+  `.bd_tree/nodes/`, or a `.bd_root` pointer; else a unique store below cwd).
 - `bd root` shows or switches the default view root; `bd root --clear` removes
   `ROOT`. It does not rewrite the work area.
 - `bd views` lists containment roots and marks the default; `bd current` reports
@@ -227,8 +227,9 @@ Common mistakes:
 3. `contains` is an ordered tree per view; `links` is a DAG.
 4. Arbitrary front matter survives edits and exports.
 5. Body bytes survive structural edits.
-6. No JSON/TOML/lock/state data files; the only store-level pointer is `ROOT`,
-   one ref on one line.
+6. No JSON/TOML/lock/state data files; the only pointers are the store-level
+   `ROOT`, one ref on one line, and the folder-level `.bd_root`, one store path
+   on one line.
 7. A view never crosses a branch, and neither does a version; solutions are git
    worktrees. `promote` is filesystem-only and never crosses a worktree; it is
    not a way to switch trees.

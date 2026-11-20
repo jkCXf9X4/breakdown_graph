@@ -29,7 +29,6 @@ bd init
 ---
 id: 1
 title: Root
-home: 1.md
 contains: []
 ---
 # Root
@@ -38,7 +37,8 @@ State the intent of this graph here.
 ```
 
 `id` is identity and `contains` is the ordered child list. The rest of the front
-matter is arbitrary.
+matter is arbitrary. `bd init` writes no `home`, so the root lands at `1.md`; add
+`home` (or `folder`/`name`) only to place it elsewhere.
 
 Add two nodes and inspect the tree:
 
@@ -278,8 +278,9 @@ bd solution remove sol-a
 
 If the project is nested inside the repo, use the printed `cd` line to enter the
 project path inside the worktree, for example `cd /home/you/graphs/sol-a/examples`.
-Store discovery then finds `.bd_tree/` there; `BD_ROOT` is only needed when you
-run from the worktree root instead.
+Store discovery then finds `.bd_tree/` there. From the worktree root it also
+finds a single store below the current directory; `BD_ROOT` is only needed when
+several stores are below that root.
 
 ## 7. Feed an agent
 

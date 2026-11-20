@@ -37,8 +37,9 @@ declared closure, and make stale material visible rather than silently present.
    symlink view, not a copy, and there is no sync-back. A project has exactly one
    such area at a time; switching views replaces its contents.
 6. **No sidecar state.** No JSON manifests, TOML view configs, lock files, or
-   active-branch files; the only store-level pointer is `ROOT`, one ref on one
-   line. Everything else needed is in the node files or derived.
+   active-branch files; the only pointers are the store-level `ROOT`, one ref on
+   one line, and the folder-level `.bd_root`, one store path on one line.
+   Everything else needed is in the node files or derived.
 7. **Freshness is opt-in per edge.** A semantic link participates in staleness
    only when it declares `propagates: true`.
 8. **Git owns the solution boundary; the flat store is the merge unit; views are
@@ -63,7 +64,15 @@ In a project these files live under `.bd_tree/nodes/`; the project root is the
 directory containing `.bd_tree/`. Classic stores with `<dir>/nodes/` remain
 valid and have project root `<dir>`. Store resolution accepts either the project
 root or the store root, and discovery walks up recognising both `nodes/` and
-`.bd_tree/nodes`.
+`.bd_tree/nodes`, plus an optional folder-level `.bd_root` pointer naming the
+store. If neither appears upward, it scans below the current directory to depth
+3 (sorted, pruned, symlinks not followed) and uses the store only when exactly
+one is found; several candidates are a refusal. Precedence is `--root`,
+`BD_ROOT`, then the upward walk from the current directory (at each directory a
+store there first, then a `.bd_root`), then the downward scan. `ROOT` and
+`.bd_root` are different files with different jobs: `ROOT` is the store-level
+default-view ref; `.bd_root` is a one-line folder-level pointer that names a
+store.
 
 ### 3.2 Front matter
 
@@ -301,8 +310,9 @@ styling is chosen by arbitrary fields (`--color-by`, `--shape-by`); and
 8. **Freshness per edge, opt-in.** No hardcoded `serves`/`supports` semantics.
 9. **Work trees with symlinks are the primary interface.** No sync-back, and
    exactly one writable work area.
-10. **No JSON/TOML/lock/state sidecars.** The one exception is the store-level
-    `ROOT` file: one ref on one line. Derived output is disposable.
+10. **No JSON/TOML/lock/state sidecars.** The exceptions are the store-level
+    `ROOT` file (one ref on one line) and the folder-level `.bd_root` pointer
+    (one store path on one line). Derived output is disposable.
 11. **Writeback requires valid front matter.** Protects `contains` from
     body-only replacements.
 12. **Git owns solutions; `bd work` owns layout.** Worktrees isolate branches;
@@ -313,7 +323,8 @@ styling is chosen by arbitrary fields (`--color-by`, `--shape-by`); and
     checkouts; versions are alternative files for single nodes. No cross-branch
     refs, no branch selector, no per-node active-version selector, no promote
     across branches. The one store-level pointer is `ROOT`, a single ref line
-    naming the default view root. See
+    naming the default view root; a folder-level `.bd_root` pointer names a
+    store for discovery only. See
     [`BRANCHES-AND-VERSIONS.md`](BRANCHES-AND-VERSIONS.md).
 14. **One work area at a time.** `<project>/bd_work/` holds exactly one view;
     `bd work REF` switches it by replacing the contents. Two writable folders
@@ -345,7 +356,9 @@ styling is chosen by arbitrary fields (`--color-by`, `--shape-by`); and
 - **Root/active-version pointers.** A per-node selector that chooses among
   alternatives implicitly stays rejected: refs and diffs must show the choice.
   A single store-level `ROOT` ref line is accepted as the default view root; it
-  selects no version, only the ref a bare command starts from (§7.10).
+  selects no version, only the ref a bare command starts from (§7.10). A
+  folder-level `.bd_root` pointer is accepted only for store discovery and
+  selects no view or version.
 - **`use` selection maps for cross-branch mixes.** A solution is a branch;
   mixing is a merge or `git restore --source`; a selector would be a second
   branch mechanism.
