@@ -86,7 +86,8 @@ behaviour change and update the docs listed at the bottom.
   text: a store-level `ROOT` file holding one ref (e.g. `1-1`), and a
   folder-level `.bd_root` pointer holding one store path, naming the store a
   working folder belongs to. Nothing else goes in either file. Derived output is
-  disposable and gitignored.
+  disposable and gitignored. Writers serialize on a transient advisory lock in
+  the system temp directory; it never enters the store or git.
 - The default view root is `ROOT` when present, else the lowest available node
   by `(id, version)`; an explicit ref where a command takes one wins over both.
   `bd check --view REF` only narrows reporting. A declared but missing ref is

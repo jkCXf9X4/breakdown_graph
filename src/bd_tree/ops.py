@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import functools
 import re
-import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -29,6 +29,7 @@ from .loader import (
     ref_of,
     resolve_store_root,
 )
+from .fsutil import atomic_copy, atomic_write, publish_new, store_lock
 from .model import DiffEntry, Node, Store
 from .navigate import resolve_ref
 
@@ -114,6 +115,18 @@ def _ensure_work_ignored(project: Path) -> None:
     path.write_text(text + _GITIGNORE_ENTRY + "\n", encoding="utf-8", newline="")
 
 
+def _serialized(func):
+    """Run a structural writer under the store lock (reentrant per thread)."""
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        root = args[0] if args else kwargs.get("root", ".")
+        with store_lock(resolve_store_root(root)):
+            return func(*args, **kwargs)
+
+    return wrapper
+
+
 def init_store(root: str | Path = ".") -> Path:
     """Create the canonical project with a hidden store and return its root."""
     project = Path(root).resolve()
@@ -140,6 +153,7 @@ def versions(root: str | Path, node_id: str | int) -> list[Node]:
     return load(root).versions(_logical_id(node_id))
 
 
+@_serialized
 def clone(
     root: str | Path,
     ref: str | int,
@@ -207,7 +221,7 @@ def clone(
         if target.exists():
             raise BreakdownError(f"version {target_ref} already exists")
         # Byte copy: the clone keeps the source file's declared contains/links.
-        shutil.copyfile(node.path, target)
+        atomic_copy(node.path, target)
         taken.add(target_version)
         mapping[old_ref] = target_ref
 
@@ -219,17 +233,17 @@ def clone(
                 continue
             target = node_path(root, *parse_ref(new_ref))
             document = parse_document(target.read_text(encoding="utf-8"))
-            target.write_text(
+            atomic_write(
+                target,
                 document.with_raw_fm(
                     rewrite_contains(document.raw_fm, new_children)
                 ),
-                encoding="utf-8",
-                newline="",
             )
 
     return [(old_ref, mapping[old_ref]) for old_ref in order]
 
 
+@_serialized
 def replace(
     root: str | Path, old: str | int, new: str | int
 ) -> tuple[str, str, str]:
@@ -275,6 +289,7 @@ def replace(
     return old_ref, parent, new_ref
 
 
+@_serialized
 def set_root(root: str | Path, ref: str | int) -> Path:
     """Write the store-level ``ROOT`` file to an existing, fully qualified ref."""
     root = resolve_store_root(root)
@@ -283,10 +298,11 @@ def set_root(root: str | Path, ref: str | int) -> Path:
     if canonical not in store.nodes:
         raise BreakdownError(f"root ref {canonical} does not exist")
     path = root / ROOT_FILE
-    path.write_text(canonical + "\n", encoding="utf-8", newline="")
+    atomic_write(path, canonical + "\n")
     return path
 
 
+@_serialized
 def clear_root(root: str | Path) -> Path | None:
     """Remove the ``ROOT`` file; the lowest ``(id, version)`` becomes the root."""
     path = resolve_store_root(root) / ROOT_FILE
@@ -296,6 +312,7 @@ def clear_root(root: str | Path) -> Path | None:
     return path
 
 
+@_serialized
 def delete(root: str | Path, ref: str | int, *, force: bool = False) -> Path:
     """Delete one node file, refusing anything still bound into the graph."""
     root = Path(root).resolve()
@@ -364,6 +381,7 @@ def diff(root: str | Path, left: str | int, right: str | int) -> list[DiffEntry]
 NEW_NODE_DEFAULTS: dict[str, Any] = {"title": "", "summary": ""}
 
 
+@_serialized
 def new_node(
     root: str | Path,
     *,
@@ -372,7 +390,12 @@ def new_node(
     body: str = "",
     links: list[dict[str, Any]] | None = None,
 ) -> Path:
-    """Create the next global id at version 1 and append it to ``parent``."""
+    """Create the next global id at version 1 and append it to ``parent``.
+
+    The whole id-pick/parent-rewrite/publish sequence holds the store lock, so
+    concurrent writers get distinct ids and neither loses a sibling.  Both
+    files are published atomically, so readers never see a partial document.
+    """
     root = resolve_store_root(root)
     fields = dict(fields or {})
     if "id" in fields:
@@ -395,11 +418,9 @@ def new_node(
     siblings = store.effective_contains(parent_ref)
     document = parse_document(parent_node.path.read_text(encoding="utf-8"))
     rewritten = rewrite_contains(document.raw_fm, siblings + [new_ref])
-    parent_node.path.write_text(
-        document.with_raw_fm(rewritten), encoding="utf-8", newline=""
-    )
+    atomic_write(parent_node.path, document.with_raw_fm(rewritten))
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(render_document(meta, body), encoding="utf-8", newline="")
+    publish_new(target, render_document(meta, body))
     return target
 
 
@@ -424,6 +445,7 @@ def _sibling_index(
     return len(siblings)
 
 
+@_serialized
 def contain(
     root: str | Path,
     parent: str | int,
@@ -466,12 +488,11 @@ def contain(
 
     document = parse_document(parent_node.path.read_text(encoding="utf-8"))
     rewritten = rewrite_contains(document.raw_fm, new_contains)
-    parent_node.path.write_text(
-        document.with_raw_fm(rewritten), encoding="utf-8", newline=""
-    )
+    atomic_write(parent_node.path, document.with_raw_fm(rewritten))
     return parent_node.path
 
 
+@_serialized
 def uncontain(root: str | Path, parent: str | int, child: str | int) -> Path:
     """Remove ``child`` from ``parent``'s containment list; never delete it."""
     root = Path(root).resolve()
@@ -488,12 +509,11 @@ def uncontain(root: str | Path, parent: str | int, child: str | int) -> Path:
 
     document = parse_document(parent_node.path.read_text(encoding="utf-8"))
     rewritten = rewrite_contains(document.raw_fm, new_contains)
-    parent_node.path.write_text(
-        document.with_raw_fm(rewritten), encoding="utf-8", newline=""
-    )
+    atomic_write(parent_node.path, document.with_raw_fm(rewritten))
     return parent_node.path
 
 
+@_serialized
 def link(
     root: str | Path,
     source: str | int,
@@ -537,12 +557,11 @@ def link(
     )
     links.append(target_ref if bare else edge)
     rewritten = rewrite_links(document.raw_fm, links)
-    source_node.path.write_text(
-        document.with_raw_fm(rewritten), encoding="utf-8", newline=""
-    )
+    atomic_write(source_node.path, document.with_raw_fm(rewritten))
     return source_node.path
 
 
+@_serialized
 def unlink(
     root: str | Path,
     source: str | int,
@@ -576,9 +595,7 @@ def unlink(
         raise BreakdownError(f"no link {source_ref} -> {target_ref}{suffix} to remove")
 
     rewritten = rewrite_links(document.raw_fm, kept)
-    source_node.path.write_text(
-        document.with_raw_fm(rewritten), encoding="utf-8", newline=""
-    )
+    atomic_write(source_node.path, document.with_raw_fm(rewritten))
     return source_node.path
 
 
@@ -625,6 +642,7 @@ def _map_data_ref(
     return False, value
 
 
+@_serialized
 def migrate(root: str | Path, *, dry_run: bool = False) -> MigrationResult:
     """One-time, idempotent, in-place migration of a classic bare-file store."""
     root = resolve_store_root(root)

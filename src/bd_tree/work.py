@@ -26,6 +26,7 @@ from pathlib import Path
 from .errors import BreakdownError, ExportError
 from .exporter import _build_paths, _index_text, _prepare_out
 from .frontmatter import FrontMatterError, parse_document
+from .fsutil import atomic_write, store_lock
 from .loader import load, load_view
 from .model import View
 from .navigate import resolve_ref
@@ -574,30 +575,31 @@ def _writeback(
     nodes_dir = (view.root / "nodes").resolve()
     written = 0
     invalid: list[str] = []
-    for entry in _inspect(view, out, path_template):
-        if entry.status != STATUS_DETACHED or entry.ref is None:
-            continue
-        # A detached file may belong to the view that was replaced.  Resolve
-        # it against the whole store so `--writeback` can still preserve edits.
-        node = view.nodes.get(entry.ref) or view.store.nodes.get(entry.ref)
-        if node is None:
-            continue
-        target = node.path
-        _validate_target(target, nodes_dir)
-        dest = out / entry.path
-        text = dest.read_text(encoding="utf-8")
-        try:
-            document = parse_document(text)
-        except (OSError, FrontMatterError):
-            invalid.append(entry.path)
-            continue
-        declared = document.meta.get("id")
-        if declared is not None and str(declared) != str(node.id):
-            invalid.append(entry.path)
-            continue
-        target.write_text(text, encoding="utf-8", newline="")
-        _link(dest, target)
-        written += 1
+    with store_lock(view.root):
+        for entry in _inspect(view, out, path_template):
+            if entry.status != STATUS_DETACHED or entry.ref is None:
+                continue
+            # A detached file may belong to the view that was replaced.  Resolve
+            # it against the whole store so `--writeback` can still preserve edits.
+            node = view.nodes.get(entry.ref) or view.store.nodes.get(entry.ref)
+            if node is None:
+                continue
+            target = node.path
+            _validate_target(target, nodes_dir)
+            dest = out / entry.path
+            text = dest.read_text(encoding="utf-8")
+            try:
+                document = parse_document(text)
+            except (OSError, FrontMatterError):
+                invalid.append(entry.path)
+                continue
+            declared = document.meta.get("id")
+            if declared is not None and str(declared) != str(node.id):
+                invalid.append(entry.path)
+                continue
+            atomic_write(target, text)
+            _link(dest, target)
+            written += 1
 
     entries = _inspect(view, out, path_template)
     return WorkResult(

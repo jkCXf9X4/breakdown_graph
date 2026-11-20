@@ -7,7 +7,8 @@ from typing import Any
 
 from .errors import BreakdownError
 from .frontmatter import parse_document, rewrite_links
-from .loader import load, load_view
+from .fsutil import atomic_write, store_lock
+from .loader import load, load_view, resolve_store_root
 from .model import Edge, Node, ReconcileChange, StaleEdge, View
 from .navigate import resolve_ref
 
@@ -82,7 +83,7 @@ def _reconcile_node(view: View, node: Node) -> list[ReconcileChange]:
         return []
     doc = parse_document(node.path.read_text(encoding="utf-8"))
     rewritten = rewrite_links(doc.raw_fm, new_links)
-    node.path.write_text(doc.with_raw_fm(rewritten), encoding="utf-8", newline="")
+    atomic_write(node.path, doc.with_raw_fm(rewritten))
     return changes
 
 
@@ -94,25 +95,27 @@ def reconcile(
     all_nodes: bool = False,
 ) -> list[ReconcileChange]:
     """Rewrite stale/untracked propagating pins, preserving body bytes."""
-    store = load(root)
-    target_ref = None if view is None else resolve_ref(store, view)
-    resolved = load_view(store, target_ref)
-    if all_nodes:
-        targets = sorted(resolved.nodes)
-    else:
-        targets = []
-        for ref in dict.fromkeys(refs or []):
-            try:
-                canonical = resolve_ref(store, ref, view_ref=resolved.ref)
-            except BreakdownError as exc:
-                raise BreakdownError(str(exc)) from None
-            targets.append(canonical)
-    if not all_nodes and not targets:
-        raise BreakdownError("reconcile needs at least one ref or --all")
-    missing = [ref for ref in targets if ref not in resolved.nodes]
-    if missing:
-        raise BreakdownError("ref(s) outside view: " + ", ".join(missing))
-    changes: list[ReconcileChange] = []
-    for ref in targets:
-        changes.extend(_reconcile_node(resolved, resolved.nodes[ref]))
-    return changes
+    root = resolve_store_root(root)
+    with store_lock(root):
+        store = load(root)
+        target_ref = None if view is None else resolve_ref(store, view)
+        resolved = load_view(store, target_ref)
+        if all_nodes:
+            targets = sorted(resolved.nodes)
+        else:
+            targets = []
+            for ref in dict.fromkeys(refs or []):
+                try:
+                    canonical = resolve_ref(store, ref, view_ref=resolved.ref)
+                except BreakdownError as exc:
+                    raise BreakdownError(str(exc)) from None
+                targets.append(canonical)
+        if not all_nodes and not targets:
+            raise BreakdownError("reconcile needs at least one ref or --all")
+        missing = [ref for ref in targets if ref not in resolved.nodes]
+        if missing:
+            raise BreakdownError("ref(s) outside view: " + ", ".join(missing))
+        changes: list[ReconcileChange] = []
+        for ref in targets:
+            changes.extend(_reconcile_node(resolved, resolved.nodes[ref]))
+        return changes

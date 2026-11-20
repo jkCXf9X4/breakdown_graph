@@ -252,7 +252,7 @@ Common mistakes:
 6. Body bytes survive structural edits.
 7. No JSON/TOML/lock/state data files; the only pointers are the store-level
    `ROOT`, one full ref on one line, and the folder-level `.bd_root`, one store
-   path on one line.
+   path on one line. The transient write lock lives outside the store.
 8. A view never crosses a branch, and neither does a version; solutions are git
    worktrees. A parent's `contains` names the version current in that view.
 9. Generated files are disposable and never committed.
@@ -286,5 +286,7 @@ Keep examples executable. Run them before committing.
 - No CI or generic importer. `bd migrate` only converts a classic bare-file
   store in place. Packaging is `pyproject.toml` plus the `bd` console script.
 - No three-way node merge; solutions merge with git.
-- No locking for concurrent agents.
+- Writes to one store serialize on an advisory lock outside the store
+  (`src/bd_tree/fsutil.py`); readers take none, because writers publish
+  atomically.
 - No Windows-specific symlink path.

@@ -36,10 +36,12 @@ declared closure, and make stale material visible rather than silently present.
 5. **Work in the store, through one work area.** The writable work area is a
    symlink view, not a copy, and there is no sync-back. A project has exactly one
    such area at a time; switching views replaces its contents.
-6. **No sidecar state.** No JSON manifests, TOML view configs, lock files, or
-   active-branch files; the only pointers are the store-level `ROOT`, one ref on
-   one line, and the folder-level `.bd_root`, one store path on one line.
-   Everything else needed is in the node files or derived.
+6. **No sidecar state.** No JSON manifests, TOML view configs, persistent lock
+   files, or active-branch files; the only pointers are the store-level `ROOT`,
+   one ref on one line, and the folder-level `.bd_root`, one store path on one
+   line. Everything else needed is in the node files or derived. A writer's
+   advisory lock is transient and lives in the system temp directory, keyed by
+   the store path, so no lock file enters the store or git.
 7. **Freshness is opt-in per edge.** A semantic link participates in staleness
    only when it declares `propagates: true`.
 8. **Git owns the solution boundary; the flat store is the merge unit; views are
@@ -364,7 +366,8 @@ styling is chosen by arbitrary fields (`--color-by`, `--shape-by`); and
    exactly one writable work area.
 10. **No JSON/TOML/lock/state sidecars.** The exceptions are the store-level
     `ROOT` file (one ref on one line) and the folder-level `.bd_root` pointer
-    (one store path on one line). Derived output is disposable.
+    (one store path on one line). Derived output is disposable. The write lock
+    is not a sidecar: it is transient and lives outside the store.
 11. **Writeback requires valid front matter.** Protects `contains` from
     body-only replacements.
 12. **Git owns solutions; `bd work` owns layout.** Worktrees isolate branches;
@@ -451,7 +454,10 @@ These are enforced or assumed:
 - No three-way merge between node versions; synthesis is manual.
 - One worktree per solution; switching branches can leave a layout pointing
   at paths absent from the new branch, so rebuild and run `--status`.
-- No locking: concurrent editors can race, and git is the conflict detector.
+- Concurrent writers to one store serialize on an advisory lock in the system
+  temp directory, so `bd new` allocates distinct ids and no writer loses a
+  sibling. The lock is per host and per resolved path; separate checkouts still
+  conflict in git, and edits made outside `bd` are not serialized.
 - Symlinks require a POSIX filesystem; Windows needs developer mode.
 - Editors that replace symlinks need `--status`/`--writeback`.
 - `bd check` validates every node-rooted view, costing more on large stores.
