@@ -18,10 +18,11 @@ cd ~/graphs/my-graph
 bd init
 ```
 
-`bd init` creates one file:
+`bd init` creates the store and ignores the work area:
 
 ```
-nodes/1.md
+.bd_tree/nodes/1.md
+.gitignore          # bd_work/
 ```
 
 ```markdown
@@ -83,9 +84,10 @@ bd path 2
 Exit codes: `bd check` returns 1 on errors and 0 on clean. Structural commands
 return 2 on refusal.
 
-## 3. Edit in a work folder
+## 3. Edit in the work area
 
-`bd work` renders a view as a tree of symlinks. Editing a link edits the store.
+`bd work` renders a view as a tree of symlinks in the project's single writable
+work area, `<project>/bd_work/`. Editing a link edits the store.
 
 ```sh
 bd work 1
@@ -119,15 +121,18 @@ bd work 1 --writeback
 `--writeback` writes the detached content to the original node, refuses files
 without valid front matter, and re-links them.
 
-Layouts of one view can coexist:
+There is exactly one writable work area. `bd work REF` switches it to another
+view by replacing its contents: stale links are removed, and `INDEX.md`,
+`REFS.md`, and `AGENTS.md` are rewritten. Never keep two work folders side by
+side.
 
 ```sh
-bd work 1 --name flat --path-template '{ref}.md'
+bd work 1-1        # switch <project>/bd_work to another view
+bd work 1          # switch back
 ```
 
-The default layout uses `home` when every node has one, so `bd work 1` is
-tree-shaped and `--name flat` is numeric. Both point at the same `nodes/` files,
-so an edit through one shows in the other.
+Read-only snapshots (`bd view`, `bd export`) are separate disposable exports,
+not a second work area.
 
 ## 4. Structure and typed links
 
@@ -149,10 +154,10 @@ bd link 3 1 --type serves --propagates
 bd stale
 ```
 
-Then edit the intent body in `nodes/1.md`:
+Then edit the intent body in `.bd_tree/nodes/1.md`:
 
 ```sh
-printf '\nA new constraint.\n' >> nodes/1.md
+printf '\nA new constraint.\n' >> .bd_tree/nodes/1.md
 bd stale
 ```
 
@@ -228,7 +233,7 @@ BD_ROOT=. bd work 1
 ```sh
 cd ../sol-a
 bd work 1
-$EDITOR nodes/1.md
+$EDITOR .bd_tree/nodes/1.md
 bd check
 git add -A && git commit -m "sol-a: alternative intent"
 ```
@@ -237,7 +242,7 @@ Compare without switching:
 
 ```sh
 cd ../my-graph
-git diff main..sol-a -- nodes/
+git diff main..sol-a -- .bd_tree/nodes/
 bd solution list
 ```
 
@@ -247,48 +252,54 @@ Remove the checkout when done; the branch remains:
 bd solution remove sol-a
 ```
 
-If the store is nested inside the repo, `BD_ROOT` is the store path relative to
-the worktree, for example `examples/switch-trees`.
+If the project is nested inside the repo, `BD_ROOT` is the project path relative
+to the worktree, for example `examples`.
 
 ## 7. Feed an agent
 
 Two modes:
 
 ```sh
-# read-only: only fresh nodes, plus STALE.md and AGENTS.md
-bd export context --view 1 --out build/ctx
-
-# writable layout: edits write through to nodes/
+# writable: the single work area for one view
 bd work 1
+
+# read-only snapshot: fresh nodes, plus STALE.md and AGENTS.md
+bd export context --view 1 --out /tmp/bd-context-1
 ```
 
-Both produce an `AGENTS.md`; the work folder also records the branch, commit, and
-worktree. Tell the agent not to read outside that directory.
+`bd work` writes `<project>/bd_work/` and is the only work area; the export
+directory is a disposable snapshot, not a second area. Both contain an
+`AGENTS.md`; the work area also records the branch, commit, and worktree. Tell
+the agent to read exactly one directory and not to read outside it. To change
+view, switch the same area with `bd work REF`.
 
 ## 8. Use an existing markdown tree
 
 There is no generic importer yet. The pattern is:
 
-1. One file per node under `nodes/`, named by a running integer.
+1. One file per node under the store's `nodes/` (`.bd_tree/nodes/` in a project
+   layout), named by a running integer.
 2. `id` matches the filename.
 3. `contains` lists the ordered children.
 4. Optional `home` gives the presentation path; otherwise use
    `--path-template`.
 5. `links` holds typed edges; prose citations are separate.
 
-`examples/switch-trees/` is a small worked store laid out this way: one file per
-node, `contains` listing ordered children, and versions as alternatives.
+`examples/` is a small worked project laid out this way, with its store under
+`examples/.bd_tree/`: one file per node, `contains` listing ordered children, and
+versions as alternatives.
 
 ## Troubleshooting
 
 | Symptom | Cause and fix |
 | --- | --- |
-| `bd: unknown ref '1'` | No store found. Run from the store root or set `BD_ROOT` to the directory containing `nodes/`. |
-| `bd check` sees the wrong store | `BD_ROOT` or `--root` points elsewhere. `bd` uses the nearest `nodes/` upward. |
+| `bd: unknown ref '1'` | No store found. Run from the project root or store root, or set `BD_ROOT` to the directory containing `nodes/` (or `.bd_tree/nodes/`). |
+| `bd check` sees the wrong store | `BD_ROOT` or `--root` points elsewhere. `bd` uses the nearest `nodes/` or `.bd_tree/nodes/` upward. |
 | `root-ref-missing` / `invalid-root` | The `ROOT` file names an absent ref or is malformed. Fix it, or run `bd root --clear`. |
-| `bd work` refuses a directory | It has detached or stray files. Run `--status`, then `--writeback` or `--clean`. |
+| `bd work` refuses to switch | `bd_work/` has detached or stray files. Run `--status`, then `--writeback` to keep them or `--clean` to discard them. |
 | Edit did not reach the node | The editor replaced the symlink. Run `--status`, then `--writeback`. |
-| `build/` appears in git status | Add `build/` to `.gitignore`. |
+| Want two work folders | Not supported. `bd_work/` is the single area; switch with `bd work REF`. |
+| `bd_work/` appears in git status | `bd init` adds it to `.gitignore`; add `bd_work/` if the project predates that. |
 | Work folder points at missing files | The branch changed under the layout. Rebuild with `bd work REF --clean`. |
 | Size warning on a node | Cosmetic by default. Split the node, or pass `--max-lines` / `--max-chars`. |
 

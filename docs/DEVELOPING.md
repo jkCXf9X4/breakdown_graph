@@ -10,7 +10,7 @@ git clone https://github.com/jkCXf9X4/breakdown-tree
 cd breakdown-tree
 pip install -e '.[test]'
 python3 -m pytest -q
-BD_ROOT=examples/switch-trees bd check
+BD_ROOT=examples bd check
 ```
 
 Requirements: Python 3.10+, PyYAML, pytest. Graphviz `dot` only for dot export.
@@ -20,7 +20,7 @@ run from the repo root with `PYTHONPATH=src python3 -m bd_tree`.
 ## The data flow
 
 ```
-nodes/*.md
+.bd_tree/nodes/*.md
    │
    ├─ loader.load(root) ──────────────► Store   (every file, every edge)
    │                                      │
@@ -52,14 +52,15 @@ logical node.
 | `freshness.py` | Pins, stale edges, reconcile |
 | `navigate.py` | `show`, `tree`, `ls`, `find`, `grep`, `path` renderers |
 | `exporter.py` | `tree`, `context`, `dot` projections and path templates |
-| `work.py` | Symlink work folders, `--status`, `--writeback`, git context |
+| `work.py` | Single `<project>/bd_work/` area, switching, `--status`, `--writeback`, git context |
 | `solutions.py` | Thin `git worktree` lifecycle wrapper |
 | `ops.py` | `init`, `new`, `contain`, `uncontain`, `link`, `unlink`, versions, `diff` |
 | `api.py` | Public Python functions |
 | `cli.py` | argparse wiring and output formatting |
 
-Data comes from `nodes/`; there are no hidden stores, caches, or state files. The
-one exception is the store-level `ROOT` file: one ref on one line.
+Data comes from the store's `nodes/` directory (`.bd_tree/nodes/` in a project
+layout); there are no hidden stores, caches, or state files. The one exception
+is the store-level `ROOT` file: one ref on one line.
 
 ## Key types
 
@@ -166,8 +167,8 @@ python3 -m pytest -q
 - `tests/conftest.py` provides `write_node`, a helper that writes arbitrary front
   matter and derives `home` from `layer`.
 - Use `tmp_path` and real files. Do not mock the loader.
-- `test_examples.py` runs `examples/switch-trees` through `bd check` and view
-  loading, asserting both complete trees.
+- `test_examples.py` runs the project at `examples/` (store under `.bd_tree/`)
+  through `bd check` and view loading, asserting both complete trees.
 - Root tests cover the precedence: explicit ref or `--root-ref` > `ROOT` >
   lowest main ref, plus `root-ref-missing` and `invalid-root`.
 - Reachability tests assert both paths: through `contains`, or through another
@@ -182,14 +183,15 @@ Before a commit:
 
 ```sh
 python3 -m pytest -q
-BD_ROOT=examples/switch-trees bd check
+BD_ROOT=examples bd check
 git diff --check
 ```
 
 ## Debugging
 
 - `PYTHONPATH=src python3 -m bd_tree ...` is identical to `bd`.
-- `BD_ROOT`/`--root` choose the store (default: nearest parent with `nodes/`).
+- `BD_ROOT`/`--root` choose the store (default: nearest parent with `nodes/` or
+  `.bd_tree/nodes/`).
 - `bd root` shows or switches the store root; `bd root --clear` removes `ROOT`.
 - `bd check --view REF` narrows validation to one closure.
 - `bd tree`, `bd show`, `bd path` quickly show what the loader sees.
@@ -206,7 +208,8 @@ Common mistakes:
 
 ## Invariants to protect
 
-1. `nodes/` is the only source of truth.
+1. The store's `nodes/` directory (`.bd_tree/nodes/` in a project layout) is the
+   only source of truth.
 2. Filename is identity and version.
 3. `contains` is an ordered tree per view; `links` is a DAG.
 4. Arbitrary front matter survives edits and exports.
@@ -217,6 +220,8 @@ Common mistakes:
    worktrees. `promote` is filesystem-only and never crosses a worktree; it is
    not a way to switch trees.
 8. Generated files are disposable and never committed.
+9. A project has exactly one writable work area, `<project>/bd_work/`, holding
+   one view at a time. Read-only exports never become a second work area.
 
 ## Style and commits
 

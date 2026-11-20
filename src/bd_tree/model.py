@@ -133,6 +133,17 @@ class Store:
     declared_root: str | None = None  # ref read from the store's ROOT file
 
     @property
+    def project_root(self) -> Path:
+        """The project directory that owns this store.
+
+        A hidden ``.bd_tree`` store belongs to its parent; a classic ``nodes/``
+        store is its own project root.
+        """
+        if self.root.name == ".bd_tree" and (self.root / "nodes").is_dir():
+            return self.root.parent
+        return self.root
+
+    @property
     def root_ref(self) -> str | None:
         """The store's root: declared ``ROOT``, else the lowest main ref.
 

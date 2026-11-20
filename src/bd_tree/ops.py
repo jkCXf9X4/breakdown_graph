@@ -13,7 +13,15 @@ from .frontmatter import (
     rewrite_contains,
     rewrite_links,
 )
-from .loader import ROOT_FILE, load, load_view, node_path, parse_ref, ref_of
+from .loader import (
+    ROOT_FILE,
+    STORE_DIR,
+    load,
+    load_view,
+    node_path,
+    parse_ref,
+    ref_of,
+)
 from .model import DiffEntry, Node, Store
 
 
@@ -88,16 +96,36 @@ def _strip_contains(path: Path) -> None:
 
 
 _ROOT_BODY = "# Root\n\nState the intent of this graph here.\n"
+_GITIGNORE = "# generated work area (bd work)\nbd_work/\n"
+_GITIGNORE_ENTRY = "bd_work/"
+
+
+def _ensure_work_ignored(project: Path) -> None:
+    """Keep the derived work area out of git without rewriting other lines."""
+    path = project / ".gitignore"
+    if not path.exists():
+        path.write_text(_GITIGNORE, encoding="utf-8", newline="")
+        return
+    text = path.read_text(encoding="utf-8")
+    if any(line.strip() == _GITIGNORE_ENTRY for line in text.splitlines()):
+        return
+    if text and not text.endswith("\n"):
+        text += "\n"
+    path.write_text(text + _GITIGNORE_ENTRY + "\n", encoding="utf-8", newline="")
 
 
 def init_store(root: str | Path = ".") -> Path:
-    """Create a minimal store with one root node and return the store root."""
-    root = Path(root).resolve()
-    nodes = root / "nodes"
-    if nodes.is_dir() and any(nodes.iterdir()):
-        raise BreakdownError(f"store already exists at {root}")
-    nodes.mkdir(parents=True, exist_ok=True)
-    target = node_path(root, 1, 0)
+    """Create the canonical project with a hidden store and return its root."""
+    project = Path(root).resolve()
+    hidden = project / STORE_DIR / "nodes"
+    legacy = project / "nodes"
+    for label, nodes in ((".bd_tree/nodes", hidden), ("nodes", legacy)):
+        if nodes.is_dir() and any(nodes.iterdir()):
+            raise BreakdownError(
+                f"store already exists at {project} ({label} is not empty)"
+            )
+    hidden.mkdir(parents=True, exist_ok=True)
+    target = node_path(project / STORE_DIR, 1, 0)
     target.write_text(
         render_document(
             {"id": 1, "title": "Root", "home": "1.md", "contains": []}, _ROOT_BODY
@@ -105,7 +133,8 @@ def init_store(root: str | Path = ".") -> Path:
         encoding="utf-8",
         newline="",
     )
-    return root
+    _ensure_work_ignored(project)
+    return project
 
 
 def versions(root: str | Path, node_id: str | int) -> list[Node]:

@@ -97,7 +97,7 @@ __all__ = [
 
 
 def init_store(root: str | Path = ".") -> Path:
-    """Create ``nodes/1.md`` in an empty directory and return the store root."""
+    """Create ``.bd_tree/nodes/1.md`` in an empty project and return its root."""
     return _init_store(root)
 
 
@@ -294,7 +294,6 @@ def work(
     ref: str | int | None = None,
     out: str | Path | None = None,
     *,
-    name: str | None = None,
     path_template: str | None = None,
     title_field: str = "title",
     summary_field: str = "summary",
@@ -303,12 +302,11 @@ def work(
     status: bool = False,
     writeback: bool = False,
 ) -> WorkResult:
-    """Build, refresh, inspect or write back a view's tree of symlinks."""
+    """Build, refresh, inspect or write back the single view work area."""
     return _work(
         root,
         ref,
         out,
-        name=name,
         path_template=path_template,
         title_field=title_field,
         summary_field=summary_field,

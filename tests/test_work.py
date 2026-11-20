@@ -146,13 +146,99 @@ def test_clean_rebuilds_without_touching_store_files(write, tmp_path):
     assert store_before == store_after
 
 
-def test_default_out_is_under_build_work(write, tmp_path):
+def test_default_out_is_the_single_project_work_area(write, tmp_path):
     _tree(write, tmp_path)
     result = api.work(tmp_path, "1")
-    expected = (tmp_path / "build" / "work" / "1").resolve()
+    expected = (tmp_path / "bd_work").resolve()
     assert result.out == expected
     assert expected.is_dir()
     assert (expected / "claims" / "2.md").is_symlink()
+
+
+def test_default_out_for_hidden_store_is_project_bd_work(write, tmp_path):
+    store = tmp_path / ".bd_tree" / "nodes"
+    write(store, 1, contains=["2"], layer="intent")
+    write(store, 2, layer="claims")
+    result = api.work(tmp_path, "1")
+    expected = (tmp_path / "bd_work").resolve()
+    assert result.out == expected
+    assert (expected / "intent" / "1.md").is_symlink()
+    assert (expected / "intent" / "1.md").resolve() == (store / "1.md").resolve()
+
+
+def test_ref_switch_replaces_the_same_work_area(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], layer="intent")
+    write(nodes, 2, layer="claims")
+    write(nodes, 1, version=1, contains=["2-1"], layer="intent")
+    write(nodes, 2, version=1, layer="claims")
+
+    first = api.work(tmp_path, "1-1")
+    out = first.out
+    assert out == (tmp_path / "bd_work").resolve()
+    old_link = out / "intent" / "1-1.md"
+    assert old_link.is_symlink()
+    assert old_link.resolve() == (nodes / "1-1.md").resolve()
+
+    second = api.work(tmp_path, "1")
+
+    assert second.out == out
+    assert not (out / "intent" / "1-1.md").is_symlink()
+    assert not (out / "intent" / "1-1.md").exists()
+    assert not (out / "claims" / "2-1.md").is_symlink()
+    assert (out / "intent" / "1.md").resolve() == (nodes / "1.md").resolve()
+    assert (out / "claims" / "2.md").resolve() == (nodes / "2.md").resolve()
+    refs = (out / "REFS.md").read_text(encoding="utf-8")
+    index = (out / "INDEX.md").read_text(encoding="utf-8")
+    agents = (out / "AGENTS.md").read_text(encoding="utf-8")
+    assert "view 1" in refs and "1-1" not in refs
+    assert "# View 1" in index and "1-1" not in index
+    assert "view `1`" in agents
+    assert api.work(tmp_path, "1", status=True).ok
+
+
+def test_unexpected_store_symlink_is_cleaned_without_refs_manifest(write, tmp_path):
+    _tree(write, tmp_path)
+    write(tmp_path / "nodes", 5, layer="outside")
+    out = tmp_path / "work"
+    api.work(tmp_path, "1", out)
+    (out / "REFS.md").unlink()
+    stray = out / "extra.md"
+    stray.symlink_to(os.path.relpath(tmp_path / "nodes" / "5.md", out))
+
+    result = api.work(tmp_path, "1", out)
+
+    assert result.symlinks == 4
+    assert not stray.is_symlink()
+    assert not stray.exists()
+    assert (out / "REFS.md").is_file()
+    assert api.work(tmp_path, "1", out, status=True).ok
+
+
+def test_detached_file_blocks_a_ref_switch_until_clean(write, tmp_path):
+    from bd_tree.errors import ExportError
+
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], layer="intent")
+    write(nodes, 2, layer="claims")
+    write(nodes, 1, version=1, contains=["2-1"], layer="intent")
+    write(nodes, 2, version=1, layer="claims")
+
+    api.work(tmp_path, "1-1")
+    out = tmp_path / "bd_work"
+    dest = out / "intent" / "1-1.md"
+    dest.unlink()
+    dest.write_text("detached\n", encoding="utf-8")
+
+    with pytest.raises(ExportError) as caught:
+        api.work(tmp_path, "1")
+    message = str(caught.value)
+    assert "--writeback" in message and "--clean" in message
+    assert dest.read_text(encoding="utf-8") == "detached\n"
+
+    api.work(tmp_path, "1", clean=True)
+    assert not (out / "intent" / "1-1.md").exists()
+    assert (out / "intent" / "1.md").is_symlink()
 
 
 def test_path_template_still_applies(write, tmp_path):
@@ -319,44 +405,6 @@ def test_stray_blocks_refresh_and_clean_discards(write, tmp_path):
     api.work(tmp_path, "1", out, clean=True)
     assert not stray.exists()
     assert api.work(tmp_path, "1", out, status=True).ok
-
-
-def test_name_suffixes_the_default_directory(write, tmp_path):
-    _tree(write, tmp_path)
-    result = api.work(tmp_path, "1", name="scratch")
-    expected = (tmp_path / "build" / "work" / "1-scratch").resolve()
-    assert result.out == expected
-    assert expected.is_dir()
-
-
-def test_out_and_name_are_mutually_exclusive(write, tmp_path, capsys):
-    _tree(write, tmp_path)
-    from bd_tree.cli import main
-
-    code = main(
-        [
-            "work",
-            "1",
-            "--root",
-            str(tmp_path),
-            "--out",
-            str(tmp_path / "x"),
-            "--name",
-            "y",
-        ]
-    )
-    assert code == 2
-    assert "--name" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize("name", ["", ".hidden", "-dash", "bad/name", "a b"])
-def test_invalid_name_is_rejected(write, tmp_path, name):
-    _tree(write, tmp_path)
-    from bd_tree.cli import main
-
-    assert (
-        main(["work", "1", "--root", str(tmp_path), f"--name={name}"]) == 2
-    )
 
 
 def test_print_outputs_only_the_directory(write, tmp_path, capsys):

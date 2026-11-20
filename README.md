@@ -1,17 +1,18 @@
 # breakdown tree — `bd`
 
 A flat markdown store for layered project information, with a git solution
-boundary, typed dependency edges, and custom symlink work folders.
+boundary, typed dependency edges, and a single custom symlink work area.
 
 - **Store** — one markdown file per node, keyed by a running integer.
 - **Structure** — an ordered `contains` list defines the tree; paths do not.
 - **Root** — an optional `ROOT` file names the default view root in one ref line.
 - **Solutions** — git branches and worktrees.
-- **Layout** — `bd work` renders a view as symlinks into the store.
+- **Layout** — `bd work` renders one view as symlinks into the store, in a
+  single `<project>/bd_work/` area.
 - **Freshness** — typed links record what depends on what and whether it still holds.
 
-The store is the data; work folders are disposable layouts. Agents read views and
-edit the node files directly.
+The store is the data; the work area is a disposable layout. An agent session
+reads exactly one view and edits the node files through that one area.
 
 ## Two axes
 
@@ -21,8 +22,9 @@ These are deliberately separate:
   when it is merged or discarded.
 - **Merge unit: the flat `nodes/` store.** One file per node keeps a conflict
   local to the node that changed.
-- **Layout: `bd work`.** A custom symlink view inside one checkout. Several views
-  can coexist; none is a copy.
+- **Layout: `bd work`.** One writable symlink area at `<project>/bd_work/`;
+  `bd work REF` switches its contents to another view. Read-only projections
+  (`bd view`, `bd export`) may be many and are disposable; none is a copy.
 - **Versions are not a third axis.** `5-1` is an alternative file for node `5`
   inside the checked-out branch. Versions give no isolation and never cross a
   branch; git still owns every branch decision.
@@ -56,11 +58,11 @@ Without installing, run from the repository root:
 
 ## Five-minute tour
 
-The repository ships a small example store in `examples/switch-trees`. Read it
-first; do not edit it.
+The repository ships a small example project at `examples/`. Read it first; do
+not edit it unless you mean to change the example.
 
 ```sh
-export BD_ROOT=examples/switch-trees
+export BD_ROOT=examples
 
 bd check                       # clean, two complete trees
 bd tree 1 --depth 1            # the main tree
@@ -71,13 +73,14 @@ bd find Method --limit 3
 bd path 3                      # ancestor chain to a leaf
 ```
 
-Then make a work folder:
+Then open the work area:
 
 ```sh
-bd work 1 --print              # path only, for cd
-bd work 1
-cd "$(bd work 1 --print)"
-# every .md here is a symlink; editing it edits nodes/<ref>.md
+bd work 1                      # write <project>/bd_work for view 1
+cd "$(bd work 1 --print)"      # print its path, for cd
+# every .md here is a symlink; editing it edits .bd_tree/nodes/<ref>.md
+
+bd work 1-1                    # switch the same area to the alternative tree
 ```
 
 ## Create a store
@@ -91,18 +94,25 @@ bd tree 1
 bd work 1
 ```
 
-`bd init` creates `nodes/1.md` and prints the next commands. Front matter is
-arbitrary: use `layer`, `phase`, `status`, `audience`, or anything else.
+`bd init` creates `.bd_tree/nodes/1.md`, writes a `.gitignore` entry for
+`bd_work/`, and prints the next commands. `bd init DIR` scaffolds the same
+layout inside `DIR`. Front matter is arbitrary: use `layer`, `phase`, `status`,
+`audience`, or anything else.
 
 ## Where is my store?
 
-`bd` walks up from the current directory until it finds `nodes/`.
+`bd` walks up from the current directory looking for a store: `nodes/` or
+`.bd_tree/nodes/`.
 
-- If `nodes/` is at your repo root, run `bd` from anywhere inside the repo.
-- If the store is nested, set `BD_ROOT=path/to/store` or pass `--root`.
-- One store per checkout. A git worktree has its own `nodes/`.
+- Project layout: `.bd_tree/` at the project root; `bd` accepts the project root
+  or the store root.
+- Classic layout: `nodes/` at the repo root; the project root is that directory.
+- If the store is nested, set `BD_ROOT=path/to/project` (or its store root) or
+  pass `--root`.
+- One store per checkout. A git worktree has its own store.
 
-This repository's example store is at `examples/switch-trees`, hence `BD_ROOT`.
+The example project is at `examples/`, with its store at `examples/.bd_tree/`;
+`BD_ROOT=examples` works.
 
 ## Choose your path
 
@@ -138,8 +148,11 @@ bd root [REF] [--clear]
 Layout:
 
 ```
-bd work [REF] [--name N] [--path-template T] [--status] [--writeback] [--print]
+bd work [REF] [--path-template T] [--out DIR] [--status] [--writeback] [--clean] [--print]
 ```
+
+`bd work REF` writes the single `<project>/bd_work/` area and replaces its
+contents; it does not create a second folder.
 
 Solutions:
 
@@ -183,24 +196,24 @@ src/bd_tree/               Python package
   exporter.py              tree/context/dot projections
   freshness.py             pins, stale edges, reconcile
   navigate.py              show/tree/ls/find/grep/path
-  work.py                  symlink work folders, status, writeback
+  work.py                  single work area, status, writeback, switching
   solutions.py             git worktree wrapper
   ops.py                   init, new, structural edits, versions, diff
   cli.py, api.py           command line and public API
 tests/                     pytest suite
-examples/switch-trees/     small store with two complete trees and a ROOT file
+examples/                 example project: .bd_tree/ store + ignored bd_work/
 docs/                      user, developer, design, branches/versions
 ```
 
 ## Status
 
 - The suite passes: `python3 -m pytest -q`.
-- The committed example `examples/switch-trees` has two complete trees and a
-  `ROOT` file; `bd check` passes for it.
+- The committed example project `examples/` has a `.bd_tree/nodes/` tree, a
+  `.bd_tree/ROOT` file, and a gitignored `bd_work/`; `bd check` passes for it.
 - No JSON, TOML, lock, or state data files; the only exception is a store-level
   `ROOT` file with one ref line. Derived output is gitignored.
-- Structural edits, git-aware work folders, and the `bd solution` wrapper are in
-  place.
+- Structural edits, the git-aware single work area, and the `bd solution` wrapper
+  are in place.
 
 ## Known limits
 

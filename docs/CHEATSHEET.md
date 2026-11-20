@@ -6,11 +6,12 @@ or navigation failure, 2 structural refusal.
 ## Environment
 
 ```sh
-export BD_ROOT=path/to/store        # directory containing nodes/
-bd --root path/to/store <command>   # explicit per command
+export BD_ROOT=path/to/project       # or path/to/store
+bd --root path/to/project <command>  # explicit per command
 ```
 
-`bd` walks up from the current directory to find `nodes/`; one store per checkout.
+`bd` walks up from the current directory and recognises both `nodes/` and
+`.bd_tree/nodes/`; one store per checkout.
 
 ## Tree root
 
@@ -29,7 +30,7 @@ but missing ref is `root-ref-missing`; malformed content is `invalid-root`.
 ## Start
 
 ```sh
-bd init [DIR]                       # create nodes/1.md
+bd init [DIR]                       # create .bd_tree/nodes/1.md and .gitignore
 bd new --parent REF --field KEY=VALUE ... [--body TEXT]
 ```
 
@@ -69,30 +70,36 @@ bd unlink FROM TO [--type TYPE]
 ## Work folders
 
 ```sh
-bd work [REF] [--name NAME] [--path-template T] [--print]
+bd work [REF] [--path-template T] [--out DIR] [--print]
 bd work REF --status
 bd work REF --writeback
 bd work REF --clean
 ```
 
-- Default: `<store>/build/work/<ref>`; `--name` gives `<ref>-<name>`.
-- Every `.md` is a symlink to `nodes/<ref>.md`.
+- Default: `<project>/bd_work/`. A project has exactly one writable work area;
+  a different REF replaces its contents.
+- Every `.md` is a symlink to the store's `nodes/<ref>.md`
+  (`.bd_tree/nodes/<ref>.md` in a project layout).
 - `--print` emits only the directory.
+- `--out DIR` is an explicit single-area override, not a second area.
 - `--status`: `ok`, `missing`, `wrong-target`, `detached`, `stray`, `stale-ref`.
 - `--writeback` keeps edits made by an editor that replaced a symlink.
-- Re-running refreshes a healthy tree; detached or stray files block it.
+- Switching with detached (edited but unsynced) files is refused: run
+  `--writeback` to keep them, or `--clean` to discard them.
+- Re-running a healthy tree refreshes it in place: stale links are removed and
+  `INDEX.md`, `REFS.md`, and `AGENTS.md` are rewritten.
 
-Common layouts:
+Switch the one area between views:
 
 ```sh
-bd work 1                                      # home paths
-bd work 5 --name subtree                       # subtree view
-bd work 1 --name flat --path-template '{ref}.md'
-bd work 1 --name claims --path-template '{layer}/{ref}.md'
+bd work 1                                      # write <project>/bd_work for view 1
+bd work 5                                      # switch the same area to view 5
+bd work 1 --path-template '{layer}/{ref}.md'
 ```
 
 `{layer}/{ref}.md` needs `layer` on every node in the view. The default uses
-`home` when all nodes have one.
+`home` when all nodes have one. `bd view` and `bd export` are read-only
+snapshots, not a second work area.
 
 ## Solutions (git worktrees)
 
@@ -182,10 +189,11 @@ python3 -m pytest -q
 
 | Problem | Fix |
 | --- | --- |
-| Wrong store | `BD_ROOT` or `--root`; `bd` uses the nearest `nodes/` upward. |
+| Wrong store | `BD_ROOT` or `--root`; `bd` uses the nearest `nodes/` or `.bd_tree/nodes/` upward. |
 | `root-ref-missing` / `invalid-root` | The `ROOT` file names an absent ref or is malformed. Fix it, or run `bd root --clear`. |
-| Detached work file | `bd work REF --status`, then `--writeback`. |
+| Detached work file | `bd work REF --status`, then `--writeback`. Switching views with detached files is refused until you do. |
+| Want two work folders | Not supported. `bd_work/` is the single area; switch with `bd work REF`. |
 | Stale layout after branch change | `bd work REF --clean`. |
 | Dangling link after removing a node | `bd check`, then `bd unlink` or restore the node. |
 | Node too large | Split it, or raise `--max-lines` / `--max-chars`. |
-| `build/` in git status | Add `build/` to `.gitignore`. |
+| `bd_work/` in git status | `bd init` adds it to `.gitignore`; add `bd_work/` if the project predates that. |

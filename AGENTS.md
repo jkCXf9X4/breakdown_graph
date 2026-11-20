@@ -1,16 +1,16 @@
 # Agent operating rules
 
 This repository is both a tool (`bd_tree`, command `bd`) and a reference example
-store. Read [`README.md`](README.md) and [`docs/DESIGN.md`](docs/DESIGN.md) before
-changing behaviour. The design document is authoritative for the model; this file
-is the short operating protocol.
+project. Read [`README.md`](README.md) and [`docs/DESIGN.md`](docs/DESIGN.md)
+before changing behaviour. The design document is authoritative for the model;
+this file is the short operating protocol.
 
 ## First session
 
-1. Locate the store: `export BD_ROOT=examples/switch-trees` or pass `--root`.
-   Install once from the clone with `pip install -e '.[test]'`, then use `bd`.
-   Without installing, run from the repo root with
-   `PYTHONPATH=src python3 -m bd_tree`.
+1. Locate the store: `export BD_ROOT=examples` (the project root; the store is
+   `examples/.bd_tree`) or pass `--root`. Install once from the clone with
+   `pip install -e '.[test]'`, then use `bd`. Without installing, run from the
+   repo root with `PYTHONPATH=src python3 -m bd_tree`.
 2. Confirm the baseline:
 
    ```sh
@@ -19,17 +19,18 @@ is the short operating protocol.
    ```
 
 3. See the shape: `bd tree --depth 1`, `bd find <term>`, `bd path <ref>`.
-   For two complete trees over one store, run the commands in
-   `examples/switch-trees/README.md`.
+   For the example layout and two complete trees over one store, run the commands
+   in `examples/README.md`.
 4. For a solution: `bd solution new NAME`, `cd` into it, `bd work`.
-5. For edits: edit through a work folder or `nodes/<ref>.md`; change structure
-   with `bd contain` / `bd uncontain` / `bd link` / `bd unlink`.
+5. For edits: edit through `bd_work/` or the store's `.bd_tree/nodes/<ref>.md`;
+   change structure with `bd contain` / `bd uncontain` / `bd link` / `bd unlink`.
 6. Validate: `bd check`, `bd stale`.
 
 ## Two jobs
 
 **Working in a store.** The store is data. Browse with `tree`/`show`/`find`; edit
-through `bd work`; keep `nodes/` flat; commit node files, never `build/`.
+through `bd work`; keep the store's `nodes/` flat; commit node files, never
+`bd_work/`.
 
 **Changing the tool.** Read [`docs/DEVELOPING.md`](docs/DEVELOPING.md). Work
 through the loader, view, checker, and exporter boundaries. Add a test for every
@@ -37,7 +38,8 @@ behaviour change and update the docs listed at the bottom.
 
 ## Core invariants
 
-- The files under a store's `nodes/` directory are the only source of truth.
+- The files under a store's `nodes/` directory (`.bd_tree/nodes/` in a project
+  layout) are the only source of truth.
 - A filename is identity and version: `<id>.md` is main, `<id>-<version>.md` is a
   version.
 - `contains` is an ordered containment list. A view is the closure of one ref.
@@ -49,6 +51,9 @@ behaviour change and update the docs listed at the bottom.
   mechanism.
 - Work folders are symlink views. Never copy node content into a work folder and
   never introduce a sync layer.
+- A project has exactly one writable work area, `<project>/bd_work/`. It holds
+  one view at a time; `bd work REF` replaces its contents. Read-only `bd view`
+  and `bd export` snapshots are not a second work area.
 - A view never crosses a branch, and neither does a version. Versions are node
   files inside one checkout; branches are git. Never resolve a ref through a
   branch name, never add a branch or per-node active-version selector, and never
@@ -64,8 +69,13 @@ behaviour change and update the docs listed at the bottom.
 
 - Solutions: `bd solution new NAME` (thin wrapper over
   `git worktree add ../NAME -b NAME`); one worktree per solution.
-- Writable layout: `bd work REF` creates `build/work/<ref>`; edit through symlinks.
-- Read-only views: `bd view REF --out DIR` or `bd export ...`.
+- Writable layout: `bd work REF` writes the single `<project>/bd_work/` area;
+  a different REF replaces its contents. Edit through the symlinks.
+- Agent sessions work in that one area and read exactly one view. Switch with
+  `bd work REF`; never keep parallel work folders side by side. `--out DIR` is an
+  explicit single-area override, not a second area.
+- Read-only snapshots: `bd view REF --out DIR` or `bd export ...`; they are
+  disposable exports, never the work area.
 - Switching trees: `bd root REF` for the whole store, or repoint one parent with
   `bd uncontain` / `bd contain`. `bd promote` is not a switch; it copies one
   version onto main.
@@ -83,7 +93,7 @@ behaviour change and update the docs listed at the bottom.
 | Browse a subtree | `bd tree REF --depth 0` |
 | Read a node and children | `bd show REF+2 --max-chars 800` |
 | Search | `bd find TEXT`, `bd grep 'RE'` |
-| Edit a view | `bd work REF`, then edit through the symlinks |
+| Switch/edit the work area | `bd work REF`, then edit through the symlinks |
 | Repair symlinks | `bd work REF --status` / `--writeback` |
 | Switch tree root | `bd root REF`, `bd root --clear` |
 | Show versions | `bd versions ID`, `bd fork ID`, `bd promote REF` |
@@ -97,14 +107,16 @@ Commands assume `bd` is installed (`pip install -e '.[test]'`); without
 installing, prefix each with `PYTHONPATH=src python3 -m bd_tree` instead of `bd`.
 
 ```sh
-export BD_ROOT=examples/switch-trees
+export BD_ROOT=examples
 python3 -m pytest -q
 bd check
 bd tree 1 --depth 1
 bd show 1+1 --max-chars 400
 bd contain 1 5 --after 6
 bd link 5 9 --type supports
-bd work 1 --print
+bd work 1                 # write the single <project>/bd_work area
+bd work 1 --print         # print that directory
+bd work 1-1               # switch the same area to another view
 bd solution list
 ```
 
@@ -120,8 +132,8 @@ bd solution list
 ## Commit style
 
 Short conventional prefixes, matching history: `feat:`, `fix:`, `chore:`,
-`docs:`. One concern per commit. Do not commit caches, `build/`, exported views,
-or generated output.
+`docs:`. One concern per commit. Do not commit caches, `bd_work/`, exported
+views, or generated output.
 
 ## Docs map
 

@@ -4,8 +4,11 @@ The work directory is the primary editing interface: it mirrors the templated
 paths of ``bd export tree``, but every ``.md`` entry is a symlink back to its
 original ``nodes/<ref>.md`` file.  Editing a file in the work tree therefore
 edits the store directly: there is no sync layer, no state file and no copied
-content.  Different work directories may show different views of the same
-nodes, and an edit through one is visible through all of them.
+content.
+
+There is one fixed work area per project, ``<project>/bd_work``.  Building a
+different view replaces its contents, so a single area always shows exactly one
+view.  ``--out`` is an explicit override for callers that need another path.
 
 Three regular files are generated: ``INDEX.md`` and ``REFS.md`` (navigation) and
 ``AGENTS.md`` (instructions for a human or agent browsing the tree).
@@ -40,7 +43,6 @@ STATUS_STALE = "stale-ref"
 _REF_ROW = re.compile(
     r"^\|\s*`(?P<path>[^`]+)`\s*\|\s*(?P<ref>\d+(?:-\d+)?)\s*\|"
 )
-_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 GIT_TIMEOUT = 5.0
 
@@ -186,17 +188,52 @@ def _manifest(out: Path) -> dict[str, str] | None:
     return mapping or None
 
 
+def _node_link_strays(
+    view: View, out: Path, known: set[str]
+) -> list[WorkEntry]:
+    """Unexpected symlinks into the store: leftovers from another view.
+
+    Without ``REFS.md`` there is no manifest to classify them, so a link whose
+    target lives under the store's ``nodes/`` and is not expected here is a
+    stale view link and can be removed on rebuild.
+    """
+    if not out.is_dir():
+        return []
+    nodes_dir = (view.root / "nodes").resolve()
+    found: list[WorkEntry] = []
+    for path in sorted(out.rglob("*")):
+        if not path.is_symlink():
+            continue
+        rel = path.relative_to(out).as_posix()
+        if rel in known or rel in GENERATED_SET:
+            continue
+        try:
+            target = path.resolve()
+        except (OSError, RuntimeError):
+            continue
+        if target.is_relative_to(nodes_dir):
+            found.append(WorkEntry(rel, None, STATUS_STALE))
+    return found
+
+
 def _inspect(view: View, out: Path, path_template: str | None) -> list[WorkEntry]:
     manifest = _manifest(out)
     if manifest is not None:
         entries: list[WorkEntry] = []
         for rel, ref in manifest.items():
             node = view.nodes.get(ref)
+            dest = out / rel
             if node is None:
-                entries.append(WorkEntry(rel, ref, STATUS_STALE))
+                # Left over from another view.  A symlink is disposable; a
+                # regular file may hold detached edits and must block a switch.
+                status = STATUS_STALE if dest.is_symlink() else STATUS_DETACHED
+                if not dest.exists() and not dest.is_symlink():
+                    status = STATUS_STALE
+                entries.append(WorkEntry(rel, ref, status))
                 continue
-            entries.append(WorkEntry(rel, ref, _classify(out / rel, node.path)))
+            entries.append(WorkEntry(rel, ref, _classify(dest, node.path)))
         entries.extend(_strays(out, set(manifest)))
+        entries.extend(_node_link_strays(view, out, set(manifest)))
         return entries
     paths = _expected(view, path_template)
     entries = []
@@ -204,6 +241,7 @@ def _inspect(view: View, out: Path, path_template: str | None) -> list[WorkEntry
         rel = paths[ref]
         entries.append(WorkEntry(rel, ref, _classify(out / rel, view.nodes[ref].path)))
     entries.extend(_strays(out, set(paths.values())))
+    entries.extend(_node_link_strays(view, out, set(paths.values())))
     return entries
 
 
@@ -247,8 +285,8 @@ def _agents_text(view: View, git: GitContext | None = None) -> str:
             "editing it edits the store directly."
         ),
         (
-            "- Other work directories may show different views of the same nodes. "
-            "An edit here is visible in every view that includes the node."
+            "- This is the single writable work area. `bd work REF` replaces "
+            "its contents when the view changes."
         ),
         "- Create new nodes with `bd new` or `bd fork`, never by adding files here.",
         "- `INDEX.md`, `AGENTS.md` and `REFS.md` are generated; do not edit them.",
@@ -285,11 +323,20 @@ def _refresh_guard(view: View, out: Path, path_template: str | None) -> list[Wor
     if blocking:
         raise ExportError(
             f"refusing to refresh '{out}': {len(blocking)} detached or stray "
-            f"file(s); run `bd work {view.ref} --status` to inspect, "
-            f"`bd work {view.ref} --writeback` to keep the edits, "
-            f"or `bd work {view.ref} --clean` to discard them"
+            f"file(s); run `bd work {view.ref} --writeback` first to keep the "
+            f"edits, or `bd work {view.ref} --clean` to discard them. "
+            f"Run `bd work {view.ref} --status` to inspect."
         )
     return entries
+
+
+def _prune_empty_dirs(out: Path) -> None:
+    """Remove directories under ``out`` that the previous view left empty."""
+    if not out.is_dir():
+        return
+    for path in sorted(out.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+        if path.is_dir() and not path.is_symlink() and not any(path.iterdir()):
+            path.rmdir()
 
 
 def _build(
@@ -319,6 +366,7 @@ def _build(
             stale = out / entry.path
             if stale.is_symlink():
                 stale.unlink()
+        _prune_empty_dirs(out)
 
     paths = _expected(view, path_template)
     files: list[Path] = []
@@ -367,7 +415,11 @@ def _writeback(view: View, out: Path, path_template: str | None) -> WorkResult:
     for entry in _inspect(view, out, path_template):
         if entry.status != STATUS_DETACHED or entry.ref is None:
             continue
-        node = view.nodes[entry.ref]
+        # A detached file may belong to the view that was replaced.  Resolve
+        # it against the whole store so `--writeback` can still preserve edits.
+        node = view.nodes.get(entry.ref) or view.store.nodes.get(entry.ref)
+        if node is None:
+            continue
         target = node.path
         _validate_target(target, nodes_dir)
         dest = out / entry.path
@@ -402,7 +454,6 @@ def work(
     ref: str | int | None = None,
     out: str | Path | None = None,
     *,
-    name: str | None = None,
     path_template: str | None = None,
     title_field: str = "title",
     summary_field: str = "summary",
@@ -411,23 +462,15 @@ def work(
     status: bool = False,
     writeback: bool = False,
 ) -> WorkResult:
-    """Build, refresh, inspect or write back one view's symlink work tree."""
+    """Build, refresh, inspect or write back the single view work area."""
     if status and writeback:
         raise BreakdownError("--status and --writeback are mutually exclusive")
-    if out is not None and name is not None:
-        raise BreakdownError("--out and --name are mutually exclusive")
-    if name is not None and not _NAME.fullmatch(name):
-        raise BreakdownError(
-            f"invalid --name {name!r}: use letters, digits, '.', '_' or '-' "
-            "and start with a letter or digit"
-        )
 
     view = _resolve_view(root, ref)
     if out is not None:
         out_path = Path(out).resolve()
     else:
-        dirname = view.ref if name is None else f"{view.ref}-{name}"
-        out_path = (view.root / "build" / "work" / dirname).resolve()
+        out_path = (view.store.project_root / "bd_work").resolve()
 
     if status:
         entries = _inspect(view, out_path, path_template)

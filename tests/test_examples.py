@@ -10,8 +10,12 @@ EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 
 
 def test_switch_trees_example_is_clean():
-    root = EXAMPLES / "switch-trees"
+    root = EXAMPLES
+    hidden = load(EXAMPLES / ".bd_tree")
+    assert hidden.root == (EXAMPLES / ".bd_tree").resolve()
+    assert hidden.project_root == EXAMPLES.resolve()
     store = load(root)
+    assert store.root == hidden.root
     assert store.root_ref == "1-1"
     result = check(root)
     assert result.ok
@@ -19,7 +23,7 @@ def test_switch_trees_example_is_clean():
 
 
 def test_switch_trees_example_has_two_complete_trees():
-    root = EXAMPLES / "switch-trees"
+    root = EXAMPLES
     main = load_view(root, "1")
     alternative = load_view(root, "1-1")
     assert set(main.nodes) == {"1", "2", "3", "4", "5"}

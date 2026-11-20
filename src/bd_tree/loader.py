@@ -27,6 +27,7 @@ from .model import (
 
 NODE_SUFFIX = ".md"
 ROOT_FILE = "ROOT"
+STORE_DIR = ".bd_tree"
 
 FILENAME = re.compile(r"^(?P<id>[1-9]\d*)(?:-(?P<version>[1-9]\d*))?\.md$")
 REF = re.compile(r"^(?P<id>[1-9]\d*)(?:-(?P<version>[1-9]\d*))?$")
@@ -66,6 +67,22 @@ def parse_filename(name: str) -> tuple[int, int]:
 
 def node_path(root: str | Path, node_id: int, version: int = 0) -> Path:
     return Path(root) / "nodes" / f"{ref_of(node_id, version)}{NODE_SUFFIX}"
+
+
+def resolve_store_root(path: str | Path) -> Path:
+    """Return the store root for a project root or a store root.
+
+    A project may keep its store in ``.bd_tree/`` or expose the classic
+    ``nodes/`` layout directly.  The classic layout wins when a candidate has
+    both.  A path with neither is returned unchanged, so callers can report
+    the missing directory themselves.
+    """
+    candidate = Path(path)
+    if (candidate / "nodes").is_dir():
+        return candidate.resolve()
+    if (candidate / STORE_DIR / "nodes").is_dir():
+        return (candidate / STORE_DIR).resolve()
+    return candidate.resolve()
 
 
 def _issue(
@@ -266,7 +283,7 @@ def _parse_node(
 
 def scan(root: str | Path) -> tuple[list[Record], list[Issue]]:
     """Scan ``root/nodes`` once, returning every record and global issues."""
-    root = Path(root).resolve()
+    root = resolve_store_root(root)
     issues: list[Issue] = []
     nodes_dir = root / "nodes"
     records: list[Record] = []
@@ -275,7 +292,7 @@ def scan(root: str | Path) -> tuple[list[Record], list[Issue]]:
             issues,
             "error",
             "missing-nodes-dir",
-            "missing nodes/ directory",
+            "missing node store: neither nodes/ nor .bd_tree/nodes exists",
             path=root,
             root=root,
         )
@@ -356,10 +373,11 @@ def _read_declared_root(root: Path, issues: list[Issue]) -> str | None:
 
 
 def load(root: str | Path) -> Store:
-    """Load the full store index at ``root``."""
+    """Load the full store index at a project root or a store root."""
     root = Path(root).resolve()
     if not root.is_dir():
         raise BreakdownError(f"root '{root}' is not a directory")
+    root = resolve_store_root(root)
     records, issues = scan(root)
     declared_root = _read_declared_root(root, issues)
     nodes = {record.node.ref: record.node for record in records if record.node is not None}

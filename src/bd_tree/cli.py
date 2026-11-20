@@ -14,6 +14,7 @@ from pathlib import Path
 
 from . import api
 from .errors import BreakdownError
+from .loader import resolve_store_root
 from .navigate import (
     NavigationError,
     main_root,
@@ -29,14 +30,16 @@ from .navigate import (
 
 def _find_root(explicit: str | None) -> Path:
     if explicit:
-        return Path(explicit).resolve()
+        return resolve_store_root(Path(explicit))
     env = os.environ.get("BD_ROOT")
     if env:
-        return Path(env).resolve()
+        return resolve_store_root(Path(env))
     current = Path.cwd()
     for candidate in [current, *current.parents]:
         if (candidate / "nodes").is_dir():
-            return candidate
+            return candidate.resolve()
+        if (candidate / ".bd_tree" / "nodes").is_dir():
+            return (candidate / ".bd_tree").resolve()
     return current
 
 
@@ -44,7 +47,8 @@ def _add_root(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--root",
         default=None,
-        help="store root (default: $BD_ROOT or nearest parent with nodes/)",
+        help="store or project root (default: $BD_ROOT or nearest parent "
+        "with nodes/ or .bd_tree/nodes)",
     )
 
 
@@ -109,7 +113,6 @@ def _cmd_work(args: argparse.Namespace) -> int:
         root,
         ref,
         Path(args.out) if args.out else None,
-        name=args.name,
         force=args.force,
         clean=args.clean,
         status=args.status,
@@ -499,7 +502,10 @@ def build_parser() -> argparse.ArgumentParser:
     view.set_defaults(func=_cmd_view)
 
     work = sub.add_parser(
-        "work", help="primary interface: writable symlink tree over the store"
+        "work",
+        help="primary interface: writable symlink tree over the store",
+        description="Build the single writable work area for one view. "
+        "A different REF replaces its contents.",
     )
     _add_root(work)
     work.add_argument(
@@ -511,13 +517,8 @@ def build_parser() -> argparse.ArgumentParser:
     work.add_argument(
         "--out",
         default=None,
-        help="output directory (default: <store>/build/work/<ref>)",
-    )
-    work.add_argument(
-        "--name",
-        default=None,
-        help="suffix for the default output directory: "
-        "<store>/build/work/<ref>-<name>",
+        help="single work area (default: <project>/bd_work); a different REF "
+        "replaces its contents",
     )
     _add_display(work)
     work.add_argument("--force", action="store_true", help="overwrite detached files")
