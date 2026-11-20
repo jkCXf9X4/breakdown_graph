@@ -102,8 +102,9 @@ bd work 1
 
 `bd init` creates `.bd_tree/nodes/1.md`, writes a `.gitignore` entry for
 `bd_work/`, and prints the next commands. `bd init DIR` scaffolds the same
-layout inside `DIR`. Front matter is arbitrary: use `layer`, `phase`, `status`,
-`audience`, or anything else.
+layout inside `DIR`. `bd new` prefills `title` and `summary` as empty
+placeholders; `--field` overrides them. Front matter is arbitrary: use `layer`,
+`phase`, `status`, `audience`, or anything else.
 
 ## Where is my store?
 
@@ -157,6 +158,8 @@ Edit and structure:
 ```
 bd init | bd new | bd contain | bd uncontain | bd link | bd unlink
 ```
+
+`bd new` seeds empty `title` and `summary`; `--field` overrides them.
 
 Root:
 

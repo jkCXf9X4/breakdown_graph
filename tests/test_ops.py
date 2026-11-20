@@ -123,6 +123,28 @@ def test_new_uses_next_global_id_and_appends_to_parent(write, tmp_path):
     assert load(tmp_path).effective_contains("2") == ["4"]
 
 
+def test_new_seeds_empty_title_and_summary_and_fields_override(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=[])
+    created = new_node(tmp_path, parent="1")
+    doc = parse_document(created.read_text(encoding="utf-8"))
+    assert doc.meta == {"id": 2, "title": "", "summary": ""}
+    assert list(doc.meta) == ["id", "title", "summary"]
+
+    from bd_tree.api import export_view
+
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1", out)
+    assert (out / "2.md").is_file()
+
+    overridden = new_node(
+        tmp_path, parent="1", fields={"title": "X", "summary": "Y"}
+    )
+    meta = parse_document(overridden.read_text(encoding="utf-8")).meta
+    assert meta["title"] == "X"
+    assert meta["summary"] == "Y"
+
+
 def test_new_materializes_inherited_contains_on_a_version(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"])

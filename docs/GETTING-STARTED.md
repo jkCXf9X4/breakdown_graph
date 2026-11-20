@@ -54,7 +54,8 @@ bd tree 1
 `- 3 What is true?
 ```
 
-`bd new` assigns the next integer and appends it to the parent's `contains`.
+`bd new` assigns the next integer and appends it to the parent's `contains`. It
+seeds `title` and `summary` as empty placeholders; `--field` overrides them.
 `layer` is metadata only; the tool knows no layer vocabulary.
 
 ```sh

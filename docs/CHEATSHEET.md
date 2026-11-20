@@ -44,7 +44,8 @@ bd init [DIR]                       # create .bd_tree/nodes/1.md and .gitignore
 bd new --parent REF --field KEY=VALUE ... [--body TEXT]
 ```
 
-`bd new` assigns the next integer and appends to the parent's `contains`.
+`bd new` assigns the next integer, appends to the parent's `contains`, and seeds
+`title` and `summary` as empty placeholders; `--field` overrides them.
 
 ## Inspect
 

@@ -54,7 +54,7 @@ logical node.
 | `exporter.py` | `context`, `dot` projections, path templates, and `folder`/`name` resolution; `bd view` renders the tree |
 | `work.py` | Single `<project>/bd_work/` area, `current`/`views`/`edit`, switching, `--status`, `--writeback`, git context |
 | `solutions.py` | Thin `git worktree` lifecycle wrapper |
-| `ops.py` | `init`, `new` (derives `folder`), `contain`, `uncontain`, `link`, `unlink`, versions, `diff` |
+| `ops.py` | `init`, `new` (seeds empty `title`/`summary`, derives `folder`), `contain`, `uncontain`, `link`, `unlink`, versions, `diff` |
 | `api.py` | Public Python functions |
 | `cli.py` | argparse wiring and output formatting |
 

@@ -57,6 +57,18 @@ def test_new_with_arbitrary_field_cli(write, tmp_path):
     assert load(tmp_path).effective_contains("1") == ["2"]
 
 
+def test_new_prefills_title_and_summary_cli(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=[])
+    assert main(["new", "--parent", "1", "--root", str(tmp_path)]) == 0
+
+    from bd_tree.frontmatter import parse_document
+
+    doc = parse_document((nodes / "2.md").read_text(encoding="utf-8"))
+    assert doc.meta["title"] == ""
+    assert doc.meta["summary"] == ""
+
+
 def test_check_require_flag_and_view_path_template(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"], phase="intent")
