@@ -426,7 +426,7 @@ def _agents_text(
             "its contents when the view changes."
         ),
         (
-            "- Create nodes with `bd new` and branch a node with `bd version`, "
+            "- Create nodes with `bd new` and branch a node with `bd clone`, "
             "never by adding files here."
         ),
         "- `INDEX.md`, `AGENTS.md` and `REFS.md` are generated; do not edit them.",

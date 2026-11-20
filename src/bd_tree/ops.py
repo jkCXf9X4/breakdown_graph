@@ -24,6 +24,7 @@ from .loader import (
     load,
     load_view,
     node_path,
+    parse_ref,
     parse_selector,
     ref_of,
     resolve_store_root,
@@ -139,39 +140,144 @@ def versions(root: str | Path, node_id: str | int) -> list[Node]:
     return load(root).versions(_logical_id(node_id))
 
 
-def version(
-    root: str | Path, ref: str | int, version: int | None = None
-) -> Path:
-    """Copy a ref to the next free (or explicit) version of the same id."""
-    root = Path(root).resolve()
+def clone(
+    root: str | Path,
+    ref: str | int,
+    version: int | None = None,
+    *,
+    subtree: bool = False,
+) -> list[tuple[str, str]]:
+    """Copy a node, or its whole containment subtree, to new versions.
+
+    The copy keeps the source bytes, including ``links``.  With ``subtree``,
+    every cloned parent is then rewired to the cloned children, so the result
+    is a self-contained copy.  Nothing is wired into the original view; use
+    :func:`replace` for that.  Returns ``(source, clone)`` pairs.
+    """
+    root = resolve_store_root(root)
     store = load(root)
     source_ref = resolve_ref(store, ref)
-    source = _existing(store, source_ref, "source")
-    used = {node.version for node in store.nodes.values() if node.id == source.id}
-    if version is None:
-        version = 1
-        while version in used:
-            version += 1
-    else:
-        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
-            raise BreakdownError(f"invalid version {version!r}")
-        if version in used:
+    _existing(store, source_ref, "source")
+
+    if subtree:
+        if version is not None:
+            raise BreakdownError("--version cannot be combined with --subtree")
+        view = load_view(store, source_ref)
+        errors = [issue for issue in view.issues if issue.level == "error"]
+        if errors:
             raise BreakdownError(
-                f"version {ref_of(source.id, version)} already exists"
+                "cannot clone an invalid view: "
+                + "; ".join(issue.message for issue in errors)
             )
-    target = node_path(root, source.id, version)
-    if target.exists():
-        raise BreakdownError(
-            f"version {ref_of(source.id, version)} already exists"
+        order = list(view.nodes)
+        seen_ids: set[int] = set()
+        for old_ref in order:
+            node = store.nodes[old_ref]
+            if node.id in seen_ids:
+                raise BreakdownError(
+                    f"cannot clone {source_ref}: the view holds two versions "
+                    f"of id {node.id}"
+                )
+            seen_ids.add(node.id)
+    else:
+        order = [source_ref]
+
+    used: dict[int, set[int]] = {}
+    mapping: dict[str, str] = {}
+    for old_ref in order:
+        node = store.nodes[old_ref]
+        taken = used.setdefault(
+            node.id,
+            {other.version for other in store.nodes.values() if other.id == node.id},
         )
-    # Byte copy: the new version keeps the source file's declared contains.
-    shutil.copyfile(source.path, target)
-    return target
+        if version is None:
+            target_version = 1
+            while target_version in taken:
+                target_version += 1
+        else:
+            if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+                raise BreakdownError(f"invalid version {version!r}")
+            if version in taken:
+                raise BreakdownError(
+                    f"version {ref_of(node.id, version)} already exists"
+                )
+            target_version = version
+        target_ref = ref_of(node.id, target_version)
+        target = node_path(root, node.id, target_version)
+        if target.exists():
+            raise BreakdownError(f"version {target_ref} already exists")
+        # Byte copy: the clone keeps the source file's declared contains/links.
+        shutil.copyfile(node.path, target)
+        taken.add(target_version)
+        mapping[old_ref] = target_ref
+
+    if subtree:
+        for old_ref, new_ref in mapping.items():
+            old_node = store.nodes[old_ref]
+            new_children = [mapping.get(child, child) for child in old_node.contains]
+            if new_children == old_node.contains:
+                continue
+            target = node_path(root, *parse_ref(new_ref))
+            document = parse_document(target.read_text(encoding="utf-8"))
+            target.write_text(
+                document.with_raw_fm(
+                    rewrite_contains(document.raw_fm, new_children)
+                ),
+                encoding="utf-8",
+                newline="",
+            )
+
+    return [(old_ref, mapping[old_ref]) for old_ref in order]
+
+
+def replace(
+    root: str | Path, old: str | int, new: str | int
+) -> tuple[str, str, str]:
+    """Swap ``old`` for ``new`` in ``old``'s parent's containment list.
+
+    The position is preserved and the old node file is untouched, so it stays
+    a peer version.  When ``old`` is the store root, ``ROOT`` is repointed to
+    ``new`` instead.  Returns ``(old_ref, parent_ref_or_ROOT, new_ref)``.
+    """
+    root = resolve_store_root(root)
+    store = load(root)
+    old_ref = resolve_ref(store, old)
+    new_ref = resolve_ref(store, new)
+    _existing(store, old_ref, "old ref")
+    _existing(store, new_ref, "new ref")
+    if old_ref == new_ref:
+        raise BreakdownError(f"refusing to replace {old_ref} with itself")
+
+    view = load_view(store)
+    parents = [
+        ref for ref, node in view.nodes.items() if old_ref in node.contains
+    ]
+    if len(parents) > 1:
+        raise BreakdownError(
+            f"{old_ref} has multiple parents in view {view.ref}: "
+            + ", ".join(parents)
+        )
+    if not parents:
+        if store.root_ref == old_ref:
+            set_root(root, new_ref)
+            return old_ref, "ROOT", new_ref
+        raise BreakdownError(
+            f"{old_ref} is not in the default view; wire {new_ref} with "
+            "bd contain"
+        )
+
+    parent = parents[0]
+    siblings = list(store.nodes[parent].contains)
+    index = siblings.index(old_ref)
+    next_ref = siblings[index + 1] if index + 1 < len(siblings) else None
+    uncontain(root, parent, old_ref)
+    contain(root, parent, new_ref, before=next_ref)
+    return old_ref, parent, new_ref
 
 
 def set_root(root: str | Path, ref: str | int) -> Path:
     """Write the store-level ``ROOT`` file to an existing, fully qualified ref."""
-    root = Path(root).resolve()
+    root = resolve_store_root(root)
     store = load(root)
     canonical = resolve_ref(store, ref)
     if canonical not in store.nodes:
@@ -183,7 +289,7 @@ def set_root(root: str | Path, ref: str | int) -> Path:
 
 def clear_root(root: str | Path) -> Path | None:
     """Remove the ``ROOT`` file; the lowest ``(id, version)`` becomes the root."""
-    path = Path(root).resolve() / ROOT_FILE
+    path = resolve_store_root(root) / ROOT_FILE
     if not path.is_file():
         return None
     path.unlink()
@@ -276,7 +382,7 @@ def new_node(
     links: list[dict[str, Any]] | None = None,
 ) -> Path:
     """Create the next global id at version 1 and append it to ``parent``."""
-    root = Path(root).resolve()
+    root = resolve_store_root(root)
     fields = dict(fields or {})
     if "id" in fields:
         raise BreakdownError("'id' is assigned by bd new and cannot be given")

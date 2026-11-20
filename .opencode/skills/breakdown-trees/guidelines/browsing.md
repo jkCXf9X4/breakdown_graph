@@ -5,8 +5,11 @@ and `--max-chars` on any body dump.
 
 ## Which store and which view
 
-- `bd` walks up from the current directory for `nodes/` or `.bd_tree/nodes/`.
-  A nested store needs `BD_ROOT=path/to/project` or `--root path/to/project`.
+- `bd` resolves `--root`, then `$BD_ROOT`, then walks up from the current
+  directory (at each directory a store there first, then a `.bd_root` pointer),
+  then scans downward to depth 3 for a unique store. Several stores below the
+  cwd is refused. A `.bd_root` file holds one store path, so a nested store does
+  not require a flag when a pointer names it.
 - Project layout: store at `<project>/.bd_tree/`, nodes under
   `.bd_tree/nodes/`. Classic layout: `nodes/` at the repo root.
 - The default view root is `ROOT` when present, else the lowest available node
@@ -25,7 +28,7 @@ is unlimited. `--summary` appends summaries and `--fields F,F` appends field
 values. `--columns F,F` switches to the table view (`ref title summary` by
 default, depth 1), with descendants indented two spaces per level and cells
 capped by `--max-chars`. `--links` appends a `links:` footer for edges leaving
-the view:
+the view — in the outline only; the `--columns` table ignores it:
 
 ```
 1-1 Root
@@ -46,9 +49,11 @@ the path, `--view` only the ref, and it errors when no area exists.
 `*`. A history or decisions view appears here without joining the default
 closure; switch to it with `bd work REF` when you need to edit it.
 
-`bd root` — `<ref>  (ROOT|lowest)`.
+`bd root` — `<ref>  (ROOT|lowest node)`.
 
-`bd check` — `N nodes, N errors, N warnings (view REF)` on the last line.
+`bd check` — `N nodes, N errors, N warnings (view REF)` on the last line, with
+one `LEVEL path: message` line per issue. The output does not print issue codes;
+use the code tables in [`validation.md`](validation.md) to read the message.
 `bd path REF` — the ancestor chain, oldest first.
 
 ## Search

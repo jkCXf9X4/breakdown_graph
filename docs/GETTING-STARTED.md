@@ -216,7 +216,7 @@ Two separate moves: change the default view root, or switch the view held by the
 work area. You can also repoint one parent.
 
 ```sh
-bd version 1-1 --version 2   # copy the root to a second peer, keeping contains
+bd clone 1-1 --version 2     # copy the root to a second peer, keeping contains
 bd uncontain 1-2 3-1         # prune one child from the alternative
 bd tree 1-2                  # inspect the alternative before switching
 bd root 1-2                  # write ROOT; tree, find, check default here
@@ -241,8 +241,21 @@ bd uncontain 1-1 3-1
 bd contain 2-1 3-1           # node 3-1 now hangs under 2-1
 ```
 
-A parent's `contains` names the version that is current in that view. `bd versions 1` lists the peers and `bd version 1-1`
-creates a new one.
+A parent's `contains` names the version that is current in that view. `bd versions 1` lists the peers and `bd clone 1-1`
+creates a new one with the same declared `contains`, wired into no view.
+
+`bd clone REF --subtree` copies a node and its whole containment subtree,
+rewiring each cloned parent to its cloned children so the copy is
+self-contained; the original tree is untouched and `--version` cannot be
+combined with `--subtree`. `bd replace OLD NEW` is the separate wiring step: it
+finds OLD in the store's default view and puts NEW at OLD's exact index in its
+parent's `contains`, or repoints `ROOT` when OLD is the store root; OLD's file
+stays as a peer. Clone and swap in one logical flow with `bd clone REF --subtree`
+then `bd replace REF <printed new root ref>`. If OLD is outside the default
+view, `bd replace` errors and asks for `bd contain`; multiple parents is an
+error. The `duplicate-id` rule still forbids both versions in one view, so to
+choose a different position, run `bd uncontain P OLD`, then `bd contain P NEW
+--before NEXT`.
 
 ## 6. A second solution with git
 

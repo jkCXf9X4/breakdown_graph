@@ -7,24 +7,32 @@ the store file; git sees the node file, never the layout.
 
 ```bash
 bd work REF                 # build or replace <project>/bd_work for one view
-bd current                  # <project>/bd_work (view REF)
+bd work                     # no REF: use the default view
+bd work REF --depth 2       # materialize only two descendant levels
+bd current                  # <project>/bd_work (view REF+N)
 work_dir=$(bd current --path)
-$EDITOR "$(bd edit REF)"    # errors if REF is not in the active view
+$EDITOR "$(bd edit REF)"    # exits 2 if REF is outside the materialized prefix
 ```
 
 `bd work REF` replaces the area's contents: stale links are removed and
 `INDEX.md`, `AGENTS.md`, `REFS.md` are regenerated. The area never accumulates
-two views, and a second work folder is not supported. A bare id such as
-`bd edit 5` is a selector resolved in the active view; the file it returns is
-the full `id-version`.
+two views, and a second work folder is not supported. The view is always the
+full containment closure; `REF+N` or `--depth N` only prunes which descendant
+levels are materialized (`N=0` leaves the root alone). `bd edit` honors that
+prefix, so a ref in the full closure but below the materialized depth is
+refused. A bare id such as `bd edit 5` is a selector resolved in the active
+view; the path returned is the placement path (for example
+`bd_work/5-1-<title-slug>.md`, or `folder/name` when the node sets them), not a
+file named only by the ref.
 
 `bd current --path` prints the directory without building anything;
 `bd work REF --clean` discards detached files while switching.
 
 ## Symlinks and generated files
 
-- Node `.md` files in the area are symlinks to `nodes/<ref>.md`, where `<ref>`
-  is the full `id-version`; they are the store.
+- Node `.md` files in the area are relative symlinks to the store file
+  `.bd_tree/nodes/<id>-<version>.md` (or `nodes/<id>-<version>.md` in a classic
+  store); they are the store.
 - `INDEX.md`, `AGENTS.md`, `REFS.md` are regular generated files. Never edit
   them; `bd work REF` rewrites them.
 - Never copy node content into the area and never add a sync layer.
@@ -46,9 +54,10 @@ corrupting the store.
 ## Direct store edits
 
 `bd edit REF` resolves the path inside the active view and fails for a ref
-outside it. Editing `.bd_tree/nodes/<ref>.md` directly (full `id-version`)
-works but bypasses the active-view check; use it only when no area is active and
-the ref is known.
+outside the materialized `REF+N` prefix. Editing
+`.bd_tree/nodes/<id>-<version>.md` directly works but bypasses the active-view
+check; use it only when no area is active and the ref is known. `bd init`
+already ignores `bd_work/`; an export directory is not auto-ignored.
 
 Direct edits skip nothing else: the same `bd check` applies afterwards.
 

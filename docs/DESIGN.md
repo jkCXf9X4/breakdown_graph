@@ -120,8 +120,10 @@ links:
 browser do not re-sort it.
 
 - A `contains` list holds full refs only. A node that omits `contains` is a
-  leaf; there is no inheritance from another version. `bd version` copies the
-  source file, so the copy keeps its declared list.
+  leaf; there is no inheritance from another version. `bd clone` copies the
+  source file, so the copy keeps its declared list; `bd clone --subtree` instead
+  rewrites each cloned parent's `contains` to the cloned children, and
+  `bd replace OLD NEW` wires a clone into the default view (see 3.5).
 - Containment is a tree **per view**: two versions of an id may each contain a
   node in different views, but one view must not reach it through two parents,
   and one view must not hold two versions of the same logical id
@@ -172,14 +174,28 @@ writable at a time. Two axes, deliberately separate:
 
 - Every node file is a version: `5-1.md`, `5-2.md`, and so on are peers, each
   immutable by convention, not enforcement. No version is privileged.
-- `bd version 5-1` copies a ref to the next free version of the same logical id
-  (or to `--version N`) and keeps the source file's declared `contains`;
+- `bd clone 5-1` copies a ref to the next free version of the same logical id
+  (or to `--version N`) and keeps the source file's declared `contains`; it wires
+  nothing into the current view. `bd clone 5-1 --subtree` clones every
+  containment descendant and rewrites each cloned parent's `contains` to the
+  cloned children, producing a self-contained copy; the original tree is
+  untouched, and `--version` cannot be combined with `--subtree`.
+  `bd replace OLD NEW` is the separate wiring step: it finds OLD in the default
+  view and puts NEW at OLD's exact index in its parent's `contains`, or repoints
+  `ROOT` when OLD is the store root; OLD's file stays as a peer. Clone and swap
+  in one logical flow with `bd clone 5-1 --subtree` then `bd replace 5-1
+  <printed new root ref>`. If OLD is outside the default view, `bd replace`
+  errors and asks for `bd contain`; multiple parents is an error.
   `bd delete 5-2` deletes a version, refusing a `ROOT`, a reachable ref, or one
   referenced by any `contains`/`links` unless `--force`.
 - The version current in a view is the one its parent's `contains` names. There
   is no per-node pointer. Repoint one parent with `bd uncontain` / `bd contain`;
-  switch whole trees with `bd work REF` (the work area) or `bd root REF` (the
-  store default). No copy step exists.
+  use `bd clone REF` then `bd replace REF NEW` for the common clone-and-swap
+  path, or run `bd uncontain P OLD`, then `bd contain P NEW --before NEXT` to
+  choose a different position (the `duplicate-id` rule forbids both versions in
+  one view).
+  Switch whole trees with `bd work REF` (the work area) or `bd root REF` (the
+  store default). Switching needs no copy step.
 
 Version references in `contains` and `links` are exact full refs (`6-2`, not
 `6`); this makes a view independent of later edits to any peer.
@@ -343,8 +359,8 @@ styling is chosen by arbitrary fields (`--color-by`, `--shape-by`); and
     body-only replacements.
 12. **Git owns solutions; `bd work` owns layout.** Worktrees isolate branches;
     the single `bd_work/` area shapes the current view inside one branch.
-    Structural edits go through `bd contain` / `bd uncontain` / `bd link` /
-    `bd unlink`.
+    Structural edits go through `bd contain` / `bd uncontain` / `bd clone` /
+    `bd replace` / `bd link` / `bd unlink`.
 13. **Branches and versions are disjoint layers.** Branches isolate whole
     checkouts; versions are peer files for single nodes. No cross-branch refs,
     no branch selector, no per-node active-version selector, and no copy step
@@ -436,8 +452,8 @@ These are enforced or assumed:
 
 1. Are versions immutable snapshots enforced by convention, or should the tool
    create a new version on every edit?
-2. Should `bd version` repoint the parent automatically, or leave repointing to
-   `bd contain` / `bd uncontain`?
+2. Should `bd replace` run automatically after `bd clone`, or stay a separate
+   command?
 3. Do we need filtered views (selectors over fields) in addition to closures?
 4. How should two views be merged: repoint one parent, or synthesize a new
    version and repoint to it?

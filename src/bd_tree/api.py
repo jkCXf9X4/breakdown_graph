@@ -41,7 +41,8 @@ from .ops import new_node as _new_node
 from .ops import set_root as _set_root
 from .ops import uncontain as _uncontain
 from .ops import unlink as _unlink
-from .ops import version as _version
+from .ops import clone as _clone
+from .ops import replace as _replace
 from .ops import versions as _versions
 from .solutions import SolutionEntry, SolutionResult
 from .solutions import listing as _solution_list
@@ -104,7 +105,8 @@ __all__ = [
     "stale",
     "uncontain",
     "unlink",
-    "version",
+    "clone",
+    "replace",
     "versions",
     "work",
 ]
@@ -212,11 +214,22 @@ def versions(root: str | Path, node_id: str | int) -> list[Node]:
     return _versions(root, node_id)
 
 
-def version(
-    root: str | Path, ref: str | int, version: int | None = None
-) -> Path:
-    """Copy a ref to the next free (or explicit) version of the same id."""
-    return _version(root, ref, version)
+def clone(
+    root: str | Path,
+    ref: str | int,
+    version: int | None = None,
+    *,
+    subtree: bool = False,
+) -> list[tuple[str, str]]:
+    """Copy a node, or its containment subtree, to new versions."""
+    return _clone(root, ref, version, subtree=subtree)
+
+
+def replace(
+    root: str | Path, old: str | int, new: str | int
+) -> tuple[str, str, str]:
+    """Swap one contained ref for another, preserving its position."""
+    return _replace(root, old, new)
 
 
 def root_ref(root: str | Path) -> str | None:

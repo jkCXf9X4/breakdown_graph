@@ -56,7 +56,7 @@ resolved inside the selected view (`current_ref(view, id)`).
 | `exporter.py` | `tree`, `context`, `dot` projections, path templates, and `folder`/`name` resolution |
 | `work.py` | Single `<project>/bd_work/` area, `current`/`views`/`edit`, switching, `--status`, `--writeback`, git context |
 | `solutions.py` | Thin `git worktree` lifecycle wrapper |
-| `ops.py` | `init`, `new` (seeds empty `title`/`summary`, derives `folder`), `contain`, `uncontain`, `link`, `unlink`, `version`, `delete`, `diff`, `migrate` |
+| `ops.py` | `init`, `new` (seeds empty `title`/`summary`, derives `folder`), `contain`, `uncontain`, `link`, `unlink`, `clone`, `replace`, `delete`, `diff`, `migrate` |
 | `api.py` | Public Python functions |
 | `cli.py` | argparse wiring and output formatting |
 
@@ -76,8 +76,12 @@ Issue  level, code, message, node, path
 
 `Node.version` is always `>= 1`; `Node.ref` is the canonical `id-version` and
 `node_path` always emits the suffix. A node without `contains` has no children;
-there is no inheritance from another version. `bd version` copies the source
-file, so the new peer keeps its declared list.
+there is no inheritance from another version. `bd clone` copies the source
+file, so the new peer keeps its declared list; `bd clone --subtree` also
+rewrites each cloned parent's `contains` to the cloned children, and
+`bd replace OLD NEW` is the separate wiring step: it puts NEW at OLD's exact
+index in its parent's `contains`, or repoints `ROOT` when OLD is the store
+root, leaving OLD's file as a peer.
 
 ## Add a CLI command
 

@@ -220,13 +220,27 @@ bd solution new | bd solution list | bd solution remove
 Versions (node-local alternatives inside one branch):
 
 ```
-bd versions | bd version | bd delete | bd diff
+bd versions | bd clone | bd replace | bd delete | bd diff
 ```
 
-`bd version REF` copies a ref to the next free version of the same logical id
-(or to `--version N`) and keeps the source file's declared `contains`. A parent's `contains` names the version that is current in that view, so
-repoint the parent with `bd contain`/`bd uncontain`, switch the default
-root with `bd root`, or switch the work-area view with `bd work`.
+`bd clone REF` copies a ref to the next free version of the same logical id
+(or to `--version N`) and keeps the source file's declared `contains`; it wires
+nothing into the current view. `bd clone REF --subtree` clones every
+containment descendant and rewrites each cloned parent's `contains` to the
+cloned children, producing a self-contained copy while the original tree stays
+untouched; `--version` cannot be combined with `--subtree`.
+`bd replace OLD NEW` is the separate wiring step: it finds OLD in the store's
+default view and puts NEW at OLD's exact index in its parent's `contains`, or
+repoints `ROOT` when OLD is the store root; OLD's file stays as a peer. To clone
+and swap in one logical flow, run `bd clone REF --subtree` then
+`bd replace REF <printed new root ref>`. If OLD is not in the default view,
+`bd replace` errors and asks for `bd contain`; multiple parents is an error. A
+parent's `contains` names the version that is current in that view, so the
+`duplicate-id` rule still forbids both versions in one view; to choose a
+different position, run `bd uncontain P OLD`, then `bd contain P NEW --before
+NEXT`.
+Switch the default root with `bd root`, or switch the work-area view with
+`bd work`.
 `bd delete REF` removes a version and refuses a `ROOT`, a reachable ref, or one
 referenced by any `contains`/`links` unless `--force` is given.
 

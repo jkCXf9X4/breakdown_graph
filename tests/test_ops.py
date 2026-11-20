@@ -3,38 +3,38 @@ from __future__ import annotations
 import pytest
 
 from bd_tree.api import (
+    clone,
     delete,
     diff,
     load,
     migrate,
     new_node,
-    version,
+    replace,
     versions,
 )
 from bd_tree.errors import BreakdownError
 from bd_tree.frontmatter import parse_document, render_document
 
 
-def test_version_creates_next_and_explicit_versions(write, tmp_path):
+def test_clone_creates_next_and_explicit_versions(write, tmp_path):
     write(tmp_path / "nodes", 1)
-    created = version(tmp_path, "1-1")
-    assert created.name == "1-2.md"
+    assert clone(tmp_path, "1-1") == [("1-1", "1-2")]
     assert [node.ref for node in versions(tmp_path, 1)] == ["1-1", "1-2"]
-    assert version(tmp_path, 1).name == "1-3.md"
-    assert version(tmp_path, 1, version=4).name == "1-4.md"
+    assert clone(tmp_path, 1) == [("1-1", "1-3")]
+    assert clone(tmp_path, 1, version=4) == [("1-1", "1-4")]
     with pytest.raises(BreakdownError, match="already exists"):
-        version(tmp_path, 1, version=4)
+        clone(tmp_path, 1, version=4)
     with pytest.raises(BreakdownError, match="does not exist"):
-        version(tmp_path, "9-1")
+        clone(tmp_path, "9-1")
 
 
-def test_version_copies_declared_containment(write, tmp_path):
+def test_clone_copies_declared_containment(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"])
     write(nodes, 2, contains=["3"])
     write(nodes, 3)
-    path = version(tmp_path, "2-1")
-    assert path.name == "2-2.md"
+    assert clone(tmp_path, "2-1") == [("2-1", "2-2")]
+    path = nodes / "2-2.md"
     assert parse_document(path.read_text(encoding="utf-8")).meta["contains"] == ["3-1"]
     assert set(load(tmp_path).effective_contains("2-2")) == {"3-1"}
 
@@ -47,6 +47,144 @@ def test_version_copies_declared_containment(write, tmp_path):
     write(nodes, 2, contains=["4"])
     write(nodes, 4)
     assert set(load(tmp_path).effective_contains("2-2")) == {"3-1"}
+
+
+def test_clone_subtree_rewires_descendants_in_order(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2, contains=["3", "4"])
+    write(nodes, 3, contains=["5"])
+    write(nodes, 4)
+    write(nodes, 5)
+
+    pairs = clone(tmp_path, "2-1", subtree=True)
+
+    assert pairs == [
+        ("2-1", "2-2"),
+        ("3-1", "3-2"),
+        ("5-1", "5-2"),
+        ("4-1", "4-2"),
+    ]
+    root_copy = parse_document((nodes / "2-2.md").read_text(encoding="utf-8"))
+    assert root_copy.meta["contains"] == ["3-2", "4-2"]
+    child_copy = parse_document((nodes / "3-2.md").read_text(encoding="utf-8"))
+    assert child_copy.meta["contains"] == ["5-2"]
+
+    # The original tree is untouched and the clone is not wired into it.
+    original = parse_document((nodes / "2-1.md").read_text(encoding="utf-8"))
+    assert original.meta["contains"] == ["3-1", "4-1"]
+    assert set(load(tmp_path).effective_contains("1-1")) == {"2-1"}
+
+    from bd_tree.api import load_view
+
+    assert set(load_view(tmp_path, "1-1").nodes) == {
+        "1-1",
+        "2-1",
+        "3-1",
+        "4-1",
+        "5-1",
+    }
+
+
+def test_clone_subtree_refuses_explicit_version(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2)
+
+    with pytest.raises(BreakdownError, match="cannot be combined with --subtree"):
+        clone(tmp_path, "1-1", version=2, subtree=True)
+
+
+def test_clone_subtree_refuses_two_versions_of_one_id_in_the_view(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2-1", "2-2"])
+    write(nodes, 2, version=1)
+    write(nodes, 2, version=2)
+
+    with pytest.raises(BreakdownError, match="two versions of id 2"):
+        clone(tmp_path, "1-1", subtree=True)
+
+
+def test_replace_swaps_middle_child_in_place(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3", "4"])
+    write(nodes, 2)
+    write(nodes, 3)
+    write(nodes, 4)
+
+    assert clone(tmp_path, "3-1") == [("3-1", "3-2")]
+    assert replace(tmp_path, "3-1", "3-2") == ("3-1", "1-1", "3-2")
+
+    parent = parse_document((nodes / "1-1.md").read_text(encoding="utf-8"))
+    assert parent.meta["contains"] == ["2-1", "3-2", "4-1"]
+    assert (nodes / "3-1.md").is_file()
+    assert (nodes / "3-2.md").is_file()
+
+    from bd_tree.api import check
+
+    assert check(tmp_path).ok
+
+
+def test_subtree_clone_then_replace_repoints_parent_at_new_root(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2, contains=["3", "4"])
+    write(nodes, 3)
+    write(nodes, 4)
+
+    pairs = clone(tmp_path, "2-1", subtree=True)
+    assert pairs == [("2-1", "2-2"), ("3-1", "3-2"), ("4-1", "4-2")]
+    assert replace(tmp_path, "2-1", "2-2") == ("2-1", "1-1", "2-2")
+
+    parent = parse_document((nodes / "1-1.md").read_text(encoding="utf-8"))
+    assert parent.meta["contains"] == ["2-2"]
+    root_copy = parse_document((nodes / "2-2.md").read_text(encoding="utf-8"))
+    assert root_copy.meta["contains"] == ["3-2", "4-2"]
+
+    from bd_tree.api import check, load_view
+
+    assert check(tmp_path).ok
+    assert set(load_view(tmp_path).nodes) == {"1-1", "2-2", "3-2", "4-2"}
+
+
+def test_replace_store_root_repoints_root_file(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2)
+
+    assert clone(tmp_path, "1-1") == [("1-1", "1-2")]
+    assert replace(tmp_path, "1-1", "1-2") == ("1-1", "ROOT", "1-2")
+
+    assert (tmp_path / "ROOT").read_text(encoding="utf-8") == "1-2\n"
+    assert load(tmp_path).root_ref == "1-2"
+
+    from bd_tree.api import check, load_view
+
+    assert check(tmp_path).ok
+    assert set(load_view(tmp_path).nodes) == {"1-2", "2-1"}
+
+
+def test_replace_outside_default_view_raises(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1)
+    write(nodes, 9)
+
+    assert clone(tmp_path, "9-1") == [("9-1", "9-2")]
+    with pytest.raises(BreakdownError, match="not in the default view"):
+        replace(tmp_path, "9-1", "9-2")
+
+
+def test_replace_refuses_self_and_missing_refs(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2)
+
+    with pytest.raises(BreakdownError, match="itself"):
+        replace(tmp_path, "2-1", "2-1")
+    with pytest.raises(BreakdownError, match="does not exist"):
+        replace(tmp_path, "9-1", "2-1")
+    with pytest.raises(BreakdownError, match="does not exist"):
+        replace(tmp_path, "2-1", "9-1")
 
 
 def test_delete_refuses_root_and_reachable_refs_then_force(write, tmp_path):
@@ -157,7 +295,7 @@ def test_new_appends_to_the_parent_version_only(write, tmp_path):
     write(nodes, 1, contains=["2"])
     write(nodes, 2, contains=["3"])
     write(nodes, 3)
-    version(tmp_path, "2-1")
+    clone(tmp_path, "2-1")
     created = new_node(
         tmp_path,
         parent="2-2",

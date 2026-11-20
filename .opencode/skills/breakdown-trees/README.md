@@ -13,11 +13,14 @@ File map: [`__INDEX__.md`](__INDEX__.md).
 
 ## Adopt it
 
-This copy is project-local: it lives at `.opencode/skills/breakdown-trees/`
-and opencode loads it when the project is opened.
+This copy is installed globally: it lives at
+`~/.config/opencode/skills/breakdown-trees/` and opencode loads it in every
+project. The source of truth is `.opencode/skills/breakdown-trees/` in the
+`info_graph` repository; edit it there and republish, never edit the installed
+copy in place.
 
-1. Install `bd` once from this clone: `pip install -e '.[test]'`; otherwise
-   prefix commands with `PYTHONPATH=src python3 -m bd_tree`.
+1. Install the `bd` CLI once (`pip install -e '.[test]'` from a `bd_tree`
+   clone); without installing, run it as `PYTHONPATH=src python3 -m bd_tree`.
 2. Confirm the baseline with `bd check` before any edit.
 3. Pair it with the `product-breakdown` skill (what a node should say) and
    `pb-alignment` (whether the tree is right). This skill only owns the

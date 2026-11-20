@@ -61,7 +61,10 @@ These commands assume the package is installed (`pip install .` from the clone).
 
 `bd versions 2` lists the peer files for one id (`2-1`, `2-2`), ascending by
 version, with no privileged marker. Every version is an alternative for the same
-logical node, so it needs no parent of its own to stay valid.
+logical node, so it needs no parent of its own to stay valid. To clone a ref and
+wire the copy in, run `bd clone REF` then `bd replace REF NEW`: `bd replace`
+keeps NEW at REF's exact index in the parent's `contains`, or repoints `ROOT`
+when REF is the root, and leaves the old file as a peer.
 
 `ROOT` holds one full ref on one line. An explicit ref where a command takes one
 wins over it; with no explicit ref, `ROOT` wins over the lowest available node by

@@ -22,7 +22,7 @@ exists only as a filename that git tracks. They meet exactly once, in a merge.
 |  | Git branch and worktree | Node version |
 | --- | --- | --- |
 | Scope | the whole store checkout | one node file |
-| Created by | `bd solution new` (`git worktree add`) | `bd version REF` |
+| Created by | `bd solution new` (`git worktree add`) | `bd clone REF` |
 | Identity | git ref name | full ref, e.g. `5-1` |
 | In ref resolution | none; refs carry no branch name | the full ref itself, e.g. `5-1` |
 | Isolation | full; other branches are absent | none; shares the checkout |
@@ -43,9 +43,10 @@ exists only as a filename that git tracks. They meet exactly once, in a merge.
    version created on branch A is absent on branch B until they merge.
 4. **A parent's `contains` is the only record of the current version.** A view
    uses the version its parent's `contains` names. To make another version current, repoint the
-   parent with `bd contain` / `bd uncontain`; `bd version` only copies to a new
-   peer, and `bd delete` only removes a file. Neither reads or changes git, and neither can cross a
-   worktree.
+   parent with `bd contain` / `bd uncontain`, or use `bd clone REF` then
+   `bd replace REF NEW` for the common clone-and-swap path; `bd clone` alone
+   only copies to a new peer, and `bd delete` only removes a file. Neither reads
+   or changes git, and neither can cross a worktree.
 5. **Neither a view nor a version crosses a branch.** Mixing is `git merge` or
    `git restore --source`. There is no branch selector, no per-node
    active-version selector, and no cross-branch view. The one store-level
@@ -79,8 +80,18 @@ separate history.
 - Switching between full trees needs no copy step: write `ROOT` with
   `bd root REF` for the default root, run `bd work REF` for the work-area view,
   or repoint one parent with `bd uncontain` / `bd contain`.
-- `bd version REF` copies the source file, so the new peer keeps its declared
+- `bd clone REF` copies the source file, so the new peer keeps its declared
   `contains`; a version that omits `contains` is a leaf, not an inheritor.
+  `bd clone REF --subtree` clones the whole containment closure and rewires the
+  copies to each other, leaving the original tree untouched. `bd replace OLD
+  NEW` is the separate wiring step: it finds OLD in the default view and puts
+  NEW at OLD's exact index in its parent's `contains`, or repoints `ROOT` when
+  OLD is the store root; OLD's file stays as a peer. Clone and swap in one
+  logical flow with `bd clone REF --subtree` then `bd replace REF <printed new
+  root ref>`. If OLD is outside the default view, `bd replace` errors and asks
+  for `bd contain`; multiple parents is an error. The `duplicate-id` rule still
+  forbids both versions in one view, so to choose a different position, run
+  `bd uncontain P OLD`, then `bd contain P NEW --before NEXT`.
 - Two worktrees hold independent copies of the store. A version file committed on
   one is invisible on the other until a merge.
 - Two branches editing the same node conflict per file on

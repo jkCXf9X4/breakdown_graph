@@ -191,7 +191,8 @@ sync with `git merge`.
 
 ```sh
 bd versions ID
-bd version REF [--version N]
+bd clone REF [--version N] [--subtree]
+bd replace OLD NEW
 bd delete REF [--force]
 bd diff LEFT RIGHT
 ```
@@ -199,16 +200,28 @@ bd diff LEFT RIGHT
 Every node file is a version (`<id>-<version>.md`, version >= 1); versions of
 one id are peers. `bd versions ID` accepts `5` or `5-1` and uses the logical
 id. The version current in a view is the one its
-parent's `contains` names — there is no per-node pointer. `bd version REF` copies
+parent's `contains` names — there is no per-node pointer. `bd clone REF` copies
 the source file, including its declared `contains`, to the next free version of
-the same logical id (or to `--version N`). `bd delete REF` removes one version
+the same logical id (or to `--version N`) and wires nothing into the current
+view. `bd clone REF --subtree` clones every containment descendant and rewrites
+each cloned parent's `contains` to the cloned children, producing a
+self-contained copy while the original tree stays untouched; `--version` cannot
+be combined with `--subtree`. `bd replace OLD NEW` is the separate wiring step:
+it finds OLD in the store's default view and puts NEW at OLD's exact index in
+its parent's `contains`, or repoints `ROOT` when OLD is the store root; OLD's
+file stays as a peer. Clone and swap in one logical flow with `bd clone REF
+--subtree` then `bd replace REF <printed new root ref>`. If OLD is outside the
+default view, `bd replace` errors and asks for `bd contain`; multiple parents is
+an error. The `duplicate-id` rule still forbids both versions in one view; to
+choose a different position, run `bd uncontain P OLD`,
+then `bd contain P NEW --before NEXT`. `bd delete REF` removes one version
 and refuses a `ROOT`, a reachable ref, or one referenced by any
 `contains`/`links` unless `--force`.
 
 Versions are alternatives inside one branch, not the solution boundary, and they
-never sync across branches. To switch, repoint one parent with `bd uncontain` /
-`bd contain`, switch the work area with `bd work REF`, or switch the store
-default with `bd root REF`. See
+never sync across branches. To switch, use `bd clone REF` then `bd replace REF
+NEW` (or repoint one parent with `bd uncontain` / `bd contain`), switch the work area with
+`bd work REF`, or switch the store default with `bd root REF`. See
 [Branches and versions](BRANCHES-AND-VERSIONS.md).
 
 ## Freshness

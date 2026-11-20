@@ -322,10 +322,21 @@ def _cmd_root(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_version(args: argparse.Namespace) -> int:
+def _cmd_replace(args: argparse.Namespace) -> int:
     root = _find_root(args.root)
-    path = api.version(root, args.ref, args.version)
-    print(f"created {path.relative_to(root)}")
+    old_ref, parent, new_ref = api.replace(root, args.old, args.new)
+    if parent == "ROOT":
+        print(f"ROOT: {old_ref} -> {new_ref}")
+    else:
+        print(f"replaced {old_ref} with {new_ref} in {parent}")
+    return 0
+
+
+def _cmd_clone(args: argparse.Namespace) -> int:
+    root = _find_root(args.root)
+    pairs = api.clone(root, args.ref, args.version, subtree=args.subtree)
+    for old, new in pairs:
+        print(f"{old} -> {new}")
     return 0
 
 
@@ -761,15 +772,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     root_cmd.set_defaults(func=_cmd_root)
 
-    version = sub.add_parser(
-        "version", help="copy a ref to the next free version of the same id"
+    clone = sub.add_parser(
+        "clone",
+        help="copy a node, or its containment subtree, to new versions",
     )
-    _add_root(version)
-    version.add_argument("ref", help="source ref or bare selector")
-    version.add_argument(
+    _add_root(clone)
+    clone.add_argument("ref", help="source ref or bare selector")
+    clone.add_argument(
         "--version", type=int, default=None, help="explicit target version"
     )
-    version.set_defaults(func=_cmd_version)
+    clone.add_argument(
+        "--subtree",
+        action="store_true",
+        help="clone every containment descendant and rewire the copies to "
+        "each other",
+    )
+    clone.set_defaults(func=_cmd_clone)
+
+    replace = sub.add_parser(
+        "replace",
+        help="swap one contained ref for another, preserving its position",
+    )
+    _add_root(replace)
+    replace.add_argument("old", help="ref currently in the default view")
+    replace.add_argument("new", help="ref to put in its place")
+    replace.set_defaults(func=_cmd_replace)
 
     delete = sub.add_parser(
         "delete", help="delete one node file (refuses bound refs)"

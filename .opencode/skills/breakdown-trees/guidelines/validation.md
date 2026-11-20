@@ -7,10 +7,13 @@ targets.
 ## `bd check`
 
 Validates filenames, front matter, `contains`, `links`, reachability, tree
-shape for every node-rooted view, placement paths, pins, and size. `--view REF`
-narrows reporting to one closure; all views are still checked. The checked root
-is `ROOT`, else the lowest available node by `(id, version)`. A bare id on the
-command line is a selector; data refs must be full `id-version`.
+shape for every node-rooted view, pins, and size. Placement paths are not
+checked here; path problems surface when a work area or export is built.
+`--view REF` narrows reporting to one closure, but the store scan and the
+per-view tree checks still cover the whole store; reachability, freshness,
+size, and `--require` apply to the checked view. The checked root is `ROOT`,
+else the lowest available node by `(id, version)`. A bare id on the command
+line is a selector; data refs must be full `id-version`.
 
 Exit 0 means no `error` issues. Warnings do not fail: `external-link`,
 `untracked-link`, `stale-link`, `oversize`, `unreachable-node`.
@@ -18,6 +21,9 @@ Exit 0 means no `error` issues. Warnings do not fail: `external-link`,
 Useful flags: `--require FIELD` (missing field becomes an error),
 `--max-lines N` / `--max-chars N` (size budgets), `--view REF` (report only
 that closure).
+
+The CLI prints each issue as `LEVEL path: message` and does not echo the code;
+the tables below name the codes used in messages and in the API.
 
 ### Error codes
 
@@ -27,13 +33,15 @@ that closure).
 | `invalid-filename`, `invalid-id`, `id-filename-mismatch` | Filename grammar or `id` disagrees with the filename |
 | `duplicate-version` | Version file repeated |
 | `bare-ref` | `contains`, `links`, or `ROOT` names a bare id instead of a full `id-version` |
-| `bad-frontmatter`, `invalid-contains`, `invalid-link`, `invalid-propagates`, `invalid-pin` | Front matter cannot be parsed or has the wrong shape; a scalar full-ref link needs a non-empty `type` on its target |
+| `bad-frontmatter`, `invalid-contains`, `invalid-links`, `invalid-link`, `invalid-propagates`, `invalid-pin` | Front matter cannot be parsed or has the wrong shape; a scalar full-ref link needs a non-empty `type` on its target |
 | `missing-target` | A `contains` ref points at no file |
 | `containment-cycle`, `multiple-parents` | View is not a tree |
 | `duplicate-id`, `root-ref-missing` | One view holds two versions of the same logical id, or `ROOT` names a missing ref |
-| `invalid-root`, `invalid-ref`, `view-root-missing` | `ROOT` or a view ref is malformed or absent |
+| `invalid-root`, `view-root-missing` | `ROOT` or a view ref is malformed or names a missing ref |
+| `invalid-ref` | A `contains`/`links` ref or a command-line view ref is malformed, or a bare selector names an id absent from the default view |
 | `dangling-link` | A link points at no node at all |
 | `missing-field` | A `--require` field is absent |
+| `root` | The store could not be loaded at all; reported once as the fatal fallback |
 
 Reachability is per logical id and counts outgoing links: versions of one id are
 alternatives, so a non-selected version of a reachable id is not
@@ -76,7 +84,7 @@ a missing body there is a freshness signal, not a bug.
 |---|---|
 | 0 | Success; warnings allowed |
 | 1 | Check failure or navigation error (bad ref, depth, regex) |
-| 2 | Structural refusal (`BreakdownError`) — the tool declined |
+| 2 | Structural refusal (`BreakdownError`) or argparse usage error — the tool declined or the invocation was malformed |
 
 ## Gate before reporting done
 

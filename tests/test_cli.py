@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from bd_tree.cli import main
 
 
@@ -31,11 +33,11 @@ def test_versions_and_delete_cli(write, tmp_path):
     assert not (nodes / "1-2.md").exists()
 
 
-def test_version_and_delete_refusals_cli(write, tmp_path):
+def test_clone_and_delete_refusals_cli(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2-1"])
     write(nodes, 2)
-    assert main(["version", "2-1", "--root", str(tmp_path)]) == 0
+    assert main(["clone", "2-1", "--root", str(tmp_path)]) == 0
     assert (nodes / "2-2.md").is_file()
 
     assert main(["delete", "2-1", "--root", str(tmp_path)]) == 2
@@ -43,6 +45,62 @@ def test_version_and_delete_refusals_cli(write, tmp_path):
 
     assert main(["delete", "2-2", "--root", str(tmp_path)]) == 0
     assert not (nodes / "2-2.md").exists()
+
+
+def test_clone_cli_prints_source_and_clone(write, tmp_path, capsys):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2-1"])
+    write(nodes, 2)
+
+    assert main(["clone", "1-1", "--root", str(tmp_path)]) == 0
+    assert capsys.readouterr().out == "1-1 -> 1-2\n"
+
+
+def test_clone_subtree_cli_prints_every_pair(write, tmp_path, capsys):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2-1"])
+    write(nodes, 2, contains=["3-1", "4-1"])
+    write(nodes, 3)
+    write(nodes, 4)
+
+    assert main(["clone", "2-1", "--subtree", "--root", str(tmp_path)]) == 0
+    assert capsys.readouterr().out == (
+        "2-1 -> 2-2\n3-1 -> 3-2\n4-1 -> 4-2\n"
+    )
+
+
+def test_replace_cli_swaps_and_prints_canonical_message(write, tmp_path, capsys):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3"])
+    write(nodes, 2)
+    write(nodes, 3)
+
+    assert main(["clone", "3-1", "--root", str(tmp_path)]) == 0
+    capsys.readouterr()
+    assert main(["replace", "3-1", "3-2", "--root", str(tmp_path)]) == 0
+    assert capsys.readouterr().out == "replaced 3-1 with 3-2 in 1-1\n"
+
+    from bd_tree.api import load
+
+    assert load(tmp_path).effective_contains("1-1") == ["2-1", "3-2"]
+
+
+def test_replace_outside_view_cli_exits_2(write, tmp_path):
+    write(tmp_path / "nodes", 1)
+    write(tmp_path / "nodes", 9)
+
+    assert main(["clone", "9-1", "--root", str(tmp_path)]) == 0
+    assert main(["replace", "9-1", "9-2", "--root", str(tmp_path)]) == 2
+
+
+def test_clone_rejects_replace_flag_cli_exits_2(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2-1"])
+    write(nodes, 2)
+
+    with pytest.raises(SystemExit) as exc:
+        main(["clone", "1-1", "--replace", "--root", str(tmp_path)])
+    assert exc.value.code == 2
 
 
 def test_new_with_arbitrary_field_cli(write, tmp_path):
@@ -187,6 +245,7 @@ def test_removed_subcommands_and_flags_exit_2(write, tmp_path):
     write(tmp_path / "nodes", 1)
     root = ["--root", str(tmp_path)]
     removed = [
+        ["version", "1-1", *root],
         ["grep", "needle", *root],
         ["view", "1", "--out", str(tmp_path / "out"), *root],
         ["ls", *root],

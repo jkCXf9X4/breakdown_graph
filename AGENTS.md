@@ -111,8 +111,11 @@ behaviour change and update the docs listed at the bottom.
   choice; they are disposable exports, never the work area.
 - Switching trees: `bd root REF` changes the store default root, `bd work REF`
   changes the work-area view, or repoint one parent with `bd uncontain` /
-  `bd contain`. These are the only switches; a view uses the version named by its
-  parent's `contains`.
+  `bd contain`, or clone and swap with `bd clone REF` then `bd replace REF NEW`.
+  `bd replace` keeps NEW at REF's exact index in its parent's `contains`, or
+  repoints `ROOT` when REF is the root, and leaves the old file as a peer. These
+  are the only switches; a view uses the version named by its parent's
+  `contains`.
 - Never hand-edit generated `INDEX.md`, `AGENTS.md`, or `REFS.md` inside a work or
   output directory.
 
@@ -123,6 +126,8 @@ behaviour change and update the docs listed at the bottom.
 | New store | `bd init DIR` |
 | Add a node | `bd new --parent REF --field title=... --field layer=...` |
 | Move a child | `bd uncontain P C` then `bd contain P C --before REF` |
+| Clone and replace a node | `bd clone OLD` then `bd replace OLD NEW` |
+| Replace a version in place | `bd replace OLD NEW` |
 | Add an edge | `bd link FROM TO --type supports --propagates` |
 | Browse a subtree | `bd tree REF --depth 0` |
 | Read a node and children | `bd show REF+2 --max-chars 800` |
@@ -132,7 +137,8 @@ behaviour change and update the docs listed at the bottom.
 | Switch/edit the work area | `bd work REF[+N]`, then open `bd edit REF` |
 | Repair symlinks | `bd work --status` / `bd work --writeback` |
 | Switch tree root | `bd root REF`, `bd root --clear` |
-| Show versions | `bd versions ID`, `bd version REF`, `bd delete REF` |
+| Show versions | `bd versions ID`, `bd delete REF` |
+| Clone a node or subtree | `bd clone REF [--version N] [--subtree]` |
 | New solution | `bd solution new NAME` |
 | Convert a classic store | `bd migrate [--dry-run]` |
 | Validate | `bd check`, `bd stale` |
@@ -152,6 +158,8 @@ bd show 1-1+1 --max-chars 400
 bd uncontain 1-1 5-1
 bd contain 1-1 5-1 --before 2-1
 bd link 5-1 6-1 --type supports
+bd clone 2-1 --subtree    # copy a subtree to new peer versions
+bd replace 2-1 2-2        # wire the copy in at 2-1's index (or repoint ROOT)
 bd work 1-1               # write the single <project>/bd_work area
 bd work 1-1+1             # same area, first two levels only
 bd current                # <project>/bd_work (view 1-1+1)
