@@ -1,7 +1,7 @@
 # Cheatsheet
 
-Run `bd <command> --help` for the full flag list. Exit codes: 0 success, 1 check or
-navigation failure, 2 structural refusal.
+Run `bd <command> --help` for the full flag list. Exit codes: 0 success, 1 check
+or navigation failure, 2 structural refusal.
 
 ## Environment
 
@@ -10,7 +10,7 @@ export BD_ROOT=path/to/store        # directory containing nodes/
 bd --root path/to/store <command>   # explicit per command
 ```
 
-`bd` walks up from the current directory to find `nodes/`. One store per checkout.
+`bd` walks up from the current directory to find `nodes/`; one store per checkout.
 
 ## Start
 
@@ -47,7 +47,7 @@ bd link FROM TO --type TYPE [--propagates]
 bd unlink FROM TO [--type TYPE]
 ```
 
-- `contain` refuses cycles and duplicates; reorder via `uncontain` then `contain`.
+- `contain` refuses cycles and duplicates; reorder with `uncontain` then `contain`.
 - `uncontain` writes `contains: []` when the list becomes empty.
 - `link --propagates` pins the target body hash immediately.
 - Structural commands preserve body bytes and unrelated front matter.
@@ -96,7 +96,7 @@ git worktree list
 git worktree remove ../NAME
 ```
 
-One worktree per solution. Edit and commit inside it. Compare with `git diff`,
+One worktree per solution. Edit and commit inside it; compare with `git diff` and
 sync with `git merge`.
 
 ## Versions (node-local)
@@ -109,8 +109,10 @@ bd retire-version REF
 bd diff LEFT RIGHT
 ```
 
-Versions are alternatives inside one branch, not the solution boundary. They do
-not sync across branches.
+Versions are alternatives inside one branch, not the solution boundary, and they
+never sync across branches. `bd promote` copies files in the current checkout
+only, so check out or merge the branch first. See
+[Branches and versions](BRANCHES-AND-VERSIONS.md).
 
 ## Freshness
 

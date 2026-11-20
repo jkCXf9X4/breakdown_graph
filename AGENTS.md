@@ -28,7 +28,7 @@ through `bd work`; keep `nodes/` flat; commit node files, never `build/`.
 
 **Changing the tool.** Read [`docs/DEVELOPING.md`](docs/DEVELOPING.md). Work
 through the loader, view, checker, and exporter boundaries. Add a test for every
-behaviour change. Update the docs listed at the bottom.
+behaviour change and update the docs listed at the bottom.
 
 ## Core invariants
 
@@ -37,15 +37,17 @@ behaviour change. Update the docs listed at the bottom.
   version.
 - `contains` is an ordered containment list. A view is the closure of one ref.
 - `contains` is a tree per view. `links` is a DAG and never adds nodes to a view.
-- Front matter is arbitrary. Only `id`, `legacy`, `contains`, `links`, `home` are
-  reserved. Do not add a schema unless a project asks for one.
+- Front matter is arbitrary; only `id`, `legacy`, `contains`, `links`, `home` are
+  reserved. Add no schema unless a project asks for one.
 - Git owns the solution boundary: one branch/worktree per solution. The flat store
-  is the merge unit. `bd work` is a layout inside one checkout, never a branch
+  is the merge unit; `bd work` is a layout inside one checkout, never a branch
   mechanism.
 - Work folders are symlink views. Never copy node content into a work folder and
   never introduce a sync layer.
-- A view never crosses a branch. Do not mix versions from different branches in one
-  view; merge the branches with git.
+- A view never crosses a branch, and neither does a version. Versions are node
+  files inside one checkout; branches are git. Never resolve a ref through a
+  branch name, never add a branch or active-version selector, and never promote
+  across branches — merge first.
 - No JSON, TOML, lock, or state data files. Derived output is disposable and
   gitignored.
 
@@ -55,9 +57,8 @@ behaviour change. Update the docs listed at the bottom.
   `git worktree add ../NAME -b NAME`); one worktree per solution.
 - Writable layout: `bd work REF` creates `build/work/<ref>`; edit through symlinks.
 - Read-only views: `bd view REF --out DIR` or `bd export ...`.
-- Never edit `workspace/licentiate/` directly. It is the legacy typed-id source for
-  the migration. Use `tools/migrate_licentiate.py` to regenerate
-  `workspace/licentiate-n/`.
+- Never edit `workspace/licentiate/` directly; it is the legacy typed-id source.
+  Use `tools/migrate_licentiate.py` to regenerate `workspace/licentiate-n/`.
 - Never hand-edit generated `INDEX.md`, `AGENTS.md`, or `REFS.md` inside a work or
   output directory.
 
@@ -98,14 +99,14 @@ python3 -m pytest -q
 - Type hints, dataclasses, small modules.
 - CLI uses argparse. No new dependency without a clear reason.
 - Structural errors raise `BreakdownError`; check reporting uses `Issue`.
-- Preserve arbitrary front-matter fields and body bytes unless the command is
-  explicitly rewriting them.
+- Preserve arbitrary front-matter fields and body bytes unless the command
+  explicitly rewrites them.
 
 ## Commit style
 
 Short conventional prefixes, matching history: `feat:`, `fix:`, `chore:`,
-`docs:`. One concern per commit. Do not commit caches, `build/`, exported views, or
-generated corpora output.
+`docs:`. One concern per commit. Do not commit caches, `build/`, exported views,
+or generated corpora output.
 
 ## Docs map
 
@@ -114,4 +115,6 @@ generated corpora output.
 - [`docs/CHEATSHEET.md`](docs/CHEATSHEET.md) — command reference.
 - [`docs/DEVELOPING.md`](docs/DEVELOPING.md) — developer guide.
 - [`docs/DESIGN.md`](docs/DESIGN.md) — model, decisions, invariants.
+- [`docs/BRANCHES-AND-VERSIONS.md`](docs/BRANCHES-AND-VERSIONS.md) — the
+  branch/version separation contract.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — next work.

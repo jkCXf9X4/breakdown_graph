@@ -9,8 +9,8 @@ boundary, typed dependency edges, and custom symlink work folders.
 - **Layout** — `bd work` renders a view as symlinks into the store.
 - **Freshness** — typed links record what depends on what and whether it still holds.
 
-The store is the data. Work folders are disposable layouts. Agents read views;
-edits go straight to the node files.
+The store is the data; work folders are disposable layouts. Agents read views and
+edit the node files directly.
 
 ## Two axes
 
@@ -18,10 +18,14 @@ These are deliberately separate:
 
 - **Solution boundary: git.** A branch and worktree hold one solution. Git decides
   when it is merged or discarded.
-- **Merge unit: the flat `nodes/` store.** One file per node, so a conflict stays
+- **Merge unit: the flat `nodes/` store.** One file per node keeps a conflict
   local to the node that changed.
 - **Layout: `bd work`.** A custom symlink view inside one checkout. Several views
-  of the same checkout can coexist; none of them is a copy.
+  can coexist; none is a copy.
+- **Versions are not a third axis.** `5-1` is an alternative file for node `5`
+  inside the checked-out branch. Versions give no isolation and never cross a
+  branch; git still owns every branch decision.
+  [The full separation](docs/BRANCHES-AND-VERSIONS.md).
 
 Git answers what changed. `contains` and `links` answer what belongs and what
 depends. Pins answer whether it still holds.
@@ -39,8 +43,7 @@ export PATH="$PWD/bin:$PATH"
 bd --help
 ```
 
-`bin/bd` runs from any working directory. If you prefer not to change `PATH`, use
-`./bin/bd` in every example.
+`bin/bd` runs anywhere; without changing `PATH`, use `./bin/bd` in examples.
 
 ## Five-minute tour
 
@@ -82,15 +85,13 @@ arbitrary: use `layer`, `phase`, `status`, `audience`, or anything else.
 
 ## Where is my store?
 
-`bd` finds the store by walking up from the current directory for a `nodes/`
-directory.
+`bd` walks up from the current directory until it finds `nodes/`.
 
 - If `nodes/` is at your repo root, run `bd` from anywhere inside the repo.
 - If the store is nested, set `BD_ROOT=path/to/store` or pass `--root`.
 - One store per checkout. A git worktree has its own `nodes/`.
 
-This repository is the nested case: the corpus lives at
-`workspace/licentiate-n`, hence `BD_ROOT` in the tour.
+This repository is nested: corpus at `workspace/licentiate-n`, hence `BD_ROOT`.
 
 ## Choose your path
 
@@ -99,6 +100,7 @@ This repository is the nested case: the corpus lives at
 | Set up and use a store for the first time | [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) |
 | Look up a command quickly | [`docs/CHEATSHEET.md`](docs/CHEATSHEET.md) |
 | Understand the model and decisions | [`docs/DESIGN.md`](docs/DESIGN.md) |
+| Know what is a branch and what is a version | [`docs/BRANCHES-AND-VERSIONS.md`](docs/BRANCHES-AND-VERSIONS.md) |
 | Change the tool itself | [`docs/DEVELOPING.md`](docs/DEVELOPING.md) |
 | Work safely as an agent | [`AGENTS.md`](AGENTS.md) |
 | See what is next | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
@@ -169,7 +171,7 @@ tests/                     pytest suite
 tools/migrate_licentiate.py  one-off typed-id → numeric migration
 workspace/licentiate/      legacy typed-id corpus, read-only evaluation source
 workspace/licentiate-n/    numeric corpus, 128 nodes, derived containment
-docs/                      user, developer, design, roadmap
+docs/                      user, developer, design, branches/versions, roadmap
 ```
 
 ## Status
@@ -185,13 +187,12 @@ docs/                      user, developer, design, roadmap
 
 - Node-local versions do not sync across branches. Use git merges for solutions;
   versions are for alternatives inside one branch.
-- No three-way merge between node versions. Promotion is a copy; synthesis is
-  manual.
+- No three-way merge between versions. Promotion copies; synthesis is manual.
 - One worktree per solution. Switching branches inside one worktree can leave a
   layout pointing at paths absent from the new branch; rebuild with
   `bd work REF --clean` and run `--status`.
 - Some editors replace symlinks instead of writing through them. Use
   `bd work --status` / `--writeback`.
 - Work folders rely on symlinks; Windows needs developer mode or elevated rights.
-- No generic importer yet. The licentiate migration is a worked example.
-- No CI configuration or packaging metadata yet.
+- No generic importer, CI configuration, or packaging metadata yet. The licentiate
+  migration is a worked example.

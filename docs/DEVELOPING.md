@@ -1,6 +1,6 @@
 # Developing
 
-This guide is for changing the tool itself. If you want to use the tool, read
+This guide is for changing the tool itself. To use the tool, read
 [`GETTING-STARTED.md`](GETTING-STARTED.md) first.
 
 ## Quick start
@@ -34,8 +34,7 @@ nodes/*.md
 - Every read-only command works on a `View`; structural edits work on `Store`
   and write node files.
 
-This split matters: validation is global, while export and agent context are
-view-scoped.
+Validation is global; export and agent context are view-scoped.
 
 ## Module map
 
@@ -54,8 +53,7 @@ view-scoped.
 | `api.py` | Public Python functions |
 | `cli.py` | argparse wiring and output formatting |
 
-There are no hidden stores, caches, or state files. If a command needs data, it
-loads `nodes/`.
+Data comes from `nodes/`; there are no hidden stores, caches, or state files.
 
 ## Key types
 
@@ -67,8 +65,8 @@ Edge   source, target, type, pinned, origin ("link" or "reference")
 Issue  level, code, message, node, path
 ```
 
-`Node.meta` is the raw front matter. Arbitrary fields live there and are preserved
-on export. `contains is None` means "inherit the main version's list"; `[]` means
+`Node.meta` is the raw front matter; arbitrary fields live there and survive
+export. `contains is None` means "inherit the main version's list"; `[]` means
 "no children".
 
 ## Add a CLI command
@@ -140,8 +138,8 @@ Structural edits change front matter, never prose.
 - `rewrite_contains(raw_fm, refs)` and `rewrite_links(raw_fm, links)` replace only
   that block.
 - `document.with_raw_fm(new_fm)` reconstructs the file with the body untouched.
-- `render_document(meta, body)` is for new files or when a full front-matter
-  rewrite is intended.
+- `render_document(meta, body)` is for new files or an intended full front-matter
+  rewrite.
 
 Checklist:
 
@@ -177,10 +175,9 @@ git diff --check
 ## Debugging
 
 - `python3 -m breakdown ...` is identical to `bin/bd`.
-- `BD_ROOT` and `--root` decide the store; print it with `bd check` or a small
-  Python call.
+- `BD_ROOT`/`--root` choose the store (default: nearest parent with `nodes/`).
 - `bd check --view REF` narrows validation to one closure.
-- `bd tree`, `bd show`, `bd path` are the fastest way to see what the loader sees.
+- `bd tree`, `bd show`, `bd path` quickly show what the loader sees.
 - `bd work --status` diagnoses symlink problems without touching the store.
 - `pdb` works normally; the CLI is a thin argparse layer.
 
@@ -200,7 +197,8 @@ Common mistakes:
 4. Arbitrary front matter survives edits and exports.
 5. Body bytes survive structural edits.
 6. No JSON/TOML/lock/state data files.
-7. A view never crosses a branch; solutions are git worktrees.
+7. A view never crosses a branch, and neither does a version; solutions are git
+   worktrees. `promote` is filesystem-only and never crosses a worktree.
 8. Generated files are disposable and never committed.
 
 ## Style and commits
@@ -219,6 +217,7 @@ The repo is documentation-driven. When behaviour changes:
 - `docs/GETTING-STARTED.md` — user tutorial.
 - `docs/CHEATSHEET.md` — command reference.
 - `docs/DESIGN.md` — model, decisions, invariants.
+- `docs/BRANCHES-AND-VERSIONS.md` — branch/version separation contract.
 - `docs/ROADMAP.md` — next work.
 - `AGENTS.md` — operating rules for agents.
 
@@ -226,8 +225,7 @@ Keep examples executable. Run them before committing.
 
 ## Not built yet
 
-- No `pyproject.toml`, console script, or CI.
-- No generic importer.
+- No `pyproject.toml`, console script, CI, or generic importer.
 - No three-way node merge; solutions merge with git.
 - No locking for concurrent agents.
 - No Windows-specific symlink path.

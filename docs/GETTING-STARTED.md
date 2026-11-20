@@ -1,7 +1,7 @@
 # Getting started
 
-This guide takes you from no store to a browsable, editable graph with a work
-folder, typed links, and a second solution in a git worktree.
+This guide goes from no store to a browsable, editable graph with a work folder,
+typed links, and a second solution in a git worktree.
 
 You need Python 3.10+ and PyYAML. The repository ships `bin/bd`; no install step.
 
@@ -36,8 +36,8 @@ contains: []
 State the intent of this graph here.
 ```
 
-`id` is identity. `contains` is the ordered child list. Everything else is
-arbitrary front matter.
+`id` is identity and `contains` is the ordered child list. The rest of the front
+matter is arbitrary.
 
 Add two nodes and inspect the tree:
 
@@ -54,9 +54,7 @@ bd tree 1
 ```
 
 `bd new` assigns the next integer and appends it to the parent's `contains`.
-The `layer` field is just metadata; the tool does not know any layer vocabulary.
-
-Check the store:
+`layer` is metadata only; the tool knows no layer vocabulary.
 
 ```sh
 bd check
@@ -82,8 +80,8 @@ bd path 2
 - `find` searches titles, summaries, bodies, and front-matter fields.
 - `path` prints the ancestor chain.
 
-Exit codes matter: `bd check` returns 1 on errors, 0 on clean. Structural
-commands return 2 on refusal.
+Exit codes: `bd check` returns 1 on errors and 0 on clean. Structural commands
+return 2 on refusal.
 
 ## 3. Edit in a work folder
 
@@ -102,8 +100,7 @@ claims/3.md
 INDEX.md  AGENTS.md  REFS.md
 ```
 
-The path comes from `home` when present, otherwise from a template. Open a file
-and edit it:
+The path comes from `home` when present, otherwise from a template:
 
 ```sh
 $EDITOR "$work_dir/claims/3.md"
@@ -122,15 +119,15 @@ bd work 1 --writeback
 `--writeback` writes the detached content to the original node, refuses files
 without valid front matter, and re-links them.
 
-Several layouts of the same view can coexist:
+Layouts of one view can coexist:
 
 ```sh
 bd work 1 --name flat --path-template '{ref}.md'
 ```
 
-The default layout uses `home` when every node has one, so the first `bd work 1`
-is the tree-shaped layout; `--name flat` is the numeric layout. Both point at the
-same `nodes/` files. An edit through one is visible through the other.
+The default layout uses `home` when every node has one, so `bd work 1` is
+tree-shaped and `--name flat` is numeric. Both point at the same `nodes/` files,
+so an edit through one shows in the other.
 
 ## 4. Structure and typed links
 
@@ -170,7 +167,7 @@ bd reconcile 3
 bd stale
 ```
 
-`--propagates` is opt-in. A `see_also` edge never goes stale. Pins are body
+`--propagates` is opt-in; a `see_also` edge never goes stale. Pins are body
 hashes, so they survive a rebase.
 
 Remove an edge:
@@ -181,8 +178,7 @@ bd unlink 3 1 --type serves
 
 ## 5. A second solution with git
 
-A solution is a git branch checked out in a worktree. The flat store is the merge
-unit.
+A solution is a git branch in a worktree; the flat store is the merge unit.
 
 ```sh
 git init -b main
@@ -201,8 +197,6 @@ store .
 cd /home/you/graphs/sol-a
 BD_ROOT=. bd work 1
 ```
-
-Follow it:
 
 ```sh
 cd ../sol-a
@@ -241,9 +235,8 @@ bd export context --view 1 --out build/ctx
 bd work 1
 ```
 
-Both produce an `AGENTS.md`. The work folder version also records the git branch,
-commit, and worktree. Point the agent at that directory and tell it not to read
-outside it.
+Both produce an `AGENTS.md`; the work folder also records the branch, commit, and
+worktree. Tell the agent not to read outside that directory.
 
 ## 7. Use an existing markdown tree
 
