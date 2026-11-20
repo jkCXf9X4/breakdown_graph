@@ -22,10 +22,12 @@ bd root --clear                     # delete ROOT; lowest main ref is the defaul
 ```
 
 `ROOT` sits at the store top level and holds one ref on one line, nothing else.
-It is the default view root for `tree`, `ls`, `work`, `check`, `stale`, and
-`reconcile`, and the view root `bd check` reports. An explicit ref or
-`--root-ref` wins over `ROOT`; `ROOT` wins over the lowest main ref. A declared
-but missing ref is `root-ref-missing`; malformed content is `invalid-root`.
+It is the default view root for `tree`, `ls`, `find`, `grep`, `work`, `check`,
+`stale`, and `reconcile`, and the view root `bd check` reports. An explicit ref
+or `--root-ref` wins over `ROOT`; `ROOT` wins over the lowest main ref. A
+declared but missing ref is `root-ref-missing`; malformed content is
+`invalid-root`. `bd root` does not rewrite the view already in the work area;
+use `bd work REF` for that.
 
 ## Start
 
@@ -43,15 +45,20 @@ bd check [--view REF] [--require FIELD] [--max-lines N] [--max-chars N]
 bd tree [REF] [--depth N] [--summary] [--fields F,F]
 bd show REF[+N] [--max-chars N] [--no-body] [--fields F,F] [--path]
 bd ls [REF] [--depth N] [--columns F,F] [--max-chars N]
-bd find QUERY [--field F] [--regex] [--where K=V ...] [--limit N]
-bd grep PATTERN [--field F] [--where K=V ...] [--limit N]
+bd find QUERY [--view REF|--all] [--field F] [--regex] [--where K=V ...] [--limit N]
+bd grep PATTERN [--view REF|--all] [--field F] [--where K=V ...] [--limit N]
 bd path REF
 ```
 
-- `show 5+2`: node 5 plus two levels of descendant bodies.
-- `tree 5 --depth 0`: whole subtree. A missing ref uses the store root.
+- `show 5+2`: node 5 plus two levels of descendant bodies. With N > 0 the body
+  is capped at 4000 characters per node unless `--max-chars N` is given;
+  `--max-chars 0` prints the full body.
+- `tree 5 --depth 0`: whole subtree. `ls 5 --depth 0` is also unlimited. A
+  missing ref uses the store root.
 - `ls 1 --columns ref,title,layer,status`: arbitrary fields as columns.
-- `find` searches title, summary, body, and all string fields.
+- `find` searches title, summary, body, and all string fields. It searches the
+  default view unless `--view REF` or `--all` is given; output stays capped.
+- `grep` has the same view scope: default view, `--view REF`, or `--all`.
 
 ## Structure
 
@@ -70,18 +77,28 @@ bd unlink FROM TO [--type TYPE]
 ## Work folders
 
 ```sh
-bd work [REF] [--path-template T] [--out DIR] [--print]
-bd work REF --status
-bd work REF --writeback
-bd work REF --clean
+bd work [REF] [--path-template T] [--status] [--writeback] [--clean] [--print]
+bd current [--path|--view]
+bd views
+bd edit REF
 ```
 
 - Default: `<project>/bd_work/`. A project has exactly one writable work area;
   a different REF replaces its contents.
-- Every `.md` is a symlink to the store's `nodes/<ref>.md`
-  (`.bd_tree/nodes/<ref>.md` in a project layout).
-- `--print` emits only the directory.
-- `--out DIR` is an explicit single-area override, not a second area.
+- Node `.md` files are symlinks to the store's `nodes/<ref>.md`
+  (`.bd_tree/nodes/<ref>.md` in a project layout). `INDEX.md`, `AGENTS.md`, and
+  `REFS.md` are regular generated files, never symlinks.
+- `bd current` is read-only: it prints `<project>/bd_work (view <ref>)`;
+  `--path` prints only the path, `--view` only the ref. It errors if no work
+  area exists.
+- `--print` prints only the directory, is read-only, does not build, and errors
+  if no area exists.
+- `--status` and `--writeback` inspect the view actually in the area, not the
+  requested or default view.
+- `bd views` lists containment roots (`ref`, title), one per line, and marks the
+  store default (`ROOT`) with `*`.
+- `bd edit REF` prints the absolute path of REF in the active view and errors if
+  the ref is not there.
 - `--status`: `ok`, `missing`, `wrong-target`, `detached`, `stray`, `stale-ref`.
 - `--writeback` keeps edits made by an editor that replaced a symlink.
 - Switching with detached (edited but unsynced) files is refused: run
@@ -93,6 +110,7 @@ Switch the one area between views:
 
 ```sh
 bd work 1                                      # write <project>/bd_work for view 1
+bd current                                     # <project>/bd_work (view 1)
 bd work 5                                      # switch the same area to view 5
 bd work 1 --path-template '{layer}/{ref}.md'
 ```
@@ -135,8 +153,9 @@ never sync across branches. `bd fork` materialises the effective `contains` list
 into the version, so later edits to main's containment do not change it; a
 hand-written version that omits `contains` still inherits main's list.
 `bd promote` copies one version onto main in the current checkout only, so check
-out or merge the branch first — it is not a way to switch trees. Switching is
-`bd root REF` or repointing one parent with `bd uncontain` / `bd contain`. See
+out or merge the branch first — it is not a way to switch trees. Switch the
+work area with `bd work REF`, the store default with `bd root REF`, or repoint
+one parent with `bd uncontain` / `bd contain`. See
 [Branches and versions](BRANCHES-AND-VERSIONS.md).
 
 ## Freshness
@@ -153,25 +172,24 @@ a propagating target makes the source edge stale until reconciled.
 
 ```sh
 bd view REF --out DIR [--path-template T] [--clean]
-bd export tree    --view REF --out DIR
 bd export context --view REF --out DIR
 bd export dot     --view REF --out FILE [--color-by FIELD] [--shape-by FIELD]
 ```
 
-`context` writes fresh node bodies plus `STALE.md` and `AGENTS.md`. `dot` is
-Graphviz.
+`bd view` is the single read-only tree projection. `context` writes fresh node
+bodies plus `STALE.md` and `AGENTS.md`. `dot` is Graphviz.
 
 ## Git patterns
 
 ```sh
 git worktree add ../sol-a -b sol-a
-git diff main..sol-a -- nodes/    # or your default branch
+git diff main..sol-a -- .bd_tree/nodes/    # or your default branch
 git merge sol-a
 git cherry-pick <commit>
-git restore --source=sol-a -- nodes/5.md
+git restore --source=sol-a -- .bd_tree/nodes/5.md
 ```
 
-- The flat `nodes/` path is the merge unit.
+- The flat node path (`.bd_tree/nodes/` in a project layout) is the merge unit.
 - Worktrees are the simultaneous solutions.
 - `git status` shows node edits, never the layout.
 
@@ -180,7 +198,7 @@ git restore --source=sol-a -- nodes/5.md
 ```sh
 bd check
 bd stale
-bd work REF --status
+bd work --status
 git status --porcelain
 python3 -m pytest -q
 ```
@@ -190,8 +208,10 @@ python3 -m pytest -q
 | Problem | Fix |
 | --- | --- |
 | Wrong store | `BD_ROOT` or `--root`; `bd` uses the nearest `nodes/` or `.bd_tree/nodes/` upward. |
+| `bd current` errors | No work area exists. Build one with `bd work [REF]`. |
+| `bd edit REF` errors | The ref is not in the active view. Switch with `bd work REF` or pass a ref that is present. |
 | `root-ref-missing` / `invalid-root` | The `ROOT` file names an absent ref or is malformed. Fix it, or run `bd root --clear`. |
-| Detached work file | `bd work REF --status`, then `--writeback`. Switching views with detached files is refused until you do. |
+| Detached work file | `bd work --status`, then `bd work --writeback`. Switching views with detached files is refused until you do. |
 | Want two work folders | Not supported. `bd_work/` is the single area; switch with `bd work REF`. |
 | Stale layout after branch change | `bd work REF --clean`. |
 | Dangling link after removing a node | `bd check`, then `bd unlink` or restore the node. |

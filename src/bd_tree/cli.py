@@ -25,6 +25,7 @@ from .navigate import (
     render_path,
     render_show,
     render_tree,
+    view_roots,
 )
 
 
@@ -106,22 +107,60 @@ def _cmd_view(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_current(args: argparse.Namespace) -> int:
+    info = api.area(_find_root(args.root))
+    if info.ref is None:
+        raise BreakdownError(
+            f"no work area at {info.out}; run `bd work REF` first"
+        )
+    if args.path_only:
+        print(info.out)
+    elif args.view_only:
+        print(info.ref)
+    else:
+        print(f"{info.out} (view {info.ref})")
+    return 0
+
+
+def _cmd_views(args: argparse.Namespace) -> int:
+    store = api.load(_find_root(args.root))
+    roots = view_roots(store)
+    if not roots:
+        raise BreakdownError("store has no containment roots")
+    width = max(len(node.ref) for node in roots)
+    for node in roots:
+        marker = " *" if node.ref == store.root_ref else ""
+        print(f"{node.ref:<{width}}  {node.title}{marker}")
+    return 0
+
+
+def _cmd_edit(args: argparse.Namespace) -> int:
+    print(api.edit_path(_find_root(args.root), args.ref))
+    return 0
+
+
 def _cmd_work(args: argparse.Namespace) -> int:
     root = _find_root(args.root)
-    ref = args.ref or main_root(api.load(root))
+    if args.print_path:
+        info = api.area(root)
+        if info.ref is None:
+            raise BreakdownError(
+                f"no work area at {info.out}; run `bd work REF` first"
+            )
+        print(info.out)
+        return 0
+    ref = args.ref
+    if ref is None and not (args.status or args.writeback):
+        ref = main_root(api.load(root))
     result = api.work(
         root,
         ref,
-        Path(args.out) if args.out else None,
         force=args.force,
         clean=args.clean,
         status=args.status,
         writeback=args.writeback,
         **_display_opts(args),
     )
-    if args.print_path:
-        print(result.out)
-        return 0
     if args.status or args.writeback:
         for entry in result.entries:
             if entry.status == "ok":
@@ -157,9 +196,10 @@ def _cmd_solution_new(args: argparse.Namespace) -> int:
     )
     print(f"worktree {result.path}")
     print(f"branch {result.branch}")
-    print(f"store {result.store}")
-    print(f"cd {result.path}")
-    print(f"BD_ROOT={result.store} bd work 1")
+    print(f"project {result.project}")
+    project_dir = result.path / result.project
+    print(f"cd {project_dir}")
+    print(f"bd work {result.view}")
     return 0
 
 
@@ -192,7 +232,7 @@ def _cmd_solution_remove(args: argparse.Namespace) -> int:
 
 def _cmd_export(args: argparse.Namespace) -> int:
     opts: dict[str, object] = {}
-    if args.view_name in ("tree", "context"):
+    if args.view_name == "context":
         opts.update(force=args.force, clean=args.clean, **_display_opts(args))
     elif args.view_name == "dot":
         opts.update(color_by=args.color_by, shape_by=args.shape_by)
@@ -439,6 +479,8 @@ def _cmd_find(args: argparse.Namespace) -> int:
         regex=args.regex,
         where=parse_where(args.where),
         limit=args.limit,
+        view=args.view,
+        all_nodes=args.all_nodes,
     )
     if output:
         print(output)
@@ -456,6 +498,8 @@ def _cmd_grep(args: argparse.Namespace) -> int:
         regex=True,
         where=parse_where(args.where),
         limit=args.limit,
+        view=args.view,
+        all_nodes=args.all_nodes,
     )
     if output:
         print(output)
@@ -478,7 +522,7 @@ def build_parser() -> argparse.ArgumentParser:
         "and home have built-in meaning.",
         epilog="Start with `bd work`: it builds a writable symlink tree over the "
         "store and is the primary editing interface.\n"
-        "Edit through the symlinks; every .md file there is the node itself.\n"
+        "Edit through the symlinks; every node .md file there is the store file.\n"
         "`bd view` and `bd export` are read-only projections of the same nodes.\n"
         "Solutions are git worktrees (`bd solution`); layouts inside one are `bd work`.\n"
         "Repair a work tree with `bd work REF --status` or `--writeback`.",
@@ -514,12 +558,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="view root ref (default: ROOT file, else lowest main ref)",
     )
-    work.add_argument(
-        "--out",
-        default=None,
-        help="single work area (default: <project>/bd_work); a different REF "
-        "replaces its contents",
-    )
     _add_display(work)
     work.add_argument("--force", action="store_true", help="overwrite detached files")
     work.add_argument("--clean", action="store_true", help="remove the output first")
@@ -536,9 +574,33 @@ def build_parser() -> argparse.ArgumentParser:
         "--print",
         dest="print_path",
         action="store_true",
-        help='print only the resolved work directory (for cd "$(bd work 1 --print)")',
+        help='read-only: print the work directory (for cd "$(bd work --print)")',
     )
     work.set_defaults(func=_cmd_work)
+
+    current = sub.add_parser(
+        "current", help="show the active work area and its view (read-only)"
+    )
+    _add_root(current)
+    current_mode = current.add_mutually_exclusive_group()
+    current_mode.add_argument(
+        "--path", dest="path_only", action="store_true", help="print only the path"
+    )
+    current_mode.add_argument(
+        "--view", dest="view_only", action="store_true", help="print only the view ref"
+    )
+    current.set_defaults(func=_cmd_current)
+
+    views = sub.add_parser("views", help="list containment roots")
+    _add_root(views)
+    views.set_defaults(func=_cmd_views)
+
+    edit = sub.add_parser(
+        "edit", help="print the path of a ref in the active work area"
+    )
+    _add_root(edit)
+    edit.add_argument("ref")
+    edit.set_defaults(func=_cmd_edit)
 
     solution = sub.add_parser(
         "solution",
@@ -585,7 +647,6 @@ def build_parser() -> argparse.ArgumentParser:
     export = sub.add_parser("export", help="read-only derived artifacts")
     export_sub = export.add_subparsers(dest="view_name", required=True)
     for name, help_text in (
-        ("tree", "nodes at templated paths plus one generated INDEX.md"),
         ("context", "fresh nodes only, plus STALE.md and AGENTS.md"),
         ("dot", "Graphviz dot graph"),
     ):
@@ -593,7 +654,7 @@ def build_parser() -> argparse.ArgumentParser:
         _add_root(child)
         child.add_argument("--view", required=True, help="view root ref")
         child.add_argument("--out", required=True)
-        if name in ("tree", "context"):
+        if name == "context":
             child.add_argument("--force", action="store_true")
             child.add_argument("--clean", action="store_true")
             _add_display(child)
@@ -750,8 +811,9 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument(
         "--max-chars",
         type=int,
-        default=0,
-        help="truncate each body at N chars (default 0: full)",
+        default=None,
+        help="truncate each body at N chars (default: full at depth 0, "
+        "4000 per node when depth > 0; 0 means full)",
     )
     show.add_argument("--no-body", action="store_true", help="headings only")
     show.add_argument(
@@ -779,7 +841,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_root(ls)
     ls.add_argument("ref", nargs="?", default=None, help="root ref (default: main root)")
     ls.add_argument(
-        "--depth", type=int, default=None, help="levels (default 1)"
+        "--depth", type=int, default=None, help="levels (default 1, 0: unlimited)"
     )
     ls.add_argument(
         "--columns",
@@ -808,6 +870,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="exact field filter (repeatable)",
     )
     find.add_argument("--limit", type=int, default=20, help="maximum nodes (default 20)")
+    find.add_argument(
+        "--view", default=None, help="view ref (default: store root)"
+    )
+    find.add_argument(
+        "--all", dest="all_nodes", action="store_true",
+        help="search the whole store, including nodes outside the view",
+    )
     find.set_defaults(func=_cmd_find)
 
     grep = sub.add_parser("grep", help="find with regular expressions on by default")
@@ -822,6 +891,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="exact field filter (repeatable)",
     )
     grep.add_argument("--limit", type=int, default=20, help="maximum nodes (default 20)")
+    grep.add_argument(
+        "--view", default=None, help="view ref (default: store root)"
+    )
+    grep.add_argument(
+        "--all", dest="all_nodes", action="store_true",
+        help="search the whole store, including nodes outside the view",
+    )
     grep.set_defaults(func=_cmd_grep)
 
     path = sub.add_parser("path", help="print the ancestry of a ref")

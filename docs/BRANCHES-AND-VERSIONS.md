@@ -46,7 +46,9 @@ exists only as a filename that git tracks. They meet exactly once, in a merge.
    `git restore --source`. There is no branch selector, no per-node
    active-version selector, and no cross-branch view. The one store-level
    pointer is `ROOT`, a single ref line naming the default view root; it selects
-   no version.
+   no version. The default root and the view in the work area are separate:
+   `bd root REF` changes the default, `bd work REF` changes the contents of
+   `<project>/bd_work/`.
 6. **Containment decides membership, not location.** `contains` is a tree per
    view; `links` is a DAG and never adds a node to a view
    (`src/bd_tree/checker.py:164-179`).
@@ -63,23 +65,26 @@ Ask what must move.
   it is a view. Nothing moves at all.
 
 The closest a version comes to a branch is a root (intent) version with its own
-`contains` list: an alternative closure over the same files. Point the store at
-it with `bd root 1-4`, or pass the ref to one command; it is still a lens on one
-checkout, with no isolation and no separate history.
+`contains` list: an alternative closure over the same files. Make it the default
+with `bd root 1-4`, open it in the work area with `bd work 1-4`, or pass the ref
+to one command; it is still a lens on one checkout, with no isolation and no
+separate history.
 
 ## Consequences worth stating
 
 - Switching between full trees needs no promotion: write `ROOT` with
-  `bd root REF`, or repoint one parent with `bd uncontain` / `bd contain`.
-  `bd promote` remains a per-node copy of one version onto main.
+  `bd root REF` for the default root, run `bd work REF` for the work-area view,
+  or repoint one parent with `bd uncontain` / `bd contain`. `bd promote` remains
+  a per-node copy of one version onto main.
 - `bd fork` materialises the effective `contains` list, so an alternative keeps
   its own tree when main's containment changes. A hand-written version that
   omits `contains` still inherits main's list.
 - Two worktrees hold independent copies of the store. A version file committed on
   one is invisible on the other until a merge.
-- Two branches editing the same node conflict per file on `nodes/<ref>.md`. That
-  is the intended merge unit; a pointer or selector would hide the change and let
-  the branches diverge silently.
+- Two branches editing the same node conflict per file on
+  `.bd_tree/nodes/<ref>.md` (`nodes/<ref>.md` in a classic layout). That is the
+  intended merge unit; a pointer or selector would hide the change and let the
+  branches diverge silently.
 - Deleting a worktree never deletes a version; deleting a version never touches
   git history.
 - The invariant "every id is reachable from the global root" is evaluated per
@@ -94,8 +99,8 @@ Each unification was considered and rejected in `DESIGN.md` §8:
   and duplicated state;
 - filename branches (`<id>-<branch>`) — branch names are global and exclusion
   needs a marker; a version of the root is smaller;
-- git branches as the only variant mechanism — serial checkouts, no side-by-side
-  views, stale build output across checkouts;
+- git branches as the only variant mechanism — serial checkouts, no simultaneous
+  views across checkouts, stale generated output across checkouts;
 - `use` selection maps for cross-branch mixes — a second branch mechanism.
 
 The split is deliberate: git owns isolation and history, filenames own identity

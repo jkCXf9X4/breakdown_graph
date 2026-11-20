@@ -1,0 +1,18 @@
+---
+id: INFO-028
+type: info
+title: Git-dependent tests skip without git
+summary: Worktree and git-context tests detect the executable and skip cleanly when it is absent.
+date: 2026-11-20
+status: current
+---
+
+# Git-dependent tests skip without git
+
+`tests/test_solutions.py` guards the module with `pytest.mark.skipif(shutil.which("git") is None)`, and work-context tests tolerate a missing executable.
+
+- **Guard:** the module-level `pytestmark` skips every solution test when `shutil.which("git")` returns `None`.
+- **Temporary repository:** `_init` runs `git init`, sets local `user.name` and `user.email`, and disables gpgsign.
+- **Work context:** `work.git_context` returns `None` when git is absent or any query fails; `AGENTS.md` then omits branch, commit, and toplevel.
+- **Coverage:** `test_work_without_git_omits_git_context` exercises the no-git path, while `test_work_records_git_branch_commit_and_toplevel` covers the present-git path.
+- **No network:** the git tests create local repositories only.

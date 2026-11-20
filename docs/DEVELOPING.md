@@ -27,7 +27,7 @@ run from the repo root with `PYTHONPATH=src python3 -m bd_tree`.
    │                                      └─ load_view(store, ref) ─► View
    │                                                                  │
    ├─ checker / navigate / freshness ◄───────────────────────────────┤
-   ├─ exporter.tree|context|dot ◄────────────────────────────────────┤
+   ├─ exporter.context|dot, view tree ◄──────────────────────────────┤
    └─ work (symlinks) ◄──────────────────────────────────────────────┘
 ```
 
@@ -51,8 +51,8 @@ logical node.
 | `checker.py` | Structural checks, per-view tree checks, `--require`, size limits |
 | `freshness.py` | Pins, stale edges, reconcile |
 | `navigate.py` | `show`, `tree`, `ls`, `find`, `grep`, `path` renderers |
-| `exporter.py` | `tree`, `context`, `dot` projections and path templates |
-| `work.py` | Single `<project>/bd_work/` area, switching, `--status`, `--writeback`, git context |
+| `exporter.py` | `context`, `dot` projections and path templates; `bd view` renders the tree |
+| `work.py` | Single `<project>/bd_work/` area, `current`/`views`/`edit`, switching, `--status`, `--writeback`, git context |
 | `solutions.py` | Thin `git worktree` lifecycle wrapper |
 | `ops.py` | `init`, `new`, `contain`, `uncontain`, `link`, `unlink`, versions, `diff` |
 | `api.py` | Public Python functions |
@@ -192,10 +192,20 @@ git diff --check
 - `PYTHONPATH=src python3 -m bd_tree ...` is identical to `bd`.
 - `BD_ROOT`/`--root` choose the store (default: nearest parent with `nodes/` or
   `.bd_tree/nodes/`).
-- `bd root` shows or switches the store root; `bd root --clear` removes `ROOT`.
+- `bd root` shows or switches the default view root; `bd root --clear` removes
+  `ROOT`. It does not rewrite the work area.
+- `bd views` lists containment roots and marks the default; `bd current` reports
+  the work area and the view actually in it.
 - `bd check --view REF` narrows validation to one closure.
 - `bd tree`, `bd show`, `bd path` quickly show what the loader sees.
-- `bd work --status` diagnoses symlink problems without touching the store.
+- `bd show REF+N` caps each body at 4000 characters unless `--max-chars` is
+  given; `--max-chars 0` prints full bodies. `bd ls --depth 0` and
+  `bd tree --depth 0` are unlimited.
+- `bd find`/`bd grep` default to the default view; `--view REF` narrows and
+  `--all` searches the whole store. Output stays capped.
+- `bd work --status` diagnoses symlink problems without touching the store and
+  inspects the view actually in the area; `bd edit REF` resolves a ref inside
+  that view.
 - `pdb` works normally; the CLI is a thin argparse layer.
 
 Common mistakes:
@@ -221,7 +231,8 @@ Common mistakes:
    not a way to switch trees.
 8. Generated files are disposable and never committed.
 9. A project has exactly one writable work area, `<project>/bd_work/`, holding
-   one view at a time. Read-only exports never become a second work area.
+   one view at a time. Its view changes only with `bd work`, not with `bd root`.
+   Read-only exports never become a second work area.
 
 ## Style and commits
 

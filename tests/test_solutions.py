@@ -44,6 +44,13 @@ def _store(write, repo: Path) -> None:
     write(repo / "nodes", 2)
 
 
+def _hidden_store(write, repo: Path) -> None:
+    nodes = repo / ".bd_tree" / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2)
+    (repo / ".bd_tree" / "ROOT").write_text("2\n", encoding="utf-8")
+
+
 def test_new_creates_default_sibling_branch(write, tmp_path, capsys):
     _init(tmp_path)
     _store(write, tmp_path)
@@ -58,9 +65,10 @@ def test_new_creates_default_sibling_branch(write, tmp_path, capsys):
     assert _git(target, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "sol-a"
     assert f"worktree {target}" in out
     assert "branch sol-a" in out
-    assert "store ." in out
+    assert "project ." in out
     assert f"cd {target}" in out
-    assert "BD_ROOT=. bd work 1" in out
+    assert "bd work 1" in out
+    assert "BD_ROOT=" not in out
 
 
 def test_list_marks_main_and_store(write, tmp_path, capsys):
@@ -138,6 +146,36 @@ def test_new_from_starts_at_named_commit(write, tmp_path):
 
     assert result.created_branch is True
     assert _git(result.path, "rev-parse", "HEAD").stdout.strip() == first
+
+
+def test_new_exposes_the_classic_project_and_view(write, tmp_path):
+    _init(tmp_path)
+    _store(write, tmp_path)
+    _commit(tmp_path)
+
+    result = solution_new(tmp_path, "sol-fields")
+
+    assert result.store == "."
+    assert result.project == "."
+    assert result.view == "1"
+
+
+def test_new_and_list_expose_hidden_store_project_and_view(write, tmp_path):
+    _init(tmp_path)
+    _hidden_store(write, tmp_path)
+    _commit(tmp_path)
+
+    result = solution_new(tmp_path / ".bd_tree", "sol-hidden")
+
+    assert result.store == ".bd_tree"
+    assert result.project == "."
+    assert result.view == "2"
+
+    entries = solution_list(tmp_path / ".bd_tree")
+    solved = next(entry for entry in entries if entry.branch == "sol-hidden")
+    assert solved.store is True
+    assert solved.project == "."
+    assert {entry.project for entry in entries} == {"."}
 
 
 def test_remove_refuses_primary(write, tmp_path):

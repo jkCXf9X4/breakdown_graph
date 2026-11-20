@@ -14,6 +14,7 @@ from bd_tree.navigate import (
     render_path,
     render_show,
     render_tree,
+    view_roots,
 )
 
 
@@ -94,6 +95,30 @@ def test_show_no_body_and_max_chars_and_fields(write, tmp_path):
     selected = render_show(store, "1", fields=["layer"])
     assert "layer: intent" in selected
     assert "type:" not in selected
+
+
+def test_show_auto_cap_by_depth(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    body = "x" * 5000
+    write(nodes, 1, title="Root", contains=["2"], body=body + "\n")
+    write(nodes, 2, title="Child", body=body + "\n")
+    store = load(tmp_path)
+
+    full = render_show(store, "1")
+    assert body in full
+    assert "[truncated" not in full
+
+    capped = render_show(store, "1", depth=1)
+    assert body not in capped
+    assert "[truncated; bd show 1]" in capped
+    assert "[truncated; bd show 2]" in capped
+
+    explicit_full = render_show(store, "1", depth=1, max_chars=0)
+    assert body in explicit_full
+    assert "[truncated" not in explicit_full
+
+    explicit_cap = render_show(store, "1", max_chars=10)
+    assert "xxxxxxxxxx ... [truncated; bd show 1]" in explicit_cap
 
 
 def test_show_path_prepends_breadcrumb(write, tmp_path):
@@ -191,6 +216,15 @@ def test_ls_default_root_and_summary_truncation(write, tmp_path, capsys):
     assert "s" * 150 not in out
 
 
+def test_ls_depth_zero_is_unlimited(write, tmp_path):
+    store = _tree(write, tmp_path)
+    out = render_ls(store, "1", depth=0, columns=["ref", "title"])
+    lines = out.splitlines()
+    assert lines[1].startswith("2  Child")
+    assert any(line.strip().startswith("4  Grandchild") for line in lines)
+    assert any(line.startswith("3  Sibling") for line in lines)
+
+
 # -- find --------------------------------------------------------------------
 
 
@@ -230,7 +264,7 @@ def test_find_body_hit_has_line_number(write, tmp_path):
 def test_find_field_restricts_search(write, tmp_path):
     store = _find_tree(write, tmp_path)
     assert "Credibility child" not in render_find(store, "credibility", field="layer")
-    out = render_find(store, "claims", field="layer")
+    out = render_find(store, "claims", field="layer", all_nodes=True)
     assert "Credibility child" in out
     assert "Unrelated" in out
 
@@ -247,7 +281,7 @@ def test_find_limit(write, tmp_path):
     for node_id in (1, 2, 3):
         write(nodes, node_id, title=f"hit {node_id}")
     store = load(tmp_path)
-    out = render_find(store, "hit", limit=2)
+    out = render_find(store, "hit", limit=2, all_nodes=True)
     assert len(out.split("\n\n")) == 2
 
 
@@ -255,6 +289,49 @@ def test_find_regex_opt_in(write, tmp_path):
     store = _find_tree(write, tmp_path)
     assert "Credibility" not in render_find(store, "Cred[a-z]+")
     assert "Credibility child" in render_find(store, "Cred[a-z]+", regex=True)
+
+
+def _two_trees(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, title="First root", contains=["2"])
+    write(nodes, 2, title="First child", body="needle first\n")
+    write(nodes, 5, title="Second root", contains=["6"])
+    write(nodes, 6, title="Second child", body="needle second\n")
+    return load(tmp_path)
+
+
+def test_find_default_scopes_to_root(write, tmp_path):
+    store = _two_trees(write, tmp_path)
+    out = render_find(store, "needle")
+    assert "First child" in out
+    assert "Second child" not in out
+
+    (tmp_path / "ROOT").write_text("5\n", encoding="utf-8")
+    store = load(tmp_path)
+    out = render_find(store, "needle")
+    assert "Second child" in out
+    assert "First child" not in out
+
+
+def test_find_view_restricts_to_named_closure(write, tmp_path):
+    store = _two_trees(write, tmp_path)
+    out = render_find(store, "needle", view="5")
+    assert "Second child" in out
+    assert "Second root" not in out
+    assert "First child" not in out
+
+
+def test_find_all_nodes_preserves_whole_store(write, tmp_path):
+    store = _two_trees(write, tmp_path)
+    out = render_find(store, "needle", all_nodes=True)
+    assert "First child" in out
+    assert "Second child" in out
+
+
+def test_find_rejects_an_unknown_view(write, tmp_path):
+    store = _two_trees(write, tmp_path)
+    with pytest.raises(NavigationError):
+        render_find(store, "needle", view="99")
 
 
 def test_grep_alias_uses_regex(write, tmp_path, capsys):
@@ -278,3 +355,15 @@ def test_path_version_ref(write, tmp_path):
     assert render_path(store, "2-1") == (
         "1  Root\n2  Child\n2-1  Child v1"
     )
+
+
+# -- views -------------------------------------------------------------------
+
+
+def test_view_roots_lists_each_complete_tree(write, tmp_path):
+    store = _two_trees(write, tmp_path)
+    assert [node.ref for node in view_roots(store)] == ["1", "5"]
+
+    write(tmp_path / "nodes", 5, version=1, title="Second root v1", contains=["6"])
+    store = load(tmp_path)
+    assert [node.ref for node in view_roots(store)] == ["1", "5", "5-1"]

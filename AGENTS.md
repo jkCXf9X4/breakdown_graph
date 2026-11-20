@@ -21,9 +21,11 @@ this file is the short operating protocol.
 3. See the shape: `bd tree --depth 1`, `bd find <term>`, `bd path <ref>`.
    For the example layout and two complete trees over one store, run the commands
    in `examples/README.md`.
-4. For a solution: `bd solution new NAME`, `cd` into it, `bd work`.
-5. For edits: edit through `bd_work/` or the store's `.bd_tree/nodes/<ref>.md`;
-   change structure with `bd contain` / `bd uncontain` / `bd link` / `bd unlink`.
+4. For a solution: `bd solution new NAME`, `cd` into the printed worktree
+   project directory, then `bd work` with the printed default-view ref.
+5. For edits: prefer `bd edit REF` for the path inside `bd_work/`; direct edits
+   to `.bd_tree/nodes/<ref>.md` are an escape hatch only. Change structure with
+   `bd contain` / `bd uncontain` / `bd link` / `bd unlink`.
 6. Validate: `bd check`, `bd stale`.
 
 ## Two jobs
@@ -49,8 +51,9 @@ behaviour change and update the docs listed at the bottom.
 - Git owns the solution boundary: one branch/worktree per solution. The flat store
   is the merge unit; `bd work` is a layout inside one checkout, never a branch
   mechanism.
-- Work folders are symlink views. Never copy node content into a work folder and
-  never introduce a sync layer.
+- Work folders are symlink views: node `.md` files are symlinks, while
+  `INDEX.md`, `AGENTS.md`, and `REFS.md` are regular generated files. Never copy
+  node content into a work folder and never introduce a sync layer.
 - A project has exactly one writable work area, `<project>/bd_work/`. It holds
   one view at a time; `bd work REF` replaces its contents. Read-only `bd view`
   and `bd export` snapshots are not a second work area.
@@ -63,22 +66,29 @@ behaviour change and update the docs listed at the bottom.
   disposable and gitignored.
 - The default view root is `ROOT` when present, else the lowest main ref; an
   explicit ref or `--root-ref` wins over both. A declared but missing ref is
-  `root-ref-missing`; malformed content is `invalid-root`.
+  `root-ref-missing`; malformed content is `invalid-root`. This default is
+  separate from the view held by the work area, which changes only with
+  `bd work REF`.
 
 ## Where to work
 
 - Solutions: `bd solution new NAME` (thin wrapper over
   `git worktree add ../NAME -b NAME`); one worktree per solution.
 - Writable layout: `bd work REF` writes the single `<project>/bd_work/` area;
-  a different REF replaces its contents. Edit through the symlinks.
+  a different REF replaces its contents. `bd current` reports the area and its
+  view; `--path` and `--view` narrow the output, and it errors if no area
+  exists.
 - Agent sessions work in that one area and read exactly one view. Switch with
-  `bd work REF`; never keep parallel work folders side by side. `--out DIR` is an
-  explicit single-area override, not a second area.
+  `bd work REF`; never keep parallel work folders side by side. `--status` and
+  `--writeback` inspect the view actually in the area, not the requested or
+  default view. `bd views` lists containment roots and marks the store default.
+- Find and edit inside the area: `bd edit REF` prints the absolute path of a ref
+  in the active view and errors if it is absent.
 - Read-only snapshots: `bd view REF --out DIR` or `bd export ...`; they are
   disposable exports, never the work area.
-- Switching trees: `bd root REF` for the whole store, or repoint one parent with
-  `bd uncontain` / `bd contain`. `bd promote` is not a switch; it copies one
-  version onto main.
+- Switching trees: `bd root REF` changes the store default root, `bd work REF`
+  changes the work-area view, or repoint one parent with `bd uncontain` /
+  `bd contain`. `bd promote` is not a switch; it copies one version onto main.
 - Never hand-edit generated `INDEX.md`, `AGENTS.md`, or `REFS.md` inside a work or
   output directory.
 
@@ -92,9 +102,11 @@ behaviour change and update the docs listed at the bottom.
 | Add an edge | `bd link FROM TO --type supports --propagates` |
 | Browse a subtree | `bd tree REF --depth 0` |
 | Read a node and children | `bd show REF+2 --max-chars 800` |
-| Search | `bd find TEXT`, `bd grep 'RE'` |
-| Switch/edit the work area | `bd work REF`, then edit through the symlinks |
-| Repair symlinks | `bd work REF --status` / `--writeback` |
+| Search | `bd find TEXT`, `bd grep 'RE'`; add `--view REF` or `--all` |
+| Show the work area | `bd current [--path\|--view]` |
+| List containment roots | `bd views` |
+| Switch/edit the work area | `bd work REF`, then open `bd edit REF` |
+| Repair symlinks | `bd work --status` / `bd work --writeback` |
 | Switch tree root | `bd root REF`, `bd root --clear` |
 | Show versions | `bd versions ID`, `bd fork ID`, `bd promote REF` |
 | New solution | `bd solution new NAME` |
@@ -115,7 +127,9 @@ bd show 1+1 --max-chars 400
 bd contain 1 5 --after 6
 bd link 5 9 --type supports
 bd work 1                 # write the single <project>/bd_work area
-bd work 1 --print         # print that directory
+bd current                # <project>/bd_work (view 1)
+bd work 1 --print         # print that directory; read-only, no build
+bd edit 2                 # path of ref 2 in the active view
 bd work 1-1               # switch the same area to another view
 bd solution list
 ```
@@ -144,3 +158,5 @@ views, or generated output.
 - [`docs/DESIGN.md`](docs/DESIGN.md) — model, decisions, invariants.
 - [`docs/BRANCHES-AND-VERSIONS.md`](docs/BRANCHES-AND-VERSIONS.md) — the
   branch/version separation contract.
+- [`docs/breakdown/README.md`](docs/breakdown/README.md) — product breakdown:
+  current state, open work, and review findings. Start at its `INDEX.md`.

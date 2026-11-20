@@ -26,6 +26,7 @@ from .model import (
     Store,
     View,
 )
+from .ops import clear_root as _clear_root
 from .ops import contain as _contain
 from .ops import diff as _diff
 from .ops import fork as _fork
@@ -35,7 +36,6 @@ from .ops import new_node as _new_node
 from .ops import promote as _promote
 from .ops import retire_version as _retire_version
 from .ops import set_root as _set_root
-from .ops import clear_root as _clear_root
 from .ops import uncontain as _uncontain
 from .ops import unlink as _unlink
 from .ops import versions as _versions
@@ -43,56 +43,61 @@ from .solutions import SolutionEntry, SolutionResult
 from .solutions import listing as _solution_list
 from .solutions import new as _solution_new
 from .solutions import remove as _solution_remove
-from .work import GitContext, WorkEntry, WorkResult
+from .work import GitContext, WorkArea, WorkEntry, WorkResult
+from .work import area as _area
+from .work import edit_path as _edit_path
 from .work import work as _work
 
 __all__ = [
-    "init_store",
-    "load",
-    "load_view",
-    "check",
-    "export_view",
-    "stale",
-    "reconcile",
-    "versions",
-    "fork",
-    "root_ref",
-    "set_root",
-    "clear_root",
-    "promote",
-    "retire_version",
-    "diff",
-    "new_node",
-    "contain",
-    "uncontain",
-    "link",
-    "unlink",
-    "work",
-    "solution_new",
-    "solution_list",
-    "solution_remove",
-    "parse_ref",
-    "parse_filename",
-    "ref_of",
-    "node_path",
-    "body_hash",
-    "Store",
-    "View",
-    "Node",
-    "Edge",
-    "Issue",
+    "BreakdownError",
     "CheckResult",
     "DiffEntry",
+    "Edge",
+    "ExportError",
     "ExportResult",
-    "ReconcileChange",
-    "StaleEdge",
-    "WorkEntry",
-    "WorkResult",
     "GitContext",
+    "Issue",
+    "Node",
+    "ReconcileChange",
     "SolutionEntry",
     "SolutionResult",
-    "BreakdownError",
-    "ExportError",
+    "StaleEdge",
+    "Store",
+    "View",
+    "WorkArea",
+    "WorkEntry",
+    "WorkResult",
+    "area",
+    "body_hash",
+    "check",
+    "clear_root",
+    "contain",
+    "diff",
+    "edit_path",
+    "export_view",
+    "fork",
+    "init_store",
+    "link",
+    "load",
+    "load_view",
+    "new_node",
+    "node_path",
+    "parse_filename",
+    "parse_ref",
+    "promote",
+    "reconcile",
+    "ref_of",
+    "retire_version",
+    "root_ref",
+    "set_root",
+    "solution_list",
+    "solution_new",
+    "solution_remove",
+    "stale",
+    "uncontain",
+    "unlink",
+    "versions",
+    "work",
 ]
 
 
@@ -287,6 +292,18 @@ def solution_remove(
 ) -> SolutionEntry:
     """Remove one worktree by branch name or path, keeping the branch."""
     return _solution_remove(root, target, force=force)
+
+
+def area(root: str | Path, out: str | Path | None = None) -> WorkArea:
+    """Read the active work area without building or repairing it."""
+    return _area(root, out)
+
+
+def edit_path(
+    root: str | Path, ref: str | int, out: str | Path | None = None
+) -> Path:
+    """Absolute path of ``ref`` inside the active work area."""
+    return _edit_path(root, ref, out)
 
 
 def work(

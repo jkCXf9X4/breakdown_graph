@@ -1,0 +1,5 @@
+# Plans — task contracts for selected work
+
+This folder holds one task contract per selected improvement, named `plans/<IMP-ID>.md` and written when work starts. Plans are working documents keyed by IMP id, carry no leaf front matter, and are deleted when the improvement is implemented. Implementers read the plan for the scope of the work they are doing.
+
+Start at `INDEX.md` and open the one leaf that owns the question you have.

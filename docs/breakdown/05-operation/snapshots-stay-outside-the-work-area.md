@@ -1,0 +1,19 @@
+---
+id: INFO-029
+type: info
+title: Snapshots stay outside the work area
+summary: bd view and bd export write disposable copies and never become a second writable layout.
+date: 2026-11-20
+status: current
+---
+
+# Snapshots stay outside the work area
+
+`bd view` and `bd export` write to an explicit `--out` path and never touch `<project>/bd_work/`.
+
+- **Tree:** `bd view REF --out DIR` calls `export_tree`, which writes node copies plus `INDEX.md`.
+- **Context:** `bd export context --view REF --out DIR` writes fresh nodes, `STALE.md`, and `AGENTS.md`.
+- **Dot:** `bd export dot --view REF --out FILE` writes one Graphviz file and refuses a directory target.
+- **Ownership:** snapshots are copies, not symlinks, so editing one does not edit the store.
+- **Disposability:** `_prepare_out` refuses a non-empty target without `--force` or `--clean`; `--clean` deletes the old output.
+- **Boundary:** the work area is fixed at `<project>/bd_work/`, and the exporters have no code path that writes there.

@@ -1,0 +1,18 @@
+---
+id: INFO-026
+type: info
+title: Example project proves two complete trees
+summary: The committed example is checked as a clean store with a main and an alternative closure.
+date: 2026-11-20
+status: current
+---
+
+# Example project proves two complete trees
+
+`tests/test_examples.py` loads `examples/` and asserts a clean check over the `ROOT` view `1-1` and a distinct main view `1`.
+
+- **Store layout:** the example keeps `examples/.bd_tree/nodes/` and `.bd_tree/ROOT`; `load(examples)` resolves the hidden store and project root.
+- **Default root:** `store.root_ref` is `1-1`, and `check(examples).view` reports `1-1`.
+- **Main closure:** `load_view(examples, "1")` contains refs `1` through `5`.
+- **Alternative closure:** `load_view(examples, "1-1")` contains the version refs `1-1` through `5-1`.
+- **Clean result:** the test asserts `result.ok`, so the committed store has no check errors.

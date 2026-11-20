@@ -1,0 +1,17 @@
+---
+id: IMP-008
+type: imp
+title: Snapshot list and prune
+summary: Read-only exports have no lifecycle command to list or clean old outputs.
+date: 2026-11-20
+status: suggested
+---
+
+# Snapshot list and prune
+
+Read-only exports are written to caller-chosen directories, and no command lists or removes old snapshots.
+
+- **Current behavior:** `bd view --out` and `bd export` write disposable output; cleanup is left to the filesystem.
+- **Cost:** Snapshots accumulate without an inventory, which obscures which output is current and wastes disk.
+- **Possible direction:** Record snapshot metadata at export time, then add list and prune verbs over that inventory.
+- **Constraint:** A snapshot is never writable or authoritative, so pruning must not touch the store or the work area.

@@ -91,7 +91,8 @@ work area, `<project>/bd_work/`. Editing a link edits the store.
 
 ```sh
 bd work 1
-work_dir=$(bd work 1 --print)
+bd current                 # <project>/bd_work (view 1)
+work_dir=$(bd current --path)
 ls "$work_dir"
 ```
 
@@ -102,20 +103,27 @@ claims/3.md
 INDEX.md  AGENTS.md  REFS.md
 ```
 
-The path comes from `home` when present, otherwise from a template:
+Only the node `.md` files are symlinks; `INDEX.md`, `AGENTS.md`, and `REFS.md`
+are regular generated files. The path comes from `home` when present, otherwise
+from a template:
 
 ```sh
-$EDITOR "$work_dir/claims/3.md"
-bd work 1 --status
+$EDITOR "$(bd edit 3)"
+bd work --status
 bd check
 ```
+
+`bd edit REF` prints the ref's absolute path inside the active view and errors if
+the ref is not there. `bd current` is read-only; `--path` prints only the path and
+`--view` only the ref. `bd work --print` also prints only the path, does not
+build, and errors if no area exists.
 
 `--status` reports `ok`, `missing`, `wrong-target`, `detached`, `stray`, or
 `stale-ref`. If an editor replaces a symlink with a regular file:
 
 ```sh
-bd work 1 --status
-bd work 1 --writeback
+bd work --status
+bd work --writeback
 ```
 
 `--writeback` writes the detached content to the original node, refuses files
@@ -154,12 +162,16 @@ bd link 3 1 --type serves --propagates
 bd stale
 ```
 
-Then edit the intent body in `.bd_tree/nodes/1.md`:
+Then edit the intent body through the work area:
 
 ```sh
-printf '\nA new constraint.\n' >> .bd_tree/nodes/1.md
+printf '\nA new constraint.\n' >> "$(bd edit 1)"
 bd stale
 ```
+
+Edit through `bd_work/`; `bd edit REF` resolves the path for you. A direct edit of
+`.bd_tree/nodes/1.md` is an escape hatch when no work area is active: it bypasses
+the active-view check, so prefer `bd edit REF`.
 
 ```
 3 -> 1 (serves): stale
@@ -183,20 +195,26 @@ bd unlink 3 1 --type serves
 
 ## 5. Switch between full trees
 
-Two moves: point the store at another root ref, or repoint one parent.
+Two separate moves: change the default view root, or switch the view held by the
+work area. You can also repoint one parent.
 
 ```sh
 bd fork 1 --version 1        # alternative root; contains materialised now
 bd uncontain 1-1 3
 bd tree 1-1                  # inspect the alternative before switching
-bd root 1-1                  # write ROOT; tree, ls, work, check default here
+bd root 1-1                  # write ROOT; tree, ls, check default here
 bd tree
 bd root                      # 1-1  (ROOT)
+bd work 1-1                  # switch the work area to the alternative view
+bd current                   # <project>/bd_work (view 1-1)
 bd root --clear              # back to the lowest main ref
 ```
 
 `ROOT` is one ref on one line at the store top level. An explicit ref or
 `--root-ref` still wins over it; with no `ROOT`, the lowest main ref is the root.
+`bd root` changes the default root used by commands but does not rewrite the
+view already in `<project>/bd_work/`; `bd work REF` does. `bd views` lists the
+containment roots and marks the default with `*`.
 
 Repoint one parent when only part of the tree moves:
 
@@ -225,15 +243,19 @@ bd solution new sol-a
 ```
 worktree /home/you/graphs/sol-a
 branch sol-a
-store .
+project .
 cd /home/you/graphs/sol-a
-BD_ROOT=. bd work 1
+bd work 1
 ```
+
+The project directory is printed relative to the worktree. In a nested project,
+`cd` into the printed project path instead, for example
+`cd /home/you/graphs/sol-a/examples`, then run the printed `bd work` command.
 
 ```sh
 cd ../sol-a
 bd work 1
-$EDITOR .bd_tree/nodes/1.md
+$EDITOR "$(bd edit 1)"
 bd check
 git add -A && git commit -m "sol-a: alternative intent"
 ```
@@ -252,8 +274,10 @@ Remove the checkout when done; the branch remains:
 bd solution remove sol-a
 ```
 
-If the project is nested inside the repo, `BD_ROOT` is the project path relative
-to the worktree, for example `examples`.
+If the project is nested inside the repo, use the printed `cd` line to enter the
+project path inside the worktree, for example `cd /home/you/graphs/sol-a/examples`.
+Store discovery then finds `.bd_tree/` there; `BD_ROOT` is only needed when you
+run from the worktree root instead.
 
 ## 7. Feed an agent
 
@@ -262,6 +286,7 @@ Two modes:
 ```sh
 # writable: the single work area for one view
 bd work 1
+bd current
 
 # read-only snapshot: fresh nodes, plus STALE.md and AGENTS.md
 bd export context --view 1 --out /tmp/bd-context-1
@@ -270,8 +295,9 @@ bd export context --view 1 --out /tmp/bd-context-1
 `bd work` writes `<project>/bd_work/` and is the only work area; the export
 directory is a disposable snapshot, not a second area. Both contain an
 `AGENTS.md`; the work area also records the branch, commit, and worktree. Tell
-the agent to read exactly one directory and not to read outside it. To change
-view, switch the same area with `bd work REF`.
+the agent to read exactly one directory and not to read outside it, and to use
+`bd edit REF` rather than guessing paths. To change view, switch the same area
+with `bd work REF` and confirm with `bd current`.
 
 ## 8. Use an existing markdown tree
 
@@ -297,6 +323,8 @@ versions as alternatives.
 | `bd check` sees the wrong store | `BD_ROOT` or `--root` points elsewhere. `bd` uses the nearest `nodes/` or `.bd_tree/nodes/` upward. |
 | `root-ref-missing` / `invalid-root` | The `ROOT` file names an absent ref or is malformed. Fix it, or run `bd root --clear`. |
 | `bd work` refuses to switch | `bd_work/` has detached or stray files. Run `--status`, then `--writeback` to keep them or `--clean` to discard them. |
+| `bd current` errors | No work area exists. Build one with `bd work [REF]`. |
+| `bd edit REF` errors | The ref is not in the active view. Switch with `bd work REF` or use a ref that is present. |
 | Edit did not reach the node | The editor replaced the symlink. Run `--status`, then `--writeback`. |
 | Want two work folders | Not supported. `bd_work/` is the single area; switch with `bd work REF`. |
 | `bd_work/` appears in git status | `bd init` adds it to `.gitignore`; add `bd_work/` if the project predates that. |

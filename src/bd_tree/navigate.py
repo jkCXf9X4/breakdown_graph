@@ -8,11 +8,12 @@ broken with a seen-set, and every walk is bounded by the requested depth.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import Any, Iterable, Iterator
+from typing import Any
 
 from .errors import BreakdownError
-from .loader import parse_ref, ref_of
+from .loader import load_view, parse_ref, ref_of
 from .model import Node, Store
 
 # Front-matter keys that drive the model or are displayed separately.
@@ -74,6 +75,17 @@ def get_node(store: Store, ref: str) -> Node:
     if node is None:
         raise NavigationError(f"unknown ref '{ref}'")
     return node
+
+
+def view_roots(store: Store) -> list[Node]:
+    """Refs that no node lists in ``contains`` (containment roots), sorted."""
+    listed = {
+        child
+        for node in store.nodes.values()
+        for child in store.effective_contains(node.ref)
+    }
+    roots = [node for node in store.nodes.values() if node.ref not in listed]
+    return sorted(roots, key=lambda node: (node.id, node.version))
 
 
 def _base_ref(node: Node) -> str:
@@ -185,11 +197,14 @@ def render_show(
     depth: int = 0,
     fields: Iterable[str] | None = None,
     no_body: bool = False,
-    max_chars: int = 0,
+    max_chars: int | None = None,
     show_path: bool = False,
 ) -> str:
     blocks: list[str] = []
     get_node(store, ref)
+    cap = max_chars
+    if cap is None:
+        cap = 0 if depth == 0 else 4000
     if show_path:
         blocks.append(f"path: {_breadcrumb(store, ref)}")
     for node, level in walk_containment(store, ref, depth):
@@ -200,7 +215,7 @@ def render_show(
         for key, value in header_fields(node, fields):
             parts.append(f"{key}: {value}")
         if not no_body:
-            body = _display_body(node, max_chars)
+            body = _display_body(node, cap)
             if body:
                 parts.append(body)
         blocks.append("\n".join(parts))
@@ -266,8 +281,9 @@ def render_ls(
 ) -> str:
     cols = columns or ["ref", "title", "summary"]
     get_node(store, ref)
+    walk_depth = None if depth == 0 else depth
     lines = ["  ".join(cols)]
-    for node, level in walk_containment(store, ref, depth):
+    for node, level in walk_containment(store, ref, walk_depth):
         if level == 0:
             continue
         cells: list[str] = []
@@ -361,12 +377,20 @@ def render_find(
     regex: bool = False,
     where: list[tuple[str, str]] | None = None,
     limit: int = 20,
+    view: str | None = None,
+    all_nodes: bool = False,
 ) -> str:
     pattern = _compile(query, regex)
     conditions = where or []
+    if all_nodes:
+        nodes: Iterable[Node] = store.nodes.values()
+    else:
+        ref = view if view is not None else main_root(store)
+        get_node(store, ref)
+        nodes = load_view(store, ref).nodes.values()
     blocks: list[str] = []
     found = 0
-    for node in store.nodes.values():
+    for node in nodes:
         if found >= limit:
             break
         if not _where_ok(node, conditions):

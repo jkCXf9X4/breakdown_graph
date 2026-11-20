@@ -1,14 +1,15 @@
 """Materialize one containment view as a tree of per-file symlinks.
 
 The work directory is the primary editing interface: it mirrors the templated
-paths of ``bd export tree``, but every ``.md`` entry is a symlink back to its
+paths of ``bd view``, but every node ``.md`` entry is a symlink back to its
 original ``nodes/<ref>.md`` file.  Editing a file in the work tree therefore
 edits the store directly: there is no sync layer, no state file and no copied
 content.
 
 There is one fixed work area per project, ``<project>/bd_work``.  Building a
 different view replaces its contents, so a single area always shows exactly one
-view.  ``--out`` is an explicit override for callers that need another path.
+view.  The API's ``out`` parameter is a programmatic override for tests and
+embedders; the CLI exposes only the one area.
 
 Three regular files are generated: ``INDEX.md`` and ``REFS.md`` (navigation) and
 ``AGENTS.md`` (instructions for a human or agent browsing the tree).
@@ -43,6 +44,9 @@ STATUS_STALE = "stale-ref"
 _REF_ROW = re.compile(
     r"^\|\s*`(?P<path>[^`]+)`\s*\|\s*(?P<ref>\d+(?:-\d+)?)\s*\|"
 )
+
+_VIEW_IN_REFS = re.compile(r"^#\s*References\b.*\bview\s+(\d+(?:-\d+)?)\s*$")
+_VIEW_IN_INDEX = re.compile(r"^#\s*View\s+(\d+(?:-\d+)?)\s*$")
 
 GIT_TIMEOUT = 5.0
 
@@ -85,6 +89,14 @@ def git_context(root: str | Path) -> GitContext | None:
     if not (branch and commit and toplevel):
         return None
     return GitContext(branch=branch, commit=commit, toplevel=toplevel)
+
+
+@dataclass(frozen=True)
+class WorkArea:
+    """The project work area and the view its generated headers declare."""
+
+    out: Path
+    ref: str | None
 
 
 @dataclass(frozen=True)
@@ -186,6 +198,50 @@ def _manifest(out: Path) -> dict[str, str] | None:
         if match:
             mapping[match.group("path")] = match.group("ref")
     return mapping or None
+
+
+def _view_header(path: Path, pattern: re.Pattern[str]) -> str | None:
+    """The view ref a generated header declares, if it can be read."""
+    if not path.is_file():
+        return None
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    for line in lines:
+        match = pattern.match(line.strip())
+        if match:
+            return match.group(1)
+    return None
+
+
+def area(root: str | Path, out: str | Path | None = None) -> WorkArea:
+    """Return the work area and the view its own headers declare.
+
+    Reads ``REFS.md`` first and falls back to ``INDEX.md``.  Never writes and
+    never raises for an absent area or a missing header: ``ref`` is ``None``
+    and the caller decides whether that is an error.
+    """
+    if out is None:
+        out_path = (load(root).project_root / "bd_work").resolve()
+    else:
+        out_path = Path(out).resolve()
+    ref = None
+    if out_path.is_dir():
+        ref = _view_header(out_path / "REFS.md", _VIEW_IN_REFS)
+        if ref is None:
+            ref = _view_header(out_path / "INDEX.md", _VIEW_IN_INDEX)
+    return WorkArea(out=out_path, ref=ref)
+
+
+def _current_area(root: str | Path, out: str | Path | None = None) -> WorkArea:
+    current = area(root, out)
+    if not current.out.is_dir() or current.ref is None:
+        raise ExportError(
+            f"no work area with a readable view at '{current.out}'; "
+            "run `bd work REF` first"
+        )
+    return current
 
 
 def _node_link_strays(
@@ -449,6 +505,29 @@ def _writeback(view: View, out: Path, path_template: str | None) -> WorkResult:
     )
 
 
+def edit_path(
+    root: str | Path, ref: str | int, out: str | Path | None = None
+) -> Path:
+    """Absolute path of ``ref`` in the area's current view.
+
+    Read-only: a missing expected link still yields its path, never a build.
+    """
+    current = _current_area(root, out)
+    view = _resolve_view(root, current.ref)
+    wanted = str(ref)
+    if wanted not in view.nodes:
+        raise ExportError(
+            f"ref {wanted} is not in current view {view.ref}; "
+            "run `bd views` to list views or `bd work REF` to switch"
+        )
+    manifest = _manifest(current.out)
+    if manifest is not None:
+        for rel, mapped in manifest.items():
+            if mapped == wanted:
+                return current.out / rel
+    return current.out / _expected(view, None)[wanted]
+
+
 def work(
     root: str | Path,
     ref: str | int | None = None,
@@ -466,11 +545,16 @@ def work(
     if status and writeback:
         raise BreakdownError("--status and --writeback are mutually exclusive")
 
-    view = _resolve_view(root, ref)
-    if out is not None:
-        out_path = Path(out).resolve()
+    if status or writeback:
+        current = _current_area(root, out)
+        view = _resolve_view(root, current.ref)
+        out_path = current.out
     else:
-        out_path = (view.store.project_root / "bd_work").resolve()
+        view = _resolve_view(root, ref)
+        if out is not None:
+            out_path = Path(out).resolve()
+        else:
+            out_path = (view.store.project_root / "bd_work").resolve()
 
     if status:
         entries = _inspect(view, out_path, path_template)

@@ -8,7 +8,7 @@ boundary, typed dependency edges, and a single custom symlink work area.
 - **Root** — an optional `ROOT` file names the default view root in one ref line.
 - **Solutions** — git branches and worktrees.
 - **Layout** — `bd work` renders one view as symlinks into the store, in a
-  single `<project>/bd_work/` area.
+  single `<project>/bd_work/` area; `bd current` reports which view is there.
 - **Freshness** — typed links record what depends on what and whether it still holds.
 
 The store is the data; the work area is a disposable layout. An agent session
@@ -31,10 +31,13 @@ These are deliberately separate:
   [The full separation](docs/BRANCHES-AND-VERSIONS.md).
 
 A store-level `ROOT` file names one default view root (`bd root 1-4`), so
-`tree`, `ls`, `work`, `check`, `stale`, and `reconcile` follow it without an
-argument. An explicit ref wins; with no `ROOT`, the lowest main ref is the root.
-Switching trees writes `ROOT` or repoints a parent; `bd promote` only copies one
-version onto main.
+`tree`, `ls`, `find`, `grep`, `work`, `check`, `stale`, and `reconcile` follow it
+without an argument. An explicit ref wins; with no `ROOT`, the lowest main ref is
+the root. The default root and the view in the work area are separate:
+`bd root REF` changes the default used by commands, while `bd work REF` replaces
+the contents of `<project>/bd_work/`; the area keeps its view until you run
+`bd work` again. `bd promote` only copies one version onto main; it is not a
+switch.
 
 Git answers what changed. `contains` and `links` answer what belongs and what
 depends. Pins answer whether it still holds.
@@ -77,9 +80,12 @@ Then open the work area:
 
 ```sh
 bd work 1                      # write <project>/bd_work for view 1
-cd "$(bd work 1 --print)"      # print its path, for cd
-# every .md here is a symlink; editing it edits .bd_tree/nodes/<ref>.md
+bd current                     # <project>/bd_work (view 1)
+cd "$(bd current --path)"      # print only the path, for cd
+# node .md files here are symlinks; editing one edits .bd_tree/nodes/<ref>.md
+# INDEX.md, AGENTS.md, and REFS.md are regular generated files
 
+bd edit 2                      # absolute path of ref 2 in the active view
 bd work 1-1                    # switch the same area to the alternative tree
 ```
 
@@ -148,11 +154,21 @@ bd root [REF] [--clear]
 Layout:
 
 ```
-bd work [REF] [--path-template T] [--out DIR] [--status] [--writeback] [--clean] [--print]
+bd work [REF] [--path-template T] [--status] [--writeback] [--clean] [--print]
+bd current [--path|--view]
+bd views
+bd edit REF
 ```
 
 `bd work REF` writes the single `<project>/bd_work/` area and replaces its
-contents; it does not create a second folder.
+contents; it does not create a second folder. With no REF it uses the default
+view. `bd current` is read-only and prints `<project>/bd_work (view <ref>)`;
+`--path` prints only the path and `--view` only the ref. `--print` also prints
+only the path, is read-only, does not build, and errors when no area exists.
+`--status` and `--writeback` inspect the view actually in the area, not the
+requested or default view. `bd views` lists containment roots, marking the store
+default with `*`. `bd edit REF` prints the absolute path of that ref inside the
+current work area and errors if the ref is not in the active view.
 
 Solutions:
 
@@ -168,7 +184,8 @@ bd versions | bd fork | bd promote | bd retire-version | bd diff
 
 `bd fork` materialises the effective `contains` list into the new version.
 `bd promote` copies one version onto main; it does not switch trees — use
-`bd root` or repoint a parent with `bd contain`/`bd uncontain`.
+`bd root` for the default root, `bd work` for the work-area view, or repoint a
+parent with `bd contain`/`bd uncontain`.
 
 Freshness:
 
@@ -180,8 +197,11 @@ Read-only projections:
 
 ```
 bd view REF --out DIR
-bd export tree|context|dot --view REF --out PATH
+bd export context|dot --view REF --out PATH
 ```
+
+`bd view REF --out DIR` is the single read-only tree projection; `bd export`
+keeps `context` and `dot`.
 
 Full syntax: [`docs/CHEATSHEET.md`](docs/CHEATSHEET.md) or `bd <command> --help`.
 
@@ -193,16 +213,17 @@ src/bd_tree/               Python package
   loader.py                filename grammar, store index, view resolution
   model.py                 Node, View, Edge, Issue
   checker.py               structural validation
-  exporter.py              tree/context/dot projections
+  exporter.py              context/dot projections; view renders the tree
   freshness.py             pins, stale edges, reconcile
   navigate.py              show/tree/ls/find/grep/path
-  work.py                  single work area, status, writeback, switching
+  work.py                  single work area, current/views/edit, status, writeback
   solutions.py             git worktree wrapper
   ops.py                   init, new, structural edits, versions, diff
   cli.py, api.py           command line and public API
 tests/                     pytest suite
 examples/                 example project: .bd_tree/ store + ignored bd_work/
 docs/                      user, developer, design, branches/versions
+docs/breakdown/            product breakdown: state, open work, review
 ```
 
 ## Status
@@ -222,8 +243,8 @@ docs/                      user, developer, design, branches/versions
 - No three-way merge between versions. Promotion copies; synthesis is manual.
 - One worktree per solution. Switching branches inside one worktree can leave a
   layout pointing at paths absent from the new branch; rebuild with
-  `bd work REF --clean` and run `--status`.
+  `bd work REF --clean` and run `bd work --status`.
 - Some editors replace symlinks instead of writing through them. Use
-  `bd work --status` / `--writeback`.
+  `bd work --status` / `bd work --writeback`.
 - Work folders rely on symlinks; Windows needs developer mode or elevated rights.
 - No generic importer or CI configuration yet.

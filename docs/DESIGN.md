@@ -120,7 +120,10 @@ and `bd work` take a root ref. The default root is the store's `ROOT` file when
 present, else the lowest main ref; an explicit ref or `--root-ref` wins over
 both. `bd root REF` writes the file, `bd root --clear` removes it, and
 `bd root` prints `<ref>  (ROOT|lowest main)`. A declared but missing ref is
-`root-ref-missing`; malformed content is `invalid-root`.
+`root-ref-missing`; malformed content is `invalid-root`. This default root is
+separate from the view the work area holds: `bd root` changes the default used
+by commands, while `bd work REF` replaces the contents of `<project>/bd_work/`.
+`bd current` reports the area and the view actually there.
 `bd check` validates the global tree and the view; `bd diff A B` compares
 closures by logical id. A view is not a substitute for a git branch: a version
 of the root (intent) node with its own `contains` list gives an alternative
@@ -143,8 +146,9 @@ writable at a time. Two axes, deliberately separate:
 - `bd fork 5` copies main to the next free version and materialises the effective
   `contains` list; `bd promote 5-2` copies the version onto main (`--keep`
   retains it); `bd retire-version 5-2` deletes a non-main version.
-- Switching between full trees is `bd root REF` (whole store) or repointing one
-  parent with `bd uncontain` / `bd contain`. `bd promote` is not a switch.
+- Switching between full trees is `bd work REF` (the work area), `bd root REF`
+  (the store default), or repointing one parent with `bd uncontain` /
+  `bd contain`. `bd promote` is not a switch.
 
 Version references in `contains` and `links` are exact (`6-2`, not `6`); this
 makes a view independent of later edits to main.
@@ -191,30 +195,37 @@ The project keeps exactly one writable work area:
 └── ...
 ```
 
-`bd_work/` is the default output of `bd work`. In a classic `<dir>/nodes/` store
+`bd_work/` is the single output of `bd work`. In a classic `<dir>/nodes/` store
 the project root is `<dir>`, so the work area is still `<dir>/bd_work/`.
-`--out DIR` is an explicit single-area override, for a scratch path outside the
-project; it names that one area, not a second one.
 
 ```text
 bd_work/claims/thesis-claim.md -> ../../.bd_tree/nodes/49.md
 ```
 
-- Every `.md` is a relative symlink to its node file; editing the link edits the
-  store, with no copy and no sync. All views share one store, so an edit is
-  visible in every view that includes the node.
-- By default `bd work REF` writes the same `<project>/bd_work`. A different ref
-  replaces the content of that area: stale links are removed, and `INDEX.md`,
-  `REFS.md`, and `AGENTS.md` are rewritten for the new view. Never keep two
-  writable work folders side by side.
-- `--path-template` chooses presentation paths for that one area; there is no
-  separate name for a second area.
+- Each node `.md` is a relative symlink to its node file; editing the link edits
+  the store, with no copy and no sync. `INDEX.md`, `AGENTS.md`, and `REFS.md` are
+  regular generated files. All views share one store, so an edit is visible in
+  every view that includes the node.
+- `bd work REF` writes the single `<project>/bd_work`. A different ref replaces
+  the content of that area: stale links are removed, and `INDEX.md`, `REFS.md`,
+  and `AGENTS.md` are rewritten for the new view. With no REF, `bd work` uses the
+  default view. Never keep two writable work folders side by side.
+- `bd current` is the read-only query for that area: it prints
+  `<project>/bd_work (view <ref>)`, `--path` prints only the path, and `--view`
+  only the ref; it errors when no area exists. `bd work --print` also prints only
+  the path, is read-only, does not build, and errors when no area exists.
+  `bd edit REF` prints the absolute path of a ref in the active view and errors
+  if it is not there. `bd views` lists containment roots and marks the store
+  default with `*`.
+- `--path-template` chooses presentation paths for that one area; it never names
+  another work area.
 - `--status` classifies paths as `ok`, `missing`, `wrong-target`, `detached`,
   `stray`, or `stale-ref`; `--writeback` re-links detached files and refuses
   invalid front matter or a mismatched `id`, so a body-only replacement cannot
-  erase `contains`.
+  erase `contains`. Both inspect the view actually in the area, not the requested
+  or default view.
 - Switching with detached (edited but unsynced) files is refused: they would be
-  lost. Run `bd work REF --writeback` first to keep them, or `--clean` to discard
+  lost. Run `bd work --writeback` first to keep them, or `--clean` to discard
   them.
 - Generated files: `INDEX.md`, `REFS.md` (path ↔ ref), and `AGENTS.md`. Inside
   a git checkout, `AGENTS.md` also records branch, short commit, worktree, so
@@ -230,17 +241,18 @@ one writable layout, the one the current `bd_work/` names. Switching views is
 `bd work REF`, which replaces the area's contents instead of accumulating a
 second folder.
 
-Two work folders side by side would defeat that rule. They make the current view
+Two work folders at once would defeat that rule. They make the current view
 ambiguous, let edits land through whichever link an agent happens to open, and
 leave two `INDEX.md`/`AGENTS.md` files claiming authority. The store is what
 scales; the context is not, and one work area is the interface that keeps them
 apart.
 
-Read-only projections remain: `bd view` (a copy for review or publishing),
-`bd export context` (fresh nodes only, plus `STALE.md`, for an agent that must
-not write), and `bd export dot` (Graphviz). They are disposable snapshots, not a
-second work area; an agent session reads exactly one of them. A snapshot may be
-made many times because it is never writable.
+Read-only projections remain: `bd view REF --out DIR` (the single tree
+projection, for review or publishing), `bd export context` (fresh nodes only,
+plus `STALE.md`, for an agent that must not write), and `bd export dot`
+(Graphviz). They are disposable snapshots, not a second work area; an agent
+session reads exactly one of them. A snapshot may be made many times because it
+is never writable.
 
 `bd solution` is a thin wrapper over `git worktree` (`new`, `list`, `remove`).
 It stores no state and creates no layout: git remains authoritative for which
@@ -291,8 +303,9 @@ styling is chosen by arbitrary fields (`--color-by`, `--shape-by`); and
     [`BRANCHES-AND-VERSIONS.md`](BRANCHES-AND-VERSIONS.md).
 14. **One work area at a time.** `<project>/bd_work/` holds exactly one view;
     `bd work REF` switches it by replacing the contents. Two writable folders
-    never coexist. Read-only `bd view`/`bd export` snapshots are not a second
-    work area.
+    never exist at once. Read-only `bd view`/`bd export` snapshots are not a
+    second work area. The area's view is independent of the store default root:
+    `bd root` sets the default, `bd work` sets what is in the area.
 
 ## 8. Rejected alternatives
 
@@ -304,8 +317,8 @@ styling is chosen by arbitrary fields (`--color-by`, `--shape-by`); and
   global, and exclusion needed a marker. Versions are smaller: the branch is
   the root version.
 - **Git branches as the only variant mechanism.** Serial checkouts, no
-  side-by-side views, generated-index churn, and stale generated output
-  surviving checkout while stale.
+  simultaneous views across checkouts, generated-index churn, and stale
+  generated output surviving checkout while stale.
 - **Writable views with sync-back.** Requires path→ref, new/deleted/moved
   semantics, and conflict handling; creates a second source of truth.
 - **Content-addressed store, SQLite graph, CRDT, Dolt.** More machinery than a
@@ -339,7 +352,7 @@ These are enforced or assumed:
 6. Semantic links resolve in the store; links outside a view warn, never pull
    in.
 7. Arbitrary front matter is preserved on export.
-8. Work trees contain only symlinks plus generated files.
+8. Work trees contain node `.md` symlinks plus regular generated files.
 9. Generated files (`INDEX.md`, `AGENTS.md`, `REFS.md`) are never hand-edited.
 10. No generated artifact is committed.
 11. A view never crosses a branch, and neither does a version: a version is a
@@ -374,7 +387,7 @@ These are enforced or assumed:
 4. How should two views be merged: promote one, or synthesize a third version?
 5. Should concurrent agent sessions share the one work area under leases, or
    each use a separate git worktree?
-6. Is a generic exporter (`tree`/`context`) enough, or do we need per-workflow
-   report renderers (traceability matrix, claim-evidence table)?
+6. Are the generic projections (`view`/`context`/`dot`) enough, or do we need
+   per-workflow report renderers (traceability matrix, claim-evidence table)?
 7. Should node-local versions be deprecated entirely in favour of git branches,
    or kept for cheap A/B variants inside one branch?

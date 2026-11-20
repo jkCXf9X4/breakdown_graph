@@ -2,7 +2,8 @@
 
 This folder is a complete bd project and a valid store. The store under
 `.bd_tree/` is the only source of truth; `bd_work/` is the single writable work
-area, derived and ignored. There is no `build/`.
+area, derived and ignored. Read-only projections go elsewhere and are never a
+second work area.
 
 ## Layout
 
@@ -13,13 +14,14 @@ area, derived and ignored. There is no `build/`.
 | `bd_work/` | `bd work <ref>`; the single writable work area, ignored |
 
 `bd work <ref>` writes `bd_work/`; a different ref replaces its contents.
-`bd view` and `bd export` produce read-only snapshots elsewhere (for example
-under `/tmp`), never another work area.
+`bd current` reports the area and its view, and `bd edit REF` prints a ref's path
+inside that view. `bd view` and `bd export` produce read-only snapshots
+elsewhere (for example under `/tmp`), never another work area.
 
 ## Switch trees
 
 A five-id store with two complete trees over the same ids. `ROOT` selects the
-default.
+default root; `bd work REF` selects the view in the work area.
 
 | Tree | Shape |
 | --- | --- |
@@ -38,7 +40,11 @@ bd tree            # the version tree
 bd tree 1          # the main tree
 bd diff 1 1-1      # every id changed
 bd root --clear    # default falls back to 1
-bd root 1-1        # switch back
+bd root 1-1        # switch the default back
+bd views           # containment roots; default marked with *
+bd work 1-1        # switch the work area to the version view
+bd current         # <project>/bd_work (view 1-1)
+bd edit 2-1        # path of ref 2-1 in the active view
 ```
 
 These commands assume the package is installed (`pip install .` from the clone).
@@ -56,6 +62,7 @@ From this directory:
 ```sh
 bd check
 bd work 1-1                       # write bd_work for the version tree
+bd current                        # confirm the view actually there
 bd work 1                         # switch the same area to the main tree
 bd view 1-1 --out /tmp/bd-view-1-1
 bd view 1 --out /tmp/bd-view-1

@@ -46,10 +46,10 @@ def test_work_links_every_node_and_writes_generated_files(write, tmp_path):
 
 def test_work_cli_builds_the_same_tree(write, tmp_path, capsys):
     _tree(write, tmp_path)
-    out = tmp_path / "cli"
+    out = tmp_path / "bd_work"
     from bd_tree.cli import main
 
-    assert main(["work", "1", "--root", str(tmp_path), "--out", str(out)]) == 0
+    assert main(["work", "1", "--root", str(tmp_path)]) == 0
     output = capsys.readouterr().out
     assert "4 nodes, 4 symlinks" in output
     assert (out / "claims" / "2.md").is_symlink()
@@ -73,6 +73,101 @@ def test_status_is_clean_after_build(write, tmp_path):
     status = api.work(tmp_path, "1", out, status=True)
     assert status.ok
     assert {entry.status for entry in status.entries} == {"ok"}
+
+
+def test_status_inspects_the_areas_view_not_the_requested_ref(write, tmp_path):
+    nodes = _tree(write, tmp_path)
+    write(nodes, 1, version=1, contains=["2-1"], layer="intent")
+    write(nodes, 2, version=1, layer="claims")
+    (tmp_path / "ROOT").write_text("1-1\n", encoding="utf-8")
+
+    built = api.work(tmp_path, "1")
+    assert built.ref == "1"
+
+    status = api.work(tmp_path, status=True)
+    assert status.ref == "1"
+    assert status.ok
+
+    status = api.work(tmp_path, "1-1", status=True)
+    assert status.ref == "1"
+    assert status.ok
+
+
+@pytest.mark.parametrize("mode", ["status", "writeback"])
+def test_status_and_writeback_require_a_built_area(write, tmp_path, mode):
+    from bd_tree.errors import ExportError
+
+    _tree(write, tmp_path)
+    kwargs = {mode: True}
+
+    with pytest.raises(ExportError, match="bd work"):
+        api.work(tmp_path, "1", **kwargs)
+    assert not (tmp_path / "bd_work").exists()
+
+
+def test_area_and_edit_path_are_read_only(write, tmp_path):
+    _tree(write, tmp_path)
+    api.work(tmp_path, "1")
+    out = (tmp_path / "bd_work").resolve()
+    from bd_tree.work import area, edit_path
+
+    watched = [
+        out / "INDEX.md",
+        out / "REFS.md",
+        out / "AGENTS.md",
+        out / "claims" / "2.md",
+    ]
+    before = {
+        path: (path.stat().st_mtime_ns, path.read_bytes()) for path in watched
+    }
+
+    current = area(tmp_path)
+    assert current.out == out
+    assert current.ref == "1"
+    assert edit_path(tmp_path, "2") == out / "claims" / "2.md"
+
+    after = {
+        path: (path.stat().st_mtime_ns, path.read_bytes()) for path in watched
+    }
+    assert after == before
+
+
+def test_edit_path_returns_the_expected_path_without_building(write, tmp_path):
+    _tree(write, tmp_path)
+    api.work(tmp_path, "1")
+    out = (tmp_path / "bd_work").resolve()
+    dest = out / "claims" / "2.md"
+    dest.unlink()
+    from bd_tree.work import edit_path
+
+    assert edit_path(tmp_path, "2") == dest
+    assert not dest.exists()
+
+
+def test_edit_path_rejects_an_out_of_view_ref(write, tmp_path):
+    from bd_tree.errors import ExportError
+    from bd_tree.work import edit_path
+
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], layer="intent")
+    write(nodes, 2, layer="claims")
+    write(nodes, 9, layer="outside")
+    api.work(tmp_path, "1")
+
+    with pytest.raises(ExportError) as caught:
+        edit_path(tmp_path, "9")
+    message = str(caught.value)
+    assert "current view 1" in message
+    assert "bd views" in message and "bd work" in message
+
+
+def test_edit_path_requires_a_built_area(write, tmp_path):
+    from bd_tree.errors import ExportError
+    from bd_tree.work import edit_path
+
+    _tree(write, tmp_path)
+    with pytest.raises(ExportError, match="bd work"):
+        edit_path(tmp_path, "1")
 
 
 def test_status_reports_a_detached_file(write, tmp_path):
@@ -355,15 +450,15 @@ def test_refresh_removes_stale_ref_links(write, tmp_path):
 
 def test_detached_file_blocks_refresh_until_writeback(write, tmp_path):
     _tree(write, tmp_path)
-    out = tmp_path / "work"
-    api.work(tmp_path, "1", out)
+    out = tmp_path / "bd_work"
+    api.work(tmp_path, "1")
     dest = out / "claims" / "2.md"
     original = dest.read_text(encoding="utf-8")
     dest.unlink()
     dest.write_text(original + "detached edit\n", encoding="utf-8")
     from bd_tree.cli import main
 
-    assert main(["work", "1", "--root", str(tmp_path), "--out", str(out)]) == 2
+    assert main(["work", "1", "--root", str(tmp_path)]) == 2
     assert not dest.is_symlink()
     assert dest.read_text(encoding="utf-8") == original + "detached edit\n"
 
@@ -374,8 +469,6 @@ def test_detached_file_blocks_refresh_until_writeback(write, tmp_path):
                 "1",
                 "--root",
                 str(tmp_path),
-                "--out",
-                str(out),
                 "--writeback",
             ]
         )
@@ -385,7 +478,7 @@ def test_detached_file_blocks_refresh_until_writeback(write, tmp_path):
     assert (tmp_path / "nodes" / "2.md").read_text(encoding="utf-8") == (
         original + "detached edit\n"
     )
-    assert main(["work", "1", "--root", str(tmp_path), "--out", str(out)]) == 0
+    assert main(["work", "1", "--root", str(tmp_path)]) == 0
 
 
 def test_stray_blocks_refresh_and_clean_discards(write, tmp_path):
@@ -407,18 +500,30 @@ def test_stray_blocks_refresh_and_clean_discards(write, tmp_path):
     assert api.work(tmp_path, "1", out, status=True).ok
 
 
-def test_print_outputs_only_the_directory(write, tmp_path, capsys):
+def test_print_is_read_only(write, tmp_path, capsys):
     _tree(write, tmp_path)
-    out = tmp_path / "printed"
+    api.work(tmp_path, "1")
+    out = (tmp_path / "bd_work").resolve()
     from bd_tree.cli import main
 
-    argv = ["work", "1", "--root", str(tmp_path), "--out", str(out), "--print"]
+    def snapshot():
+        return {
+            path: (path.stat().st_mtime_ns, path.read_bytes())
+            for path in sorted(out.rglob("*"))
+            if path.is_file() or path.is_symlink()
+        }
+
+    before = snapshot()
+    argv = ["work", "1", "--root", str(tmp_path), "--print"]
     assert main(argv) == 0
     captured = capsys.readouterr()
-    assert captured.out == f"{out.resolve()}\n"
+    assert captured.out == f"{out}\n"
     assert captured.err == ""
+    assert snapshot() == before
+
     assert main(argv) == 0
-    assert capsys.readouterr().out == f"{out.resolve()}\n"
+    assert capsys.readouterr().out == f"{out}\n"
+    assert snapshot() == before
 
 
 def test_print_is_mutually_exclusive_with_status(write, tmp_path):
@@ -502,8 +607,7 @@ def test_work_without_git_omits_git_context(write, tmp_path, capsys):
 
     from bd_tree.cli import main
 
-    cli_out = tmp_path / "cli"
-    assert main(["work", "1", "--root", str(tmp_path), "--out", str(cli_out)]) == 0
+    assert main(["work", "1", "--root", str(tmp_path)]) == 0
     assert "branch " not in capsys.readouterr().out
 
 
@@ -535,8 +639,7 @@ def test_work_cli_prints_the_branch(write, tmp_path, capsys):
     branch = _run_git(repo, "rev-parse", "--abbrev-ref", "HEAD")
     from bd_tree.cli import main
 
-    out = tmp_path / "cli"
-    assert main(["work", "1", "--root", str(repo), "--out", str(out)]) == 0
+    assert main(["work", "1", "--root", str(repo)]) == 0
     assert f"branch {branch}" in capsys.readouterr().out
 
 

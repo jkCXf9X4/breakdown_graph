@@ -82,3 +82,51 @@ def test_check_require_flag_and_view_path_template(write, tmp_path):
     )
     assert (out / "intent" / "1.md").is_file()
     assert (out / "build" / "2.md").is_file()
+
+
+def test_current_views_and_edit_cli(write, tmp_path, capsys):
+    write(tmp_path / "nodes", 1, contains=["2"], layer="intent")
+    write(tmp_path / "nodes", 2, layer="claims")
+    assert main(["work", "1", "--root", str(tmp_path)]) == 0
+    capsys.readouterr()
+
+    assert main(["current", "--root", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert out == f"{(tmp_path / 'bd_work').resolve()} (view 1)\n"
+
+    assert main(["current", "--root", str(tmp_path), "--view"]) == 0
+    assert capsys.readouterr().out == "1\n"
+
+    assert main(["current", "--root", str(tmp_path), "--path"]) == 0
+    assert capsys.readouterr().out == f"{(tmp_path / 'bd_work').resolve()}\n"
+
+    assert main(["views", "--root", str(tmp_path)]) == 0
+    assert capsys.readouterr().out.startswith("1  Title of 1 *")
+
+    assert main(["edit", "2", "--root", str(tmp_path)]) == 0
+    assert capsys.readouterr().out == f"{(tmp_path / 'bd_work' / 'claims' / '2.md')}\n"
+
+
+def test_work_print_without_area_is_an_error(write, tmp_path, capsys):
+    write(tmp_path / "nodes", 1)
+    assert main(["work", "--print", "--root", str(tmp_path)]) == 2
+    assert "no work area" in capsys.readouterr().err
+
+
+def test_export_tree_is_gone(write, tmp_path):
+    import pytest
+
+    write(tmp_path / "nodes", 1)
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "export",
+                "tree",
+                "--view",
+                "1",
+                "--out",
+                str(tmp_path / "out"),
+                "--root",
+                str(tmp_path),
+            ]
+        )
