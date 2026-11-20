@@ -33,8 +33,9 @@ structure, and prove the result valid. It never decides what a node should say.
   leaving the view keeps its target out but keeps it reachable. A link to
   another containment root is intentional and not an `external-link`; other
   outside targets warn.
-- **Front matter is arbitrary** — only `id`, `legacy`, `contains`, `links`,
-  `home` are reserved. Add no schema unless the project asks for one.
+- **Front matter is arbitrary** — only `id`, `legacy`, `contains`, `links` are
+  reserved. Add no schema unless the project asks for one. Placement comes from
+  `folder`/`name` or the title (`<ref>-<title-slug>.md`); `home` means nothing.
 - **Structural edits preserve bytes** — `bd` rewrites only its own block;
   unrelated fields and body text survive.
 
@@ -43,7 +44,9 @@ structure, and prove the result valid. It never decides what a node should say.
 `<project>/bd_work/` is the project's only writable area and holds one view at
 a time. `bd work REF` replaces its contents: node `.md` files become symlinks
 into the store, while `INDEX.md`, `AGENTS.md`, `REFS.md` are generated regular
-files.
+files. `bd work REF+N` (same `+N` suffix as `show`/`tree`) materializes only
+the first N descendant levels; the view is still the full closure, the area
+holds a prefix. `bd current` reports the area view as `REF+N`.
 
 - **Edit through the area** — `bd edit REF` prints the path; writing it writes
   the store file, and errors when the ref is not in the active view.
@@ -88,6 +91,7 @@ bd grep 'PATTERN' --view REF         # regex; --all searches every node
 bd path REF                          # ancestry, for orientation
 
 bd work REF                          # build/replace bd_work for one view
+bd work REF+1                        # same, first two levels only
 $EDITOR "$(bd edit REF)"             # edit the store file through the symlink
 
 bd contain P C --before REF          # order is structure, not a field edit

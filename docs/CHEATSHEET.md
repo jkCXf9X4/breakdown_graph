@@ -90,7 +90,7 @@ bd unlink FROM TO [--type TYPE]
 ## Work folders
 
 ```sh
-bd work [REF] [--path-template T] [--status] [--writeback] [--clean] [--print]
+bd work [REF[+N]] [--depth N] [--path-template T] [--status] [--writeback] [--clean] [--print]
 bd current [--path|--view]
 bd views
 bd edit REF
@@ -98,6 +98,13 @@ bd edit REF
 
 - Default: `<project>/bd_work/`. A project has exactly one writable work area;
   a different REF replaces its contents.
+- The view stays the full containment closure of one ref. `REF+N` or `--depth N`
+  materializes only the first `N` descendant levels in the area (`0` is the root
+  alone; `--depth` overrides a suffix). This is the same suffix that `bd show`
+  and `bd tree` accept, and a rebuild with a different depth replaces the area.
+- The generated `REFS.md`, `INDEX.md`, and `AGENTS.md` carry `REF+N`, so
+  `bd current`, `--status`, `--writeback`, and `bd edit` recover the materialized
+  depth.
 - Node `.md` files are symlinks to the store's `nodes/<ref>.md`
   (`.bd_tree/nodes/<ref>.md` in a project layout). `INDEX.md`, `AGENTS.md`, and
   `REFS.md` are regular generated files, never symlinks.
@@ -125,24 +132,29 @@ Switch the one area between views:
 bd work 1                                      # write <project>/bd_work for view 1
 bd current                                     # <project>/bd_work (view 1)
 bd work 5                                      # switch the same area to view 5
+bd work 1+1                                    # root plus immediate children only
+bd work 1 --depth 0                            # root only
+bd work 1                                      # restore the full closure
 bd work 1 --path-template '{layer}/{ref}.md'
 ```
 
-`home` is an explicit full path and wins over everything. Otherwise `folder` is
-the directory prefix and `name` the file stem; without a `name` the file uses
-the slug of `title`, falling back to the ref. With none of these, a node lands
-at `<ref>.md`. `bd new --field layer=...` derives `folder` from the first of
-`layer`, `group`, `type`:
+`folder` is the directory prefix and `name` the file stem; without a `name` the
+file uses the lowercase kebab-case slug of `title`, falling back to the ref.
+With neither, the path is `<ref>-<title-slug>.md`; a node without a usable title
+lands at `<ref>.md`.
+`bd new --field layer=...` derives `folder` from the first of `layer`, `group`,
+`type`:
 
 ```yaml
 folder: claims            # 06-evolution/suggested also works
 title: The Main Thesis    # -> claims/the-main-thesis.md
 name: custom-name         # optional override -> claims/custom-name.md
-home: claims/2.md         # explicit full path; wins over folder/name
 ```
 
-`--path-template '{folder}/{name}.md'` uses the computed fields directly; a
-template such as `'{layer}/{ref}.md'` needs `layer` on every node in the view.
+`--path-template '{folder}/{name}.md'` uses the computed fields directly;
+`{name}` and `{slug}` are the explicit `name`, else the title slug, else the
+ref. A template such as `'{layer}/{ref}.md'` needs `layer` on every node in the
+view.
 `bd view` and `bd export` are read-only snapshots, not a second work area.
 
 ## Solutions (git worktrees)

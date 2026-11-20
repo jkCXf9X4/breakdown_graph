@@ -52,7 +52,7 @@ def test_new_with_arbitrary_field_cli(write, tmp_path):
 
     doc = parse_document((nodes / "2.md").read_text(encoding="utf-8"))
     assert doc.meta["phase"] == "build"
-    assert "home" not in doc.meta and "folder" not in doc.meta
+    assert "folder" not in doc.meta
     assert doc.body == "hello\n"
     assert load(tmp_path).effective_contains("1") == ["2"]
 
@@ -130,3 +130,72 @@ def test_export_tree_is_gone(write, tmp_path):
                 str(tmp_path),
             ]
         )
+
+
+def test_work_depth_suffix_reports_and_current_shows_it(write, tmp_path, capsys):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], layer="intent")
+    write(nodes, 2, contains=["3"], layer="claims")
+    write(nodes, 3, layer="evidence")
+
+    assert main(["work", "1+1", "--root", str(tmp_path)]) == 0
+    output = capsys.readouterr().out
+    assert "2 nodes, 2 symlinks" in output
+    assert "(view 1+1)" in output
+
+    assert main(["current", "--root", str(tmp_path), "--view"]) == 0
+    assert capsys.readouterr().out == "1+1\n"
+
+    assert main(["current", "--root", str(tmp_path)]) == 0
+    assert "(view 1+1)" in capsys.readouterr().out
+
+    assert main(["work", "--status", "--root", str(tmp_path)]) == 0
+    assert "(view 1+1)" in capsys.readouterr().out
+
+
+def test_work_depth_option_overrides_a_suffix(write, tmp_path, capsys):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], layer="intent")
+    write(nodes, 2, contains=["3"], layer="claims")
+    write(nodes, 3, layer="evidence")
+    out = tmp_path / "bd_work"
+
+    assert main(["work", "1+0", "--depth", "1", "--root", str(tmp_path)]) == 0
+    assert "(view 1+1)" in capsys.readouterr().out
+    assert (out / "claims" / "2.md").is_symlink()
+    assert not (out / "evidence" / "3.md").exists()
+
+    assert main(["work", "1", "--depth", "0", "--root", str(tmp_path)]) == 0
+    assert "(view 1+0)" in capsys.readouterr().out
+    assert not (out / "claims" / "2.md").exists()
+
+    assert main(["work", "1+0", "--root", str(tmp_path)]) == 0
+    assert "1 nodes, 1 symlinks" in capsys.readouterr().out
+    assert not (out / "claims" / "2.md").exists()
+
+
+def test_work_malformed_depth_suffix_exits_2(write, tmp_path, capsys):
+    write(tmp_path / "nodes", 1)
+
+    for ref in ("1+x", "1+-1"):
+        assert main(["work", ref, "--root", str(tmp_path)]) == 2
+        err = capsys.readouterr().err
+        assert "invalid depth" in err
+        assert "Traceback" not in err
+    assert not (tmp_path / "bd_work").exists()
+
+
+def test_edit_respects_materialized_depth(write, tmp_path, capsys):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], layer="intent")
+    write(nodes, 2, contains=["3"], layer="claims")
+    write(nodes, 3, layer="evidence")
+
+    assert main(["work", "1+1", "--root", str(tmp_path)]) == 0
+    capsys.readouterr()
+
+    assert main(["edit", "2", "--root", str(tmp_path)]) == 0
+    assert capsys.readouterr().out.endswith("claims/2.md\n")
+
+    assert main(["edit", "3", "--root", str(tmp_path)]) == 2
+    assert "current view 1+1" in capsys.readouterr().err

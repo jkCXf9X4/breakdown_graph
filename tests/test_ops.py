@@ -157,20 +157,18 @@ def test_new_derives_folder_from_group_fields_and_renders_title_slug(
     )
     type_meta = parse_document(by_type.read_text(encoding="utf-8")).meta
     assert type_meta["folder"] == "build"
-    assert "home" not in type_meta
 
     by_group = new_node(
         tmp_path, parent="1", fields={"group": "g", "title": "Grouped"}
     )
     group_meta = parse_document(by_group.read_text(encoding="utf-8")).meta
     assert group_meta["folder"] == "g"
-    assert "home" not in group_meta
 
     flat = new_node(
         tmp_path, parent="1", fields={"phase": "build", "title": "Flat"}
     )
     flat_meta = parse_document(flat.read_text(encoding="utf-8")).meta
-    assert "folder" not in flat_meta and "home" not in flat_meta
+    assert "folder" not in flat_meta
 
     explicit_home = new_node(
         tmp_path,
@@ -179,7 +177,7 @@ def test_new_derives_folder_from_group_fields_and_renders_title_slug(
     )
     home_meta = parse_document(explicit_home.read_text(encoding="utf-8")).meta
     assert home_meta["home"] == "custom/here.md"
-    assert "folder" not in home_meta
+    assert home_meta["folder"] == "build"
 
     explicit_folder = new_node(
         tmp_path,
@@ -188,7 +186,6 @@ def test_new_derives_folder_from_group_fields_and_renders_title_slug(
     )
     folder_meta = parse_document(explicit_folder.read_text(encoding="utf-8")).meta
     assert folder_meta["folder"] == "picked"
-    assert "home" not in folder_meta
 
     from bd_tree.api import export_view
 
@@ -196,6 +193,7 @@ def test_new_derives_folder_from_group_fields_and_renders_title_slug(
     export_view("tree", tmp_path, "1", out)
     assert (out / "build" / "build-step.md").is_file()
     assert (out / "g" / "grouped.md").is_file()
-    assert (out / "4.md").is_file()
-    assert (out / "custom" / "here.md").is_file()
+    assert (out / "4-flat.md").is_file()
+    assert (out / "build" / "explicit-home.md").is_file()
+    assert not (out / "custom" / "here.md").exists()
     assert (out / "picked" / "explicit-folder.md").is_file()

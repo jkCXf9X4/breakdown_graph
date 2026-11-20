@@ -120,7 +120,6 @@ def _template_fields(node: Node) -> dict[str, str]:
             "ref": node.ref,
             "id": str(node.id),
             "version": str(node.version),
-            "home": node.home or "",
             "folder": node.folder or "",
             "name": _placement_name(node),
             "slug": _placement_name(node),
@@ -151,12 +150,14 @@ def render_path(node: Node, template: str) -> str:
 
 
 def _default_path(node: Node) -> str:
-    """One placement rule: ``home``, then ``folder``/``name``, then ``<ref>.md``."""
-    if node.home:
-        return _validated_path(node, node.home)
+    """Placement: ``folder``/``name``, then ``<ref>-<slug>.md``, then ``<ref>.md``."""
     if node.folder or node.name:
         parts = [part for part in (node.folder, _placement_name(node)) if part]
         return _validated_path(node, "/".join(parts) + ".md")
+    slug = slugify(node.title)
+    # ``Node.title`` falls back to the ref, so an equal slug is not a title.
+    if slug and slug != node.ref:
+        return _validated_path(node, f"{node.ref}-{slug}.md")
     return _validated_path(node, f"{node.ref}.md")
 
 
@@ -211,11 +212,12 @@ def _index_text(
     summary_field: str,
     *,
     banner: str | None = None,
+    label: str | None = None,
 ) -> str:
     lines = [
         banner if banner is not None else BANNER.format(name="tree"),
         "",
-        f"# View {view.ref}",
+        f"# View {view.ref if label is None else label}",
         "",
     ]
     emitted: set[str] = set()

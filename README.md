@@ -167,7 +167,7 @@ bd root [REF] [--clear]
 Layout:
 
 ```
-bd work [REF] [--path-template T] [--status] [--writeback] [--clean] [--print]
+bd work [REF[+N]] [--depth N] [--path-template T] [--status] [--writeback] [--clean] [--print]
 bd current [--path|--view]
 bd views
 bd edit REF
@@ -175,13 +175,25 @@ bd edit REF
 
 `bd work REF` writes the single `<project>/bd_work/` area and replaces its
 contents; it does not create a second folder. With no REF it uses the default
-view. `bd current` is read-only and prints `<project>/bd_work (view <ref>)`;
+view. The view is always the full containment closure of one ref; the work area
+may materialize only its first `N` descendant levels with `REF+N` (the same
+suffix `bd show`/`bd tree` use) or `--depth N`, where `0` is the root alone and
+`--depth` overrides a suffix. `REFS.md`, `INDEX.md`, and `AGENTS.md` carry the
+materialized expression (`REF+N`), so `bd current` and `bd edit` recover it. A
+rebuild with a different depth replaces the area. `bd current` is read-only and
+prints `<project>/bd_work (view <ref>)`;
 `--path` prints only the path and `--view` only the ref. `--print` also prints
 only the path, is read-only, does not build, and errors when no area exists.
 `--status` and `--writeback` inspect the view actually in the area, not the
 requested or default view. `bd views` lists containment roots, marking the store
 default with `*`. `bd edit REF` prints the absolute path of that ref inside the
-current work area and errors if the ref is not in the active view.
+current work area and errors if the ref is not in the materialized area.
+
+Placement follows one rule: `folder`/`name`, else
+`<ref>-<title-slug>.md`, else `<ref>.md` when there is no usable title. The
+title slug is lowercase kebab-case.
+`--path-template` overrides the whole area; `{name}` and `{slug}` in a template
+are the explicit `name`, else the title slug, else the ref.
 
 Solutions:
 

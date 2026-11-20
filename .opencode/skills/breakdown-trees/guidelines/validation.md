@@ -7,7 +7,7 @@ targets.
 ## `bd check`
 
 Validates filenames, front matter, `contains`, `links`, reachability, tree
-shape for every node-rooted view, `home` paths, pins, and size. `--view` and
+shape for every node-rooted view, placement paths, pins, and size. `--view` and
 `--root-ref` choose what is reported; all views are still checked.
 
 Exit 0 means no `error` issues. Warnings do not fail: `external-link`,
@@ -30,7 +30,6 @@ Useful flags: `--require FIELD` (missing field becomes an error),
 | `unreachable`, `root-ref-missing` | Nothing reaches the node from the root, or `ROOT` names a missing ref |
 | `invalid-root`, `invalid-ref`, `view-root-missing` | `ROOT` or a view ref is malformed or absent |
 | `dangling-link` | A link points at no node at all |
-| `bad-home`, `duplicate-home` | `home` path invalid or claimed twice |
 | `missing-field` | A `--require` field is absent |
 
 Note that reachability counts a shared id and outgoing links: main and its

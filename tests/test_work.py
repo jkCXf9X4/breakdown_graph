@@ -30,7 +30,7 @@ def test_work_links_every_node_and_writes_generated_files(write, tmp_path):
     assert result.symlinks == 4
     store = api.load(tmp_path)
     for node in store.nodes.values():
-        dest = out / node.home
+        dest = out / node.folder / f"{node.ref}.md"
         assert dest.is_symlink()
         assert dest.resolve() == node.path.resolve()
         assert not os.path.isabs(os.readlink(dest))
@@ -346,11 +346,28 @@ def test_path_template_still_applies(write, tmp_path):
     assert "`claims/2.md`" in (out / "REFS.md").read_text(encoding="utf-8")
 
 
-def test_mixed_homes_produce_mixed_paths_and_rebuild_idempotently(write, tmp_path):
+def test_changing_folder_removes_the_old_link_in_one_rebuild(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], folder="root", name="1")
+    write(nodes, 2, folder="child", name="2", layer="claims")
+    out = tmp_path / "work"
+    api.work(tmp_path, "1", out)
+    assert (out / "root" / "1.md").is_symlink()
+
+    write(nodes, 1, contains=["2"], folder="renamed", name="1", layer="intent")
+    api.work(tmp_path, "1", out)
+
+    assert (out / "renamed" / "1.md").is_symlink()
+    assert not (out / "root" / "1.md").is_symlink()
+    assert not (out / "root" / "1.md").exists()
+    assert api.work(tmp_path, "1", out, status=True).ok
+
+
+def test_mixed_placement_produces_mixed_paths_and_rebuild_idempotently(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2", "3"], layer="intent")
-    write(nodes, 2)  # no home -> 2.md
-    write(nodes, 3, home="deep/review/3.md")
+    write(nodes, 2)  # no folder/name -> 2-title-of-2.md
+    write(nodes, 3, home="deep/review/3.md", title="Deep Review")
     out = tmp_path / "work"
 
     result = api.work(tmp_path, "1", out)
@@ -358,8 +375,8 @@ def test_mixed_homes_produce_mixed_paths_and_rebuild_idempotently(write, tmp_pat
     assert result.symlinks == 3
     expected = {
         "intent/1.md": nodes / "1.md",
-        "2.md": nodes / "2.md",
-        "deep/review/3.md": nodes / "3.md",
+        "2-title-of-2.md": nodes / "2.md",
+        "3-deep-review.md": nodes / "3.md",
     }
     for rel, source in expected.items():
         dest = out / rel
@@ -406,7 +423,9 @@ def test_folder_and_title_build_nested_named_work_area(write, tmp_path):
     assert "`06-evolution/suggested/new-idea.md` | 2 |" in refs
 
 
-def test_status_and_writeback_use_refs_manifest_when_home_changes(write, tmp_path):
+def test_status_and_writeback_use_refs_manifest_when_placement_changes(
+    write, tmp_path
+):
     _tree(write, tmp_path)
     out = tmp_path / "work"
     api.work(tmp_path, "1", out)
@@ -415,7 +434,8 @@ def test_status_and_writeback_use_refs_manifest_when_home_changes(write, tmp_pat
     dest.write_text(
         "---\n"
         "id: 2\n"
-        "home: moved/2.md\n"
+        "folder: moved\n"
+        "name: 2\n"
         "title: Moved\n"
         "summary: s\n"
         'contains: ["4"]\n'
@@ -714,3 +734,100 @@ def test_write_through_is_visible_to_git_status(write, tmp_path):
     porcelain = _run_git(repo, "status", "--porcelain")
     assert "nodes/2.md" in porcelain
     assert "work/" not in porcelain
+
+
+def test_depth_limited_work_materializes_only_the_prefix(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    result = api.work(tmp_path, "1", out, depth=1)
+
+    assert result.depth == 1 and result.view_ref == "1+1"
+    assert result.nodes == 3 and result.symlinks == 3
+    assert (out / "intent" / "1.md").is_symlink()
+    assert (out / "claims" / "2.md").is_symlink()
+    assert (out / "review" / "3.md").is_symlink()
+    assert not (out / "evidence" / "4.md").exists()
+    for name in ("REFS.md", "INDEX.md", "AGENTS.md"):
+        text = (out / name).read_text(encoding="utf-8")
+        assert "1+1" in text
+        assert "4.md" not in text
+        assert "Title of 4" not in text
+
+    agents = (out / "AGENTS.md").read_text(encoding="utf-8")
+    assert "first 1 descendant levels" in agents
+    assert "run `bd work 1` for the full closure" in agents
+
+
+def test_depth_limited_work_edit_path_hides_excluded_refs(write, tmp_path):
+    from bd_tree.errors import ExportError
+    from bd_tree.work import area, edit_path
+
+    _tree(write, tmp_path)
+    out = (tmp_path / "bd_work").resolve()
+    api.work(tmp_path, "1", depth=1)
+
+    current = area(tmp_path)
+    assert current.ref == "1" and current.depth == 1
+    assert current.view_ref == "1+1"
+    assert edit_path(tmp_path, "2") == out / "claims" / "2.md"
+    with pytest.raises(ExportError, match=r"current view 1\+1"):
+        edit_path(tmp_path, "4")
+
+
+def test_full_work_restores_the_closure_and_drops_the_suffix(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1", out, depth=1)
+
+    result = api.work(tmp_path, "1", out)
+
+    assert result.depth is None and result.view_ref == "1"
+    assert result.nodes == 4
+    assert (out / "evidence" / "4.md").is_symlink()
+    refs = (out / "REFS.md").read_text(encoding="utf-8")
+    index = (out / "INDEX.md").read_text(encoding="utf-8")
+    agents = (out / "AGENTS.md").read_text(encoding="utf-8")
+    assert "view 1\n" in refs and "1+1" not in refs
+    assert "# View 1\n" in index and "1+1" not in index
+    assert "view `1`" in agents and "1+1" not in agents
+
+
+def test_depth_status_is_clean_and_reports_the_materialized_ref(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1", out, depth=1)
+
+    status = api.work(tmp_path, "1", out, status=True)
+
+    assert status.ok
+    assert status.depth == 1 and status.view_ref == "1+1"
+    assert status.nodes == 3
+    assert {entry.ref for entry in status.entries} == {"1", "2", "3"}
+
+
+def test_switching_depth_removes_and_restores_stale_links(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1", out)
+    assert _link_count(out) == 4
+
+    api.work(tmp_path, "1", out, depth=1)
+    assert _link_count(out) == 3
+    assert not (out / "evidence" / "4.md").exists()
+    assert api.work(tmp_path, "1", out, status=True).ok
+
+    api.work(tmp_path, "1", out)
+    assert _link_count(out) == 4
+    assert (out / "evidence" / "4.md").is_symlink()
+    assert api.work(tmp_path, "1", out, status=True).ok
+
+
+def test_depth_zero_materializes_the_root_only(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    result = api.work(tmp_path, "1", out, depth=0)
+
+    assert result.view_ref == "1+0" and result.nodes == 1
+    assert _link_count(out) == 1
+    assert (out / "intent" / "1.md").is_symlink()
+    assert not (out / "claims" / "2.md").exists()

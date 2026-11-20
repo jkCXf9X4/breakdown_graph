@@ -328,11 +328,9 @@ def new_node(
     node_id = max((node.id for node in store.nodes.values()), default=0) + 1
     meta: dict[str, Any] = {"id": node_id}
     meta.update(fields)
-    home = meta.get("home")
     folder = meta.get("folder")
-    has_home = isinstance(home, str) and bool(home.strip())
     has_folder = isinstance(folder, str) and bool(folder.strip())
-    if not has_home and not has_folder:
+    if not has_folder:
         derived = _derive_folder(fields)
         if derived is not None:
             meta["folder"] = derived

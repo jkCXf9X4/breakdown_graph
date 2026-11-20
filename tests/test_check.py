@@ -16,7 +16,6 @@ def test_filename_grammar_and_id_mismatch(write, tmp_path):
         "id": 3,
         "type": "intent",
         "layer": "intent",
-        "home": "intent/two.md",
         "title": "two",
         "summary": "",
         "date": "2026-01-01",
@@ -50,14 +49,25 @@ def test_dangling_link_and_external_link(write, tmp_path):
     assert not any(issue.code == "external-link" for issue in check(tmp_path, "1").warnings)
 
 
-def test_duplicate_home_and_freshness_warnings(write, tmp_path, pin):
+def test_freshness_warnings(write, tmp_path, pin):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3"])
+    write(nodes, 2)
+    write(nodes, 3, links=[{"to": "2", "type": "serves", "pinned": pin("old\n")}])
+    result = check(tmp_path)
+    assert any(issue.code == "stale-link" for issue in result.warnings)
+
+
+def test_home_keys_are_inert_arbitrary_front_matter(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2", "3"], home="same/place.md")
     write(nodes, 2, home="same/place.md")
-    write(nodes, 3, links=[{"to": "2", "type": "serves", "pinned": pin("old\n")}])
+    write(nodes, 3, home="bad/../place.md")
     result = check(tmp_path)
-    assert any(issue.code == "duplicate-home" for issue in result.errors)
-    assert any(issue.code == "stale-link" for issue in result.warnings)
+    assert result.ok
+    assert not any(
+        issue.code in ("bad-home", "duplicate-home") for issue in result.issues
+    )
 
 
 def test_untracked_link_and_oversize_warning(write, tmp_path):

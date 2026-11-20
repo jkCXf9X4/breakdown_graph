@@ -45,8 +45,10 @@ _REF_ROW = re.compile(
     r"^\|\s*`(?P<path>[^`]+)`\s*\|\s*(?P<ref>\d+(?:-\d+)?)\s*\|"
 )
 
-_VIEW_IN_REFS = re.compile(r"^#\s*References\b.*\bview\s+(\d+(?:-\d+)?)\s*$")
-_VIEW_IN_INDEX = re.compile(r"^#\s*View\s+(\d+(?:-\d+)?)\s*$")
+_VIEW_IN_REFS = re.compile(
+    r"^#\s*References\b.*\bview\s+(\d+(?:-\d+)?)(?:\+(\d+))?\s*$"
+)
+_VIEW_IN_INDEX = re.compile(r"^#\s*View\s+(\d+(?:-\d+)?)(?:\+(\d+))?\s*$")
 
 GIT_TIMEOUT = 5.0
 
@@ -97,6 +99,13 @@ class WorkArea:
 
     out: Path
     ref: str | None
+    depth: int | None = None
+
+    @property
+    def view_ref(self) -> str | None:
+        if self.ref is None:
+            return None
+        return self.ref if self.depth is None else f"{self.ref}+{self.depth}"
 
 
 @dataclass(frozen=True)
@@ -119,10 +128,15 @@ class WorkResult:
     written: int = 0
     invalid: list[str] = field(default_factory=list)
     git: GitContext | None = None
+    depth: int | None = None
 
     @property
     def ok(self) -> bool:
         return all(entry.status == STATUS_OK for entry in self.entries)
+
+    @property
+    def view_ref(self) -> str:
+        return self.ref if self.depth is None else f"{self.ref}+{self.depth}"
 
 
 def _resolve_view(root: str | Path, ref: str | int | None) -> View:
@@ -142,6 +156,46 @@ def _resolve_view(root: str | Path, ref: str | int | None) -> View:
 
 def _sorted_refs(view: View) -> list[str]:
     return sorted(view.nodes, key=lambda r: (view.nodes[r].id, view.nodes[r].version))
+
+
+def _depth_label(ref: str, depth: int | None) -> str:
+    """The materialized expression: ``REF`` for a full closure, else ``REF+N``."""
+    return ref if depth is None else f"{ref}+{depth}"
+
+
+def _depth_view(view: View, depth: int | None) -> View:
+    """Return ``view`` filtered to nodes within ``depth`` levels of its root.
+
+    ``view`` is already the containment closure, so this is a prefix of that
+    closure along ``effective_contains``.  ``None`` keeps the full closure.
+    """
+    if depth is None:
+        return view
+    kept: set[str] = set()
+    seen: set[str] = set()
+
+    def walk(ref: str, level: int) -> None:
+        if ref in seen or ref not in view.nodes:
+            return
+        seen.add(ref)
+        kept.add(ref)
+        if level >= depth:
+            return
+        for child in view.store.effective_contains(ref):
+            walk(child, level + 1)
+
+    walk(view.ref, 0)
+    nodes = {ref: node for ref, node in view.nodes.items() if ref in kept}
+    edges = [
+        edge for edge in view.edges if edge.source in kept and edge.to in kept
+    ]
+    return View(
+        store=view.store,
+        ref=view.ref,
+        nodes=nodes,
+        edges=edges,
+        issues=view.issues,
+    )
 
 
 def _expected(view: View, path_template: str | None) -> dict[str, str]:
@@ -200,8 +254,10 @@ def _manifest(out: Path) -> dict[str, str] | None:
     return mapping or None
 
 
-def _view_header(path: Path, pattern: re.Pattern[str]) -> str | None:
-    """The view ref a generated header declares, if it can be read."""
+def _view_header(
+    path: Path, pattern: re.Pattern[str]
+) -> tuple[str, int | None] | None:
+    """The view ref and optional materialized depth a header declares."""
     if not path.is_file():
         return None
     try:
@@ -211,7 +267,8 @@ def _view_header(path: Path, pattern: re.Pattern[str]) -> str | None:
     for line in lines:
         match = pattern.match(line.strip())
         if match:
-            return match.group(1)
+            depth = int(match.group(2)) if match.group(2) is not None else None
+            return match.group(1), depth
     return None
 
 
@@ -226,12 +283,18 @@ def area(root: str | Path, out: str | Path | None = None) -> WorkArea:
         out_path = (load(root).project_root / "bd_work").resolve()
     else:
         out_path = Path(out).resolve()
-    ref = None
+    ref: str | None = None
+    depth: int | None = None
     if out_path.is_dir():
-        ref = _view_header(out_path / "REFS.md", _VIEW_IN_REFS)
-        if ref is None:
-            ref = _view_header(out_path / "INDEX.md", _VIEW_IN_INDEX)
-    return WorkArea(out=out_path, ref=ref)
+        for header, pattern in (
+            (out_path / "REFS.md", _VIEW_IN_REFS),
+            (out_path / "INDEX.md", _VIEW_IN_INDEX),
+        ):
+            parsed = _view_header(header, pattern)
+            if parsed is not None:
+                ref, depth = parsed
+                break
+    return WorkArea(out=out_path, ref=ref, depth=depth)
 
 
 def _current_area(root: str | Path, out: str | Path | None = None) -> WorkArea:
@@ -301,21 +364,30 @@ def _inspect(view: View, out: Path, path_template: str | None) -> list[WorkEntry
     return entries
 
 
-def _index_file(view: View, paths: dict[str, str], title_field: str, summary_field: str) -> str:
+def _index_file(
+    view: View,
+    paths: dict[str, str],
+    title_field: str,
+    summary_field: str,
+    label: str,
+) -> str:
     return _index_text(
         view,
         paths,
         title_field,
         summary_field,
-        banner=BANNER.format(ref=view.ref),
+        banner=BANNER.format(ref=label),
+        label=label,
     )
 
 
-def _refs_text(view: View, paths: dict[str, str], title_field: str) -> str:
+def _refs_text(
+    view: View, paths: dict[str, str], title_field: str, label: str
+) -> str:
     lines = [
-        BANNER.format(ref=view.ref),
+        BANNER.format(ref=label),
         "",
-        f"# References — view {view.ref}",
+        f"# References — view {label}",
         "",
         "| Path | Ref | Title |",
         "| --- | --- | --- |",
@@ -329,8 +401,13 @@ def _refs_text(view: View, paths: dict[str, str], title_field: str) -> str:
     return "\n".join(lines)
 
 
-def _agents_text(view: View, git: GitContext | None = None) -> str:
-    ref = view.ref
+def _agents_text(
+    view: View,
+    label: str,
+    git: GitContext | None = None,
+    depth: int | None = None,
+) -> str:
+    ref = label
     lines = [
         f"# Working set — view `{ref}`",
         "",
@@ -351,6 +428,11 @@ def _agents_text(view: View, git: GitContext | None = None) -> str:
             "repair path if an editor replaces a symlink with a regular file."
         ),
     ]
+    if depth is not None:
+        lines.append(
+            f"- This area materializes only the first {depth} descendant levels "
+            f"of view `{view.ref}`; run `bd work {view.ref}` for the full closure."
+        )
     if git is not None:
         lines.extend(
             [
@@ -405,7 +487,9 @@ def _build(
     force: bool,
     clean: bool,
     git: GitContext | None = None,
+    depth: int | None = None,
 ) -> WorkResult:
+    label = _depth_label(view.ref, depth)
     if clean:
         _prepare_out(out, force=True, clean=True)
         entries: list[WorkEntry] = []
@@ -425,6 +509,12 @@ def _build(
         _prune_empty_dirs(out)
 
     paths = _expected(view, path_template)
+    known = set(paths.values())
+    for leftover in _node_link_strays(view, out, known):
+        link = out / leftover.path
+        if link.is_symlink():
+            link.unlink()
+    _prune_empty_dirs(out)
     files: list[Path] = []
     for ref in _sorted_refs(view):
         node = view.nodes[ref]
@@ -434,16 +524,18 @@ def _build(
 
     index_path = out / "INDEX.md"
     index_path.write_text(
-        _index_file(view, paths, title_field, summary_field),
+        _index_file(view, paths, title_field, summary_field, label),
         encoding="utf-8",
         newline="",
     )
     refs_path = out / "REFS.md"
     refs_path.write_text(
-        _refs_text(view, paths, title_field), encoding="utf-8", newline=""
+        _refs_text(view, paths, title_field, label), encoding="utf-8", newline=""
     )
     agents_path = out / "AGENTS.md"
-    agents_path.write_text(_agents_text(view, git), encoding="utf-8", newline="")
+    agents_path.write_text(
+        _agents_text(view, label, git, depth), encoding="utf-8", newline=""
+    )
     files.extend((index_path, refs_path, agents_path))
 
     return WorkResult(
@@ -453,6 +545,7 @@ def _build(
         symlinks=len(view.nodes),
         files=files,
         git=git,
+        depth=depth,
     )
 
 
@@ -464,7 +557,13 @@ def _validate_target(target: Path, nodes_dir: Path) -> None:
         raise ExportError(f"refusing to write non-markdown file: '{target}'")
 
 
-def _writeback(view: View, out: Path, path_template: str | None) -> WorkResult:
+def _writeback(
+    view: View,
+    out: Path,
+    path_template: str | None,
+    *,
+    depth: int | None = None,
+) -> WorkResult:
     nodes_dir = (view.root / "nodes").resolve()
     written = 0
     invalid: list[str] = []
@@ -502,6 +601,7 @@ def _writeback(view: View, out: Path, path_template: str | None) -> WorkResult:
         entries=entries,
         written=written,
         invalid=invalid,
+        depth=depth,
     )
 
 
@@ -513,11 +613,11 @@ def edit_path(
     Read-only: a missing expected link still yields its path, never a build.
     """
     current = _current_area(root, out)
-    view = _resolve_view(root, current.ref)
+    view = _depth_view(_resolve_view(root, current.ref), current.depth)
     wanted = str(ref)
     if wanted not in view.nodes:
         raise ExportError(
-            f"ref {wanted} is not in current view {view.ref}; "
+            f"ref {wanted} is not in current view {current.view_ref}; "
             "run `bd views` to list views or `bd work REF` to switch"
         )
     manifest = _manifest(current.out)
@@ -540,6 +640,7 @@ def work(
     clean: bool = False,
     status: bool = False,
     writeback: bool = False,
+    depth: int | None = None,
 ) -> WorkResult:
     """Build, refresh, inspect or write back the single view work area."""
     if status and writeback:
@@ -547,10 +648,11 @@ def work(
 
     if status or writeback:
         current = _current_area(root, out)
-        view = _resolve_view(root, current.ref)
+        view = _depth_view(_resolve_view(root, current.ref), current.depth)
+        depth = current.depth
         out_path = current.out
     else:
-        view = _resolve_view(root, ref)
+        view = _depth_view(_resolve_view(root, ref), depth)
         if out is not None:
             out_path = Path(out).resolve()
         else:
@@ -564,9 +666,10 @@ def work(
             nodes=len(view.nodes),
             symlinks=sum(1 for entry in entries if entry.status == STATUS_OK),
             entries=entries,
+            depth=depth,
         )
     if writeback:
-        return _writeback(view, out_path, path_template)
+        return _writeback(view, out_path, path_template, depth=depth)
     return _build(
         view,
         out_path,
@@ -576,4 +679,5 @@ def work(
         force=force,
         clean=clean,
         git=git_context(view.root),
+        depth=depth,
     )

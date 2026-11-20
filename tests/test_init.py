@@ -99,13 +99,12 @@ def test_tree_shows_root_after_init(tmp_path, capsys):
     ).meta == {"id": 1, "title": "Root", "contains": []}
 
 
-def test_init_root_has_no_home_and_fresh_store_checks_clean(tmp_path):
+def test_init_root_has_no_placement_fields_and_fresh_store_checks_clean(tmp_path):
     project = tmp_path / "store"
     init_store(project)
     meta = parse_document(
         (project / ".bd_tree" / "nodes" / "1.md").read_text(encoding="utf-8")
     ).meta
-    assert "home" not in meta
     assert meta == {"id": 1, "title": "Root", "contains": []}
     result = check(project)
     assert result.ok

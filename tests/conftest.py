@@ -28,8 +28,9 @@ def write_node(
 ) -> Path:
     """Write one node.  Fields are arbitrary; only what you pass is written.
 
-    Convenience: when ``layer`` is given and ``home`` is not, derive
-    ``<layer>/<ref>.md`` so path assertions stay readable.
+    Convenience: when ``layer`` is given and ``folder`` is not, derive
+    ``<layer>`` as the folder and ``<ref>`` as the name so path assertions stay
+    readable.
     """
     directory.mkdir(parents=True, exist_ok=True)
     ref = str(node_id) if version == 0 else f"{node_id}-{version}"
@@ -39,8 +40,9 @@ def write_node(
         "summary": fields.pop("summary", "summary"),
     }
     data.update(fields)
-    if "home" not in data and isinstance(data.get("layer"), str):
-        data["home"] = f"{data['layer']}/{ref}.md"
+    if "folder" not in data and isinstance(data.get("layer"), str):
+        data["folder"] = data["layer"]
+        data.setdefault("name", ref)
     if meta:
         data.update(meta)
     if contains is not None:

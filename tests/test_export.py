@@ -8,18 +8,18 @@ from bd_tree.errors import ExportError
 
 def test_tree_view_writes_nodes_and_one_index(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2"], title="Root intent", home="intent/purpose.md")
-    write(nodes, 2, type="claim", layer="claims", title="Thesis", home="claims/thesis.md")
+    write(nodes, 1, contains=["2"], title="Root intent")
+    write(nodes, 2, type="claim", layer="claims", title="Thesis")
     out = tmp_path / "tree"
     result = export_view("tree", tmp_path, "1", out)
     assert result.nodes == 2
     assert len(result.files) == 3
     index = (out / "INDEX.md").read_text(encoding="utf-8")
     assert "GENERATED FILE" in index
-    assert "[Root intent](intent/purpose.md)" in index
-    assert "[Thesis](claims/thesis.md)" in index
-    assert (out / "intent" / "purpose.md").is_file()
-    assert (out / "claims" / "thesis.md").is_file()
+    assert "[Root intent](1-root-intent.md)" in index
+    assert "[Thesis](claims/2.md)" in index
+    assert (out / "1-root-intent.md").is_file()
+    assert (out / "claims" / "2.md").is_file()
     assert not (out / "claims" / "INDEX.md").exists()
 
 
@@ -41,8 +41,8 @@ def test_version_view_exports_only_that_closure(write, tmp_path):
     write(nodes, 1, contains=["2"])
     write(nodes, 2, contains=["3"])
     write(nodes, 3)
-    write(nodes, 3, version=1, home="evidence/three-v1.md")
-    write(nodes, 2, version=1, contains=["3-1"], home="claims/two-v1.md")
+    write(nodes, 3, version=1, folder="evidence", name="three-v1")
+    write(nodes, 2, version=1, contains=["3-1"], folder="claims", name="two-v1")
     out = tmp_path / "view"
     result = export_view("tree", tmp_path, "2-1", out)
     assert result.nodes == 2
@@ -86,7 +86,7 @@ def test_dot_export(write, tmp_path):
     assert 'label="1\\nTitle of 1"' in text
 
 
-def test_generic_store_without_layer_type_or_home(write, tmp_path):
+def test_generic_store_without_layer_type_or_placement(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2", "3"], phase="intent", audience="all", order=1, title="Objective")
     write(nodes, 2, contains=["4"], phase="build", audience="team", order=2, title="Build")
@@ -97,7 +97,7 @@ def test_generic_store_without_layer_type_or_home(write, tmp_path):
 
     result = check(tmp_path)
     assert result.ok
-    assert not any(issue.code in ("missing-field", "bad-home") for issue in result.issues)
+    assert not any(issue.code == "missing-field" for issue in result.issues)
 
     out = tmp_path / "generic-tree"
     exported = export_view(
@@ -124,18 +124,41 @@ def test_generic_store_without_layer_type_or_home(write, tmp_path):
     assert data["phase"] == "build"
     assert data["audience"] == "dev"
     assert data["order"] == 4
-    assert "layer" not in data and "type" not in data and "home" not in data
+    assert "layer" not in data and "type" not in data and "folder" not in data
 
 
-def test_default_path_falls_back_to_ref_when_home_is_absent(write, tmp_path):
+def test_default_path_adds_the_title_slug_to_the_ref(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"], layer="intent")
-    write(nodes, 2)  # no home -> {ref}.md while 1 keeps its layer-derived home
+    write(nodes, 2, title="Some Method (Draft)")  # no folder/name
     out = tmp_path / "fallback"
     export_view("tree", tmp_path, "1", out)
     assert (out / "intent" / "1.md").is_file()
+    assert (out / "2-some-method-draft.md").is_file()
+    assert not (out / "2.md").exists()
+
+
+def test_default_path_keeps_the_version_in_the_slug_stem(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 2, version=1, title="Method Note")
+    out = tmp_path / "version"
+    export_view("tree", tmp_path, "2-1", out)
+    assert (out / "2-1-method-note.md").is_file()
+    assert not (out / "2-1.md").exists()
+    assert not (out / "2-2.md").exists()
+
+
+def test_default_path_falls_back_to_ref_without_a_usable_title(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3"], layer="intent")
+    write(nodes, 2, title="!!!")
+    write(nodes, 3, title="")
+    out = tmp_path / "fallback"
+    export_view("tree", tmp_path, "1", out)
     assert (out / "2.md").is_file()
-    assert not (out / "1.md").exists()
+    assert (out / "3.md").is_file()
+    assert not (out / "2-.md").exists()
+    assert not (out / "3-.md").exists()
 
 
 def test_folder_and_title_slug_build_the_default_path(write, tmp_path):
@@ -167,7 +190,7 @@ def test_name_only_places_the_node_flat(write, tmp_path):
     assert (out / "flat-name.md").is_file()
 
 
-def test_home_wins_over_folder_and_name(write, tmp_path):
+def test_folder_and_name_win_over_home(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"], title="Root")
     write(
@@ -180,8 +203,8 @@ def test_home_wins_over_folder_and_name(write, tmp_path):
     )
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1", out)
-    assert (out / "explicit" / "home.md").is_file()
-    assert not (out / "claims" / "custom.md").exists()
+    assert (out / "claims" / "custom.md").is_file()
+    assert not (out / "explicit" / "home.md").exists()
 
 
 def test_slug_falls_back_to_ref_when_title_has_no_slug(write, tmp_path):
@@ -215,28 +238,29 @@ def test_folder_paths_are_checked_for_duplicates(write, tmp_path):
         export_view("tree", tmp_path, "1", out)
 
 
-def test_nested_home_is_honoured_by_view(write, tmp_path):
+def test_home_is_inert_and_the_title_slug_places_the_node(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2"], home="top/1.md")
-    write(nodes, 2, home="deep/nested/2.md")
+    write(nodes, 1, contains=["2"], title="Root")
+    write(nodes, 2, home="somewhere.md", title="Some Method")
     out = tmp_path / "view"
     result = export_view("tree", tmp_path, "1", out)
     assert result.nodes == 2
-    assert (out / "deep" / "nested" / "2.md").is_file()
+    assert (out / "2-some-method.md").is_file()
+    assert not (out / "somewhere.md").exists()
     index = (out / "INDEX.md").read_text(encoding="utf-8")
-    assert "[Title of 2](deep/nested/2.md)" in index
+    assert "[Some Method](2-some-method.md)" in index
 
 
 def test_prefix_collision_is_refused(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2"], home="a.md")
-    write(nodes, 2, home="a.md/b.md")
+    write(nodes, 1, contains=["2"], folder="a", name="b")
+    write(nodes, 2, folder="a/b.md", name="c")
     out = tmp_path / "tree"
     with pytest.raises(ExportError) as caught:
         export_view("tree", tmp_path, "1", out)
     message = str(caught.value)
     assert "1" in message and "2" in message
-    assert "a.md" in message
+    assert "a/b.md" in message
 
 
 def test_dot_color_and_shape_by_arbitrary_fields(write, tmp_path):

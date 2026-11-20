@@ -18,7 +18,7 @@ from .model import Node, Store
 
 # Front-matter keys that drive the model or are displayed separately.
 RESERVED: frozenset[str] = frozenset(
-    {"id", "legacy", "contains", "links", "home", "title", "summary"}
+    {"id", "legacy", "contains", "links", "title", "summary"}
 )
 
 MAX_FIND_LINES = 3

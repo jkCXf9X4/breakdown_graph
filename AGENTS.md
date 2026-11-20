@@ -53,8 +53,10 @@ behaviour change and update the docs listed at the bottom.
   from the target node's `type`.
 - Front matter is arbitrary; only the identity/containment/link/freshness keys
   (`id`, `legacy`, `contains`, `links`, `to`, `type`, `propagates`, `pinned`)
-  are reserved. `home`, `folder`, `name`, and `title` are presentation fields.
-  Add no schema unless a project asks for one.
+  are reserved. `folder`, `name`, and `title` are presentation fields: work and
+  export paths use `<ref>-<title-slug>.md`, or `folder`/`name` when given.
+  `home` has no meaning; it is ordinary front matter. Add no schema unless a
+  project asks for one.
 - Git owns the solution boundary: one branch/worktree per solution. The flat store
   is the merge unit; `bd work` is a layout inside one checkout, never a branch
   mechanism.
@@ -84,13 +86,16 @@ behaviour change and update the docs listed at the bottom.
 - Solutions: `bd solution new NAME` (thin wrapper over
   `git worktree add ../NAME -b NAME`); one worktree per solution.
 - Writable layout: `bd work REF` writes the single `<project>/bd_work/` area;
-  a different REF replaces its contents. `bd current` reports the area and its
-  view; `--path` and `--view` narrow the output, and it errors if no area
-  exists.
+  a different REF replaces its contents. `bd work REF+N` (or `--depth N`)
+  materializes only the first N descendant levels — the view stays the full
+  closure, the area holds a prefix of it. `bd current` reports the area and its
+  view, including `+N`; `--path` and `--view` narrow the output, and it errors
+  if no area exists.
 - Agent sessions work in that one area and read exactly one view. Switch with
-  `bd work REF`; never keep parallel work folders side by side. `--status` and
-  `--writeback` inspect the view actually in the area, not the requested or
-  default view. `bd views` lists containment roots and marks the store default.
+  `bd work REF` (drop the `+N` to materialize the whole view); never keep
+  parallel work folders side by side. `--status` and `--writeback` inspect the
+  view actually in the area, not the requested or default view. `bd views` lists
+  containment roots and marks the store default.
 - Find and edit inside the area: `bd edit REF` prints the absolute path of a ref
   in the active view and errors if it is absent.
 - Read-only snapshots: `bd view REF --out DIR` or `bd export ...`; they are
@@ -114,7 +119,7 @@ behaviour change and update the docs listed at the bottom.
 | Search | `bd find TEXT`, `bd grep 'RE'`; add `--view REF` or `--all` |
 | Show the work area | `bd current [--path\|--view]` |
 | List containment roots | `bd views` |
-| Switch/edit the work area | `bd work REF`, then open `bd edit REF` |
+| Switch/edit the work area | `bd work REF[+N]`, then open `bd edit REF` |
 | Repair symlinks | `bd work --status` / `bd work --writeback` |
 | Switch tree root | `bd root REF`, `bd root --clear` |
 | Show versions | `bd versions ID`, `bd fork ID`, `bd promote REF` |
@@ -136,7 +141,8 @@ bd show 1+1 --max-chars 400
 bd contain 1 5 --after 6
 bd link 5 9 --type supports
 bd work 1                 # write the single <project>/bd_work area
-bd current                # <project>/bd_work (view 1)
+bd work 1+1               # same area, first two levels only
+bd current                # <project>/bd_work (view 1+1)
 bd work 1 --print         # print that directory; read-only, no build
 bd edit 2                 # path of ref 2 in the active view
 bd work 1-1               # switch the same area to another view

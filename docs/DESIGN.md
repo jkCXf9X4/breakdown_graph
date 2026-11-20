@@ -84,7 +84,6 @@ Built-in keys (structural keys are reserved; presentation keys are placement onl
 | `legacy` | string | Original identifier from an imported tree |
 | `contains` | list of refs | Ordered children for this view |
 | `links` | list of edge objects | Semantic edges |
-| `home` | string | Explicit presentation path; wins over `folder` and `name` |
 | `folder` | string | Optional directory prefix for default placement |
 | `name` | string | Optional file stem; `.md` is appended |
 
@@ -229,6 +228,16 @@ bd_work/claims/thesis-claim.md -> ../../.bd_tree/nodes/49.md
   the content of that area: stale links are removed, and `INDEX.md`, `REFS.md`,
   and `AGENTS.md` are rewritten for the new view. With no REF, `bd work` uses the
   default view. Never keep two writable work folders side by side.
+- The view is still the full containment closure of one ref; the work area may
+  materialize only the first `N` descendant levels of it. `bd work REF+N` (the
+  same display suffix as `bd show`/`bd tree`) or `bd work REF --depth N` prunes
+  the materialized prefix after the view is resolved; `N=0` leaves the root
+  alone and `--depth` overrides a suffix. Containment alone decides the prefix.
+  The generated `REFS.md`, `INDEX.md`, and `AGENTS.md` carry `REF+N`, so
+  `bd current`, `--status`, `--writeback`, and `bd edit` recover the
+  materialized depth; `bd edit` rejects a ref outside that prefix. A rebuild
+  with a different depth, including a plain `bd work REF`, replaces the area and
+  removes links that are no longer materialized.
 - `bd current` is the read-only query for that area: it prints
   `<project>/bd_work (view <ref>)`, `--path` prints only the path, and `--view`
   only the ref; it errors when no area exists. `bd work --print` also prints only
@@ -236,11 +245,14 @@ bd_work/claims/thesis-claim.md -> ../../.bd_tree/nodes/49.md
   `bd edit REF` prints the absolute path of a ref in the active view and errors
   if it is not there. `bd views` lists containment roots and marks the store
   default with `*`.
-- Each node is placed at its `home` when present. Otherwise `folder` and `name`
-  build the path: `folder` is an optional directory prefix, `name` the file stem
-  (default: the slug of `title`, then the ref), and `.md` is appended. A node
-  with none of these lands at `<ref>.md`; `--path-template` overrides the whole
-  area and never names another work area.
+- Each node is placed by `folder` and `name`: `folder` is an optional directory
+  prefix, `name` the file stem (default: the lowercase kebab-case slug of
+  `title`, then the ref), and `.md` is appended. With neither, the path is
+  `<ref>-<title-slug>.md`; a node with no usable title (none, or punctuation
+  only) lands at `<ref>.md`, so the ref is never doubled.
+  `--path-template` overrides the whole area and never names another work area;
+  in a template, `{name}`/`{slug}` is the explicit `name`, else the title slug,
+  else the ref.
 - `--status` classifies paths as `ok`, `missing`, `wrong-target`, `detached`,
   `stray`, or `stale-ref`; `--writeback` re-links detached files and refuses
   invalid front matter or a mismatched `id`, so a body-only replacement cannot
@@ -284,8 +296,8 @@ branch is checked out where; `bd work` remains the layout inside one checkout.
 
 Nothing in the tool knows the article layers; `layer` is a field like any other.
 The only reserved vocabulary is structural: `id`, `legacy`, `contains`,
-`links`, and the freshness keys `to`, `type`, `propagates`, `pinned`. `home`,
-`folder`, `name`, and `title` are presentation fields.
+`links`, and the freshness keys `to`, `type`, `propagates`, `pinned`. `folder`,
+`name`, and `title` are presentation fields.
 
 Consequences: any workflow can define layers (`phase`, `stage`, `stream`),
 ordering, and statuses; path templates read any front-matter field; dot

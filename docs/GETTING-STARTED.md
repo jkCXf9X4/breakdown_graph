@@ -37,8 +37,8 @@ State the intent of this graph here.
 ```
 
 `id` is identity and `contains` is the ordered child list. The rest of the front
-matter is arbitrary. `bd init` writes no `home`, so the root lands at `1.md`; add
-`home` (or `folder`/`name`) only to place it elsewhere.
+matter is arbitrary. `bd init` writes no `folder` or `name`, so the title `Root`
+lands at `1-root.md`; add `folder`/`name` only to place it elsewhere.
 
 Add two nodes and inspect the tree:
 
@@ -97,16 +97,16 @@ ls "$work_dir"
 ```
 
 ```
-1.md
-intent/2.md
-claims/3.md
+1-root.md
+intent/why-does-this-exist.md
+claims/what-is-true.md
 INDEX.md  AGENTS.md  REFS.md
 ```
 
 Only the node `.md` files are symlinks; `INDEX.md`, `AGENTS.md`, and `REFS.md`
-are regular generated files. Each node is placed at its `home` when present;
-otherwise `folder` and `name` build the path, with the `title` slug as the
-default file name. A node with none of these lands at `<ref>.md`;
+are regular generated files. Each node is placed by `folder` and `name`; without
+a `name` the file stem is the `title` slug. With neither, the path is
+`<ref>-<title-slug>.md`; a node without a usable title lands at `<ref>.md`.
 `--path-template` sets another route for the whole view:
 
 ```sh
@@ -135,6 +135,21 @@ There is exactly one writable work area. `bd work REF` switches it to another
 view by replacing its contents: stale links are removed, and `INDEX.md`,
 `REFS.md`, and `AGENTS.md` are rewritten. Never keep two work folders side by
 side.
+
+A work area may also materialize only the first `N` descendant levels of a view:
+`bd work REF+N`, or `bd work REF --depth N`, where `0` materializes the root
+alone and `--depth` overrides a suffix. This is the same `+N` suffix `bd show`
+and `bd tree` accept. The view itself is still the full containment closure of
+one ref, not a smaller view. The generated headers carry `REF+N`, so
+`bd current --view` reports it and `bd edit` only resolves refs that are
+materialized. A rebuild with a different depth, or a plain `bd work REF`,
+replaces the area.
+
+```sh
+bd work 1+1        # root plus immediate children
+bd current --view  # 1+1
+bd work 1          # restore the full closure (headers drop the suffix)
+```
 
 ```sh
 bd work 1-1        # switch <project>/bd_work to another view
@@ -310,9 +325,9 @@ There is no generic importer yet. The pattern is:
    layout), named by a running integer.
 2. `id` matches the filename.
 3. `contains` lists the ordered children.
-4. A node with `home` is placed there; otherwise `folder` and `name` build the
-   path (title slug by default), and nodes with neither land at `<ref>.md`.
-   `--path-template` sets another route for the whole view.
+4. `folder` and `name` build the path (title slug by default). With neither, the
+   path is `<ref>-<title-slug>.md`, and a node without a usable title lands at
+   `<ref>.md`. `--path-template` sets another route for the whole view.
 5. `links` holds typed edges; prose citations are separate.
 
 `examples/` is a small worked project laid out this way, with its store under

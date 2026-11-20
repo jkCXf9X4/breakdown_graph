@@ -1,8 +1,8 @@
 """Command-line interface for the numeric node store.
 
 Front-matter fields are arbitrary user metadata.  Only ``id``, ``legacy``,
-``contains``, ``links`` and ``home`` have built-in meaning; display choices are
-given on the command line.
+``contains`` and ``links`` have built-in meaning; display choices are given on
+the command line.
 """
 
 from __future__ import annotations
@@ -86,8 +86,9 @@ def _add_display(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--path-template",
         default=None,
-        help="output path template: {ref} {id} {version} {home} or any field "
-        "(default: {home} when every node has one, else {ref}.md)",
+        help="output path template: {ref} {id} {version} {folder} {name} {slug} "
+        "or any field (default: folder/name, else <ref>-<title-slug>.md, "
+        "else <ref>.md)",
     )
     parser.add_argument(
         "--title-field",
@@ -145,9 +146,9 @@ def _cmd_current(args: argparse.Namespace) -> int:
     if args.path_only:
         print(info.out)
     elif args.view_only:
-        print(info.ref)
+        print(info.view_ref)
     else:
-        print(f"{info.out} (view {info.ref})")
+        print(f"{info.out} (view {info.view_ref})")
     return 0
 
 
@@ -179,11 +180,23 @@ def _cmd_work(args: argparse.Namespace) -> int:
         print(info.out)
         return 0
     ref = args.ref
-    if ref is None and not (args.status or args.writeback):
-        ref = main_root(api.load(root))
+    depth = args.depth
+    if ref is not None:
+        try:
+            parsed = parse_ref_depth(ref, args.depth)
+        except NavigationError as exc:
+            raise BreakdownError(str(exc)) from exc
+        ref, depth = parsed.ref, parsed.depth
+    elif not (args.status or args.writeback):
+        try:
+            parsed = parse_ref_depth(main_root(api.load(root)), args.depth)
+        except NavigationError as exc:
+            raise BreakdownError(str(exc)) from exc
+        ref, depth = parsed.ref, parsed.depth
     result = api.work(
         root,
         ref,
+        depth=depth,
         force=args.force,
         clean=args.clean,
         status=args.status,
@@ -203,13 +216,13 @@ def _cmd_work(args: argparse.Namespace) -> int:
         ok = sum(1 for entry in result.entries if entry.status == "ok")
         print(
             f"{ok} ok, {len(result.entries) - ok} not ok "
-            f"-> {result.out} (view {result.ref})"
+            f"-> {result.out} (view {result.view_ref})"
         )
         return 0 if result.ok else 1
     print(f"work -> {result.out}")
     print(
         f"{result.nodes} nodes, {result.symlinks} symlinks, "
-        f"{len(result.files)} generated files (view {result.ref})"
+        f"{len(result.files)} generated files (view {result.view_ref})"
     )
     if result.git is not None:
         print(f"branch {result.git.branch}")
@@ -549,8 +562,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bd",
         description="Numeric markdown information graph with containment views. "
-        "Front-matter fields are arbitrary; only id, legacy, contains, links "
-        "and home have built-in meaning.",
+        "Front-matter fields are arbitrary; only id, legacy, contains and links "
+        "have built-in meaning.",
         epilog="Start with `bd work`: it builds a writable symlink tree over the "
         "store and is the primary editing interface.\n"
         "Edit through the symlinks; every node .md file there is the store file.\n"
@@ -587,7 +600,15 @@ def build_parser() -> argparse.ArgumentParser:
         "ref",
         nargs="?",
         default=None,
-        help="view root ref (default: ROOT file, else lowest main ref)",
+        help="view root ref, optionally with +DEPTH (default: ROOT file, "
+        "else lowest main ref)",
+    )
+    work.add_argument(
+        "--depth",
+        type=int,
+        default=None,
+        help="descendant levels to materialize (default: full closure; "
+        "0: root only)",
     )
     _add_display(work)
     work.add_argument("--force", action="store_true", help="overwrite detached files")

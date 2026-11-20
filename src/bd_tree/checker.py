@@ -2,7 +2,7 @@
 
 Only structure is checked: filename grammar, id/filename agreement, duplicate
 refs, missing mains, containment targets and cycles, per-view tree shape,
-reachability, duplicate home paths, dangling links and size.  Front-matter
+reachability, dangling links and size.  Front-matter
 fields, link types and layers are never validated unless asked for with
 ``require``.
 """
@@ -33,10 +33,6 @@ def path_problem(path: str) -> str | None:
     if pure.suffix.lower() != ".md":
         return "not a .md path"
     return None
-
-
-# Kept as an alias for callers that predate optional homes.
-home_problem = path_problem
 
 
 def _cycles(adjacency: dict[str, list[str]]) -> list[list[str]]:
@@ -179,40 +175,6 @@ def _check_view_trees(store: Store, issues: list[Issue]) -> None:
             issues.append(issue)
 
 
-def _check_homes(view: View, issues: list[Issue]) -> None:
-    by_home: dict[str, list[Node]] = {}
-    for node in view.nodes.values():
-        home = node.home
-        if home is None:
-            continue  # optional; the export template supplies a fallback
-        problem = path_problem(home)
-        if problem:
-            issues.append(
-                Issue(
-                    "error",
-                    "bad-home",
-                    f"invalid home '{home}': {problem}",
-                    node=node.ref,
-                    path=str(node.path.relative_to(view.root)),
-                )
-            )
-            continue
-        by_home.setdefault(home, []).append(node)
-    for home, nodes in sorted(by_home.items()):
-        if len(nodes) > 1:
-            refs = ", ".join(sorted(node.ref for node in nodes))
-            for node in nodes:
-                issues.append(
-                    Issue(
-                        "error",
-                        "duplicate-home",
-                        f"home '{home}' is used by {refs}",
-                        node=node.ref,
-                        path=str(node.path.relative_to(view.root)),
-                    )
-                )
-
-
 def _check_freshness(view: View, issues: list[Issue]) -> None:
     for edge in view.edges:
         if not edge.propagating:
@@ -327,7 +289,6 @@ def check(
 
     resolved = load_view(store, view if view is not None else canonical_root)
     issues.extend(resolved.issues)
-    _check_homes(resolved, issues)
     _check_freshness(resolved, issues)
     _check_sizes(
         resolved,

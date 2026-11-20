@@ -22,8 +22,8 @@ bd uncontain P C
   `bd contain NEW C --before REF`.
 - `contain` refuses self-containment, cycles, duplicates, and unknown
   siblings. A node reachable twice in one view is `multiple-parents`.
-- `bd new` derives `home` from `layer`/`group`/`type` when absent and refuses
-  an explicit `id`.
+- `bd new` derives `folder` from `layer`/`group`/`type` when absent and
+  refuses an explicit `id`.
 
 Containment decides what a view shows. A fact that belongs to another branch
 does not get contained "for now" — it gets its own node in its own place.

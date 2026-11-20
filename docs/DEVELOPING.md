@@ -51,7 +51,7 @@ logical node.
 | `checker.py` | Structural checks, per-view tree checks, `--require`, size limits |
 | `freshness.py` | Pins, stale edges, reconcile |
 | `navigate.py` | `show`, `tree`, `ls`, `find`, `grep`, `path` renderers |
-| `exporter.py` | `context`, `dot` projections, path templates, and `home`/`folder`/`name` resolution; `bd view` renders the tree |
+| `exporter.py` | `context`, `dot` projections, path templates, and `folder`/`name` resolution; `bd view` renders the tree |
 | `work.py` | Single `<project>/bd_work/` area, `current`/`views`/`edit`, switching, `--status`, `--writeback`, git context |
 | `solutions.py` | Thin `git worktree` lifecycle wrapper |
 | `ops.py` | `init`, `new` (derives `folder`), `contain`, `uncontain`, `link`, `unlink`, versions, `diff` |
@@ -124,7 +124,7 @@ def export_summary(view: View, out: Path, **opts) -> ExportResult:
     _prepare_out(out, force=opts.get("force", False), clean=opts.get("clean", False))
     files = []
     for ref, node in sorted(view.nodes.items()):
-        path = out / f"{ref}.md"
+        path = out / _default_path(node)
         path.write_text(render_document(node.meta, node.body), encoding="utf-8")
         files.append(path)
     return ExportResult("summary", out, len(view.nodes), files)
@@ -135,6 +135,10 @@ Rules:
 - Take a `View`, never a root path.
 - Return `ExportResult`.
 - Preserve arbitrary front matter.
+- Placement follows `_default_path`: `folder`/`name`, then
+  `<ref>-<title-slug>.md`, then `<ref>.md` when there is no usable title.
+- In a path template, `{name}`/`{slug}` is the explicit `name`, else the title
+  slug, else the ref.
 - Be deterministic; sort by `(id, version)` unless `contains` order is the point.
 - Never write outside `out`.
 - Add the name to the `export` subparser list and add a test.
@@ -165,7 +169,7 @@ python3 -m pytest -q
 ```
 
 - `tests/conftest.py` provides `write_node`, a helper that writes arbitrary front
-  matter and derives `home` from `layer`.
+  matter and derives `folder`/`name` from `layer` and the ref.
 - Use `tmp_path` and real files. Do not mock the loader.
 - `test_examples.py` runs the project at `examples/` (store under `.bd_tree/`)
   through `bd check` and view loading, asserting both complete trees.

@@ -318,6 +318,7 @@ def work(
     clean: bool = False,
     status: bool = False,
     writeback: bool = False,
+    depth: int | None = None,
 ) -> WorkResult:
     """Build, refresh, inspect or write back the single view work area."""
     return _work(
@@ -331,4 +332,5 @@ def work(
         clean=clean,
         status=status,
         writeback=writeback,
+        depth=depth,
     )
