@@ -28,6 +28,28 @@ them), not a file named only by the ref.
 `bd current --path` prints the directory without building anything;
 `bd work REF --clean` discards detached files while switching.
 
+## Placement paths
+
+`section` is the only key that opens a directory. `section: true` uses the
+node's placement name (explicit `name`, else the title slug, else the ref);
+`section: "<dir>"` is verbatim and may contain several segments.
+
+- A relative value (`suggested`, `suggested/01-indexes`) inherits the parent
+  prefix, so nested stages stack inside one another.
+- A leading `/` (`/06-evolution`) resolves from the output root, so a
+  containment chain can keep layers as sibling directories.
+- Several nodes may land in one directory when at most one of them has
+  containment children there (a carrier beside its leaves, or leaves in one
+  stage). Two nodes that both have containment children on one directory is an
+  export error.
+- `--path-template` opts out of section placement for the whole view; `{name}`
+  and `{slug}` are the placement name, and any front-matter field is available.
+
+A nested directory deserves an owning node: declare `section: suggested` once on
+a stage node, then let its children declare only `01-indexes`, `02-snapshots`.
+That keeps the chain out of every leaf and makes the stage usable as its own
+view root and link target.
+
 ## Symlinks and generated files
 
 - Node `.md` files in the area are relative symlinks to the store file

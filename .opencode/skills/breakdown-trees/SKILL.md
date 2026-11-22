@@ -9,7 +9,8 @@ description: >
   filesystem model (flat `nodes/` or `.bd_tree/nodes/`, filename as identity
   and version), full-ref data, bare ids as selectors, view resolution and
   `ROOT`, the work-area symlink contract and `+N`/`--depth` materialization,
-  issue codes, and the browse → edit → validate loop with exact `bd` commands.
+  section placement (root-relative and nested), issue codes, and the browse →
+  edit → validate loop with exact `bd` commands.
   Use ONLY as the mechanism for a `bd` store or the `bd_tree` tool; for which
   layer owns a fact use `product-breakdown`, for judging whether a tree is
   right use `pb-alignment`, for article claims use `article-breakdown`.
@@ -50,10 +51,13 @@ structure, and prove the result valid. It never decides what a node should say.
   `legacy`, `contains`, `links`), link freshness (`to`, `type`, `propagates`,
   `pinned`), and presentation (`section`, `name`, `title`). Everything else is
   yours; add no schema unless the project asks for one. `section` is the only
-  key that opens directories: `section: true` names it by the node's placement
-  name, `section: "<dir>"` verbatim. Otherwise placement is `name`, else
-  `<ref>-<title-slug>.md`, else `<ref>.md` when the title is unusable. `folder`
-  is inert ordinary front matter. `home` means nothing.
+  key that opens directories: `section: true` uses the placement name,
+  `section: "<dir>"` is verbatim and may span segments, and a leading `/`
+  resolves from the output root instead of the parent prefix. Two nodes may
+  share a directory unless both have containment children there. Otherwise
+  placement is `name`, else `<ref>-<title-slug>.md`, else `<ref>.md` when the
+  title is unusable. `folder` is inert ordinary front matter; `home` means
+  nothing.
 - **Structural edits preserve bytes** — `bd` rewrites only its own block;
   unrelated fields and body text survive.
 
