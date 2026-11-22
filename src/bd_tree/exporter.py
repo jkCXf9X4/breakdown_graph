@@ -145,7 +145,8 @@ def _section_layout(view: View) -> tuple[dict[str, str], dict[str, str]]:
 
     Mirrors :func:`bd_tree.loader.load_view`: walk declared ``contains`` from the
     view root, restricted to the refs in ``view.nodes``.  A section node's
-    directory applies to its descendants only; nested sections stack.  A ref
+    directory applies to its descendants only; relative sections stack, while a
+    leading ``/`` resolves the directory from the output root.  A ref
     unreachable from the root gets no prefix.
     """
     prefixes: dict[str, str] = {}
@@ -156,10 +157,12 @@ def _section_layout(view: View) -> tuple[dict[str, str], dict[str, str]]:
         if ref in seen or ref not in view.nodes:
             return
         seen.add(ref)
-        prefixes[ref] = prefix
+        node = view.nodes[ref]
+        section = node.section
+        base = "" if section and node.section_rooted else prefix
+        prefixes[ref] = base
         parents[ref] = parent
-        section = view.nodes[ref].section
-        child_prefix = _with_prefix(prefix, section) if section else prefix
+        child_prefix = _with_prefix(base, section) if section else prefix
         for child in view.store.effective_contains(ref):
             walk(child, child_prefix, ref)
 
@@ -167,22 +170,29 @@ def _section_layout(view: View) -> tuple[dict[str, str], dict[str, str]]:
     return prefixes, parents
 
 
-def _check_section_dirs(view: View, parents: dict[str, str]) -> None:
-    """Two sibling sections sharing one directory would merge silently."""
-    used: dict[tuple[str, str], str] = {}
+def _check_section_dirs(view: View, prefixes: dict[str, str]) -> None:
+    """Refuse relative sections that silently merge into one output directory.
+
+    Root-relative sections are an explicit placement, so several nodes may share
+    a directory (a carrier and its layer's leaves).  A relative section that
+    lands on such a directory, or on another relative section's directory, would
+    merge without the author saying so.
+    """
+    used: dict[str, tuple[str, bool]] = {}
     for ref in sorted(
         view.nodes, key=lambda r: (view.nodes[r].id, view.nodes[r].version)
     ):
-        section = view.nodes[ref].section
-        if not section or ref not in parents:
+        node = view.nodes[ref]
+        section = node.section
+        if not section or ref not in prefixes:
             continue
-        key = (parents[ref], section)
-        previous = used.get(key)
-        if previous is not None:
+        directory = _with_prefix(prefixes[ref], section)
+        previous = used.get(directory)
+        if previous is not None and not (node.section_rooted and previous[1]):
             raise ExportError(
-                f"sections {previous} and {ref} both use directory '{section}'"
+                f"sections {previous[0]} and {ref} both use directory '{directory}'"
             )
-        used[key] = ref
+        used[directory] = (ref, node.section_rooted)
 
 
 def _default_path(node: Node, prefix: str = "") -> str:
@@ -215,8 +225,8 @@ def _build_paths(
     paths: dict[str, str] = {}
     used: dict[str, str] = {}
     if template is None:
-        prefixes, parents = _section_layout(view)
-        _check_section_dirs(view, parents)
+        prefixes, _ = _section_layout(view)
+        _check_section_dirs(view, prefixes)
     else:
         prefixes = {}
     for ref in refs:

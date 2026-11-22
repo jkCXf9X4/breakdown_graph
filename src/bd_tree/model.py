@@ -99,15 +99,26 @@ class Node:
         """Directory this node opens for its containment descendants.
 
         ``section: true`` uses the node's own placement name; a non-empty string
-        is used verbatim.  Any other value (``false``, ``null``, ``0``, ``""``,
-        a list) means the node is not a section.
+        is used verbatim.  A leading ``/`` makes the directory root-relative
+        (resolved from the output root instead of the parent prefix).  Any other
+        value (``false``, ``null``, ``0``, ``""``, a list) means the node is not
+        a section.
         """
         value = self.meta.get("section")
         if value is True:
             return self.placement_name
         if isinstance(value, str) and value.strip():
-            return value
+            text = value.strip()
+            if text.startswith("/"):
+                return text.lstrip("/").rstrip("/") or None
+            return text
         return None
+
+    @property
+    def section_rooted(self) -> bool:
+        """True when ``section`` starts with ``/`` (root-relative)."""
+        value = self.meta.get("section")
+        return isinstance(value, str) and value.strip().startswith("/")
 
     @property
     def summary(self) -> str:

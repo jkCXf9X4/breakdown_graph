@@ -329,6 +329,54 @@ def test_nested_sections_stack_their_directories(write, tmp_path):
     assert (out / "alpha" / "beta" / "3-1-leaf.md").is_file()
 
 
+def test_root_relative_section_resolves_from_the_output_root(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], section="/00-intent", title="Intent")
+    write(nodes, 2, contains=["3"], section="/01-product", title="Product")
+    write(nodes, 3, section="/01-product", title="Leaf")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1-1", out)
+    assert (out / "00-intent" / "intent.md").is_file()
+    assert (out / "01-product" / "product.md").is_file()
+    assert (out / "01-product" / "leaf.md").is_file()
+
+
+def test_relative_section_still_nests_under_a_root_relative_parent(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], section="/06-evolution", title="Evolution")
+    write(nodes, 2, contains=["3"], section="suggested", title="Suggested")
+    write(nodes, 3, title="Idea")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1-1", out)
+    assert (out / "06-evolution" / "evolution.md").is_file()
+    assert (out / "06-evolution" / "suggested" / "suggested.md").is_file()
+    assert (out / "06-evolution" / "suggested" / "3-1-idea.md").is_file()
+
+
+def test_root_relative_sections_may_share_a_layer_directory(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3"], section="/00-intent", title="Root")
+    write(nodes, 2, section="/00-intent", title="One")
+    write(nodes, 3, section="/00-intent", title="Two")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1-1", out)
+    assert (out / "00-intent" / "root.md").is_file()
+    assert (out / "00-intent" / "one.md").is_file()
+    assert (out / "00-intent" / "two.md").is_file()
+
+
+def test_relative_sections_resolving_to_one_directory_are_refused(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3"])
+    write(nodes, 2, contains=["4"])
+    write(nodes, 3, contains=["5"])
+    write(nodes, 4, section="shared", title="One")
+    write(nodes, 5, section="shared", title="Two")
+    out = tmp_path / "view"
+    with pytest.raises(ExportError, match="directory 'shared'"):
+        export_view("tree", tmp_path, "1-1", out)
+
+
 def test_sections_coexist_with_unchanged_placement(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2", "3", "4", "5"], title="Root")
@@ -391,7 +439,7 @@ def test_path_template_disables_section_inheritance(write, tmp_path):
 
 def test_section_is_available_as_a_template_field(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2"], section="dir", title="Root")
+    write(nodes, 1, contains=["2"], section="/dir", title="Root")
     write(nodes, 2, section="child-dir", title="Child")
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1-1", out, path_template="{section}/{ref}.md")
