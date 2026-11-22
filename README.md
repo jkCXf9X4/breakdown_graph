@@ -73,7 +73,7 @@ not edit it unless you mean to change the example.
 ```sh
 export BD_ROOT=examples
 
-bd check                       # clean, 15-node chain
+bd check                       # clean, 17-node chain
 bd tree 20-1 --depth 1         # the tree named by ROOT
 bd tree 20-1 --depth 0         # the whole chain
 bd show 20-1+1 --max-chars 300 # body plus one level

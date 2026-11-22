@@ -26,11 +26,15 @@ def test_header_free_chain_example_matches_the_documented_layout(tmp_path):
 
     root = EXAMPLES
     view = load_view(root, "20-1")
-    assert len(view.nodes) == 15
+    assert len(view.nodes) == 17
     assert view.nodes["21-1"].section == "00-intent"
     assert view.nodes["21-1"].section_rooted is True
     assert view.nodes["22-1"].section == "00-intent"
     assert view.nodes["22-1"].section_rooted is True
+    assert view.nodes["36-1"].section == "suggested"
+    assert view.nodes["36-1"].section_rooted is False
+    assert view.nodes["35-1"].section == "02-snapshots"
+    assert set(load_view(root, "36-1").nodes) == {"36-1", "34-1", "35-1"}
 
     work = (tmp_path / "view").resolve()
     api.work(root, "20-1", work)
@@ -39,9 +43,11 @@ def test_header_free_chain_example_matches_the_documented_layout(tmp_path):
         for path in work.rglob("*.md")
         if path.is_symlink()
     }
-    assert len(paths) == 15
-    assert all(path.count("/") == 1 for path in paths)
+    assert len(paths) == 17
     assert "00-root/product-breakdown-header-free.md" in paths
     assert "00-intent/no-layer-schema.md" in paths
     assert "04-verification/multiple-parents-rejected.md" in paths
-    assert "06-evolution/section-flat-idea.md" in paths
+    assert "06-evolution/per-folder-index.md" in paths
+    assert "06-evolution/suggested/suggested-work.md" in paths
+    assert "06-evolution/suggested/01-placement/section-flat-idea.md" in paths
+    assert "06-evolution/suggested/02-snapshots/snapshot-list-and-prune.md" in paths
