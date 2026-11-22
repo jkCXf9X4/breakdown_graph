@@ -21,8 +21,8 @@ this file is the short operating protocol.
    ```
 
 3. See the shape: `bd tree 1-1 --depth 1`, `bd find <term>`, `bd path <ref>`.
-   For the example layout and two complete trees over one store, run the commands
-   in `examples/README.md`.
+   For the example layout — a header-free chained tree — run the commands in
+   `examples/README.md`.
 4. For a solution: `bd solution new NAME`, `cd` into the printed worktree
    project directory, then `bd work` with the printed default-view ref.
 5. For edits: prefer `bd edit REF` for the path inside `bd_work/`; direct edits
@@ -62,7 +62,9 @@ behaviour change and update the docs listed at the bottom.
   are reserved. `section`, `name`, and `title` are presentation fields: work and
   export paths use `section` to open directories, else `<name>.md`, else
   `<ref>-<title-slug>.md`, else `<ref>.md`. `section: true` names the directory
-  by the node's placement name; `section: "<dir>"` names it verbatim.
+  by the node's placement name; `section: "<dir>"` names it verbatim. A leading
+  `/` makes the section directory root-relative; otherwise it inherits the
+  parent prefix.
   Presentation only: it changes no identity or validation, so it adds no schema.
   `folder` is ordinary metadata with no effect on placement, naming, or
   validation. `home` has no meaning; it is ordinary front matter. Add no schema
@@ -158,19 +160,19 @@ installing, prefix each with `PYTHONPATH=src python3 -m bd_tree` instead of `bd`
 export BD_ROOT=examples
 python3 -m pytest -q
 bd check
-bd tree 1-1 --depth 1
-bd show 1-1+1 --max-chars 400
-bd uncontain 1-1 5-1
-bd contain 1-1 5-1 --before 2-1
-bd link 5-1 6-1 --type supports
-bd clone 2-1 --subtree    # copy a subtree to new peer versions
-bd replace 2-1 2-2        # wire the copy in at 2-1's index (or repoint ROOT)
-bd work 1-1               # write the single <project>/bd_work area
-bd work 1-1+1             # same area, first two levels only
-bd current                # <project>/bd_work (view 1-1+1)
-bd current --path         # print that directory; read-only, no build
-bd edit 2-1               # path of ref 2-1 in the active view
-bd work 1-2               # switch the same area to another view
+bd tree 20-1 --depth 1
+bd show 20-1+1 --max-chars 400
+bd uncontain 21-1 23-1
+bd contain 21-1 23-1 --before 22-1
+bd link 23-1 25-1 --type supports
+bd clone 21-1 --subtree    # copy a subtree to new peer versions
+bd replace 21-1 21-2       # wire the copy in at 21-1's index (or repoint ROOT)
+bd work 20-1               # write the single <project>/bd_work area
+bd work 20-1+1             # same area, first two levels only
+bd current                 # <project>/bd_work (view 20-1+1)
+bd current --path          # print that directory; read-only, no build
+bd edit 21-1               # path of ref 21-1 in the active view
+bd work 20-1+3             # same area, three levels deep
 bd solution list
 ```
 

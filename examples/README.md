@@ -13,70 +13,86 @@ second work area.
 | `.bd_tree/ROOT` | hand-written store default: one full ref on one line |
 | `bd_work/` | `bd work <ref>`; the single writable work area, ignored |
 
-Every node file is `<id>-<version>.md`; `1-1` and `1-2` are peer versions of
-logical node `1`. Work file names come from the title: `<ref>-<title>`, slugged.
-The default `1-1` view reads:
+Every node file is `<id>-<version>.md`; this store ships one version per id.
+`ROOT` names `20-1`, the only containment root.
+
+## A header-free, chained tree
+
+`20-1` has no grouping nodes: every node states a claim, and `contains` is a
+single chain from Intent to Evolution. Layer order is the chain; layer identity
+is a root-relative `section`:
+
+| Layer | Carrier | Leaf | `section` (every node) |
+| --- | --- | --- | --- |
+| Intent | `21-1` | `22-1` | `/00-intent` |
+| Product | `23-1` | `24-1` | `/01-product` |
+| Architecture | `25-1` | `26-1` | `/02-architecture` |
+| Implementation | `27-1` | `28-1` | `/03-implementation` |
+| Verification | `29-1` | `30-1` | `/04-verification` |
+| Operation | `31-1` | `32-1` | `/05-operation` |
+| Evolution | `33-1` | `34-1` | `/06-evolution` |
 
 ```text
-1-1-root-alternative.md
-2-1-method.md
-3-1-data.md
-4-1-analysis.md
-05-limits/limits.md
-05-limits/great-stuff/great-stuff.md
-05-limits/great-stuff/7-1.md
+20-1 -> 21-1 -> 23-1 -> 25-1 -> 27-1 -> 29-1 -> 31-1 -> 33-1
+        leaf     leaf     leaf     leaf     leaf     leaf     leaf
 ```
 
-`5-1` sets `section: "05-limits"`, so its own file sits at `05-limits/limits.md`
-(title slug, not the directory name) and its subtree nests under it. `6-1` sets
-`section: true`, which derives `great-stuff/` from its title. The `2-1` subtree
-sets neither and stays flat. The other `1-2` view reads `1-2-root.md`,
-`2-2-method.md`, `5-2-limits.md`, `3-2-data.md`, and `4-2-analysis.md`.
+A leading `/` resolves the directory from the output root, so a carrier and its
+leaf are siblings instead of nesting. A relative section still inherits the
+parent prefix: `section: suggested` under `/06-evolution` lands at
+`06-evolution/suggested/`.
 
-`bd work <ref>` writes `bd_work/`; a different ref replaces its contents.
-`bd current` reports the area and its view, and `bd edit REF` prints a ref's path
-inside that view. `bd export tree` and the other `bd export` choices produce
-read-only snapshots elsewhere (for example under `/tmp`), never another work
-area.
+Cross-layer references are links, not second parents: `27-1` links `25-1`
+(`implements`), `29-1` links `25-1` and `30-1` links `27-1` (`verifies`). A node
+reached through two parents would be a `multiple-parents` error.
 
-## Switch trees
+## Placement
 
-A seven-id store with two trees over the same ids. `ROOT` selects the default
-root (`1-1`); `bd work REF` selects the view in the work area.
+Every node is root-relative, so the default work area is already flat:
 
-| Tree | Shape |
-| --- | --- |
-| `1-1` (default) | `1-1 -> {5-1, 2-1}`, `2-1 -> {4-1, 3-1}`, `5-1 -> {6-1}`, `6-1 -> {7-1}` |
-| `1-2` | `1-2 -> {2-2, 5-2}`, `2-2 -> {3-2, 4-2}` |
+```sh
+bd work 20-1
+```
 
-The `1-1` tree reorders and rewrites the same ids, and adds `6-1` under `5-1`
-and `7-1` under `6-1`, so both trees are valid and `bd check` stays clean.
-Nothing is copied over another version.
+```text
+bd_work/
+├── 00-root/product-breakdown-header-free.md
+├── 00-intent/credibility-of-the-chain.md
+├── 00-intent/no-layer-schema.md
+├── 01-product/claims-are-closure-data.md
+├── 01-product/two-axes.md
+├── 02-architecture/contains-is-ordered.md
+├── 02-architecture/links-is-a-dag.md
+├── 03-implementation/bd-check-validates.md
+├── 03-implementation/bd-tree-renders.md
+├── 04-verification/exit-code-tests.md
+├── 04-verification/multiple-parents-rejected.md
+├── 05-operation/exports-are-disposable.md
+├── 05-operation/run-check-and-stale.md
+├── 06-evolution/per-folder-index.md
+└── 06-evolution/section-flat-idea.md
+```
+
+`--path-template` still overrides the whole layout when a different route is
+wanted. `INDEX.md` indents by the chain while the folders stay flat — the same
+gap as the per-folder-index item (`33-1`, `34-1` here; `59-1` in
+`docs/breakdown`).
 
 ## Try it
 
 ```sh
 cd examples
-bd root            # 1-1  (ROOT)
-bd tree            # the default 1-1 tree
-bd tree 1-2        # the other tree
-bd diff 1-1 1-2    # ids differ across trees; 6-1 and 7-1 exist only on the left
-bd root --clear    # default falls back to the lowest (id, version), 1-1
-bd root 1-1        # switch the default back
-bd views           # containment roots; default marked with *
-bd work 1-1        # switch the work area to the default view
-bd current         # <project>/bd_work (view 1-1)
-bd edit 5-1        # bd_work/05-limits/limits.md — section placement
+bd root                         # 20-1  (ROOT)
+bd tree                         # the chain, two levels
+bd tree 20-1 --depth 0          # the whole chain
+bd find links --limit 3
+bd path 30-1                    # ancestor chain to a leaf
+bd work 20-1                    # flat layer folders
+bd current                      # <project>/bd_work (view 20-1)
+bd edit 22-1                    # path inside the active view
 ```
 
 These commands assume the package is installed (`pip install .` from the clone).
-
-`bd versions 2` lists the peer files for one id (`2-1`, `2-2`), ascending by
-version, with no privileged marker. Every version is an alternative for the same
-logical node, so it needs no parent of its own to stay valid. To clone a ref and
-wire the copy in, run `bd clone REF` then `bd replace REF NEW`: `bd replace`
-keeps NEW at REF's exact index in the parent's `contains`, or repoints `ROOT`
-when REF is the root, and leaves the old file as a peer.
 
 `ROOT` holds one full ref on one line. An explicit ref where a command takes one
 wins over it; with no explicit ref, `ROOT` wins over the lowest available node by
@@ -88,13 +104,10 @@ From this directory:
 
 ```sh
 bd check
-bd work 1-1                       # write bd_work for the default tree
-bd current                        # confirm the view actually there
-bd work 1-2                       # switch the same area to the other tree
-bd export tree 1-1 --out /tmp/bd-tree-1-1
-bd export tree 1-2 --out /tmp/bd-tree-1-2
-bd export context --view 1-1 --out /tmp/bd-context-1-1
-bd export dot --view 1-1 --out /tmp/bd-graph-1-1.dot
+bd work 20-1
+bd export tree 20-1 --out /tmp/bd-tree-20-1
+bd export context --view 20-1 --out /tmp/bd-context-20-1
+bd export dot --view 20-1 --out /tmp/bd-graph-20-1.dot
 ```
 
 The `/tmp` outputs are read-only snapshots, not the work area. `bd_work/` is

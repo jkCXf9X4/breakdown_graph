@@ -91,7 +91,7 @@ Built-in keys (structural keys are reserved; presentation keys are placement onl
 | `contains` | list of refs | Ordered children for this view |
 | `links` | list of edge objects | Semantic edges |
 | `name` | string | Optional file stem; `.md` is appended |
-| `section` | bool or string | Opens a directory for this node's descendants |
+| `section` | bool or string | Opens a directory for this node's descendants; a leading `/` resolves it from the output root |
 
 Everything else is arbitrary and preserved on export. Typical fields: `title`,
 `summary`, `layer`, `type`, `status`, `date`, `phase`, `audience`, `order`,
@@ -282,7 +282,9 @@ bd_work/claims/thesis-claim.md -> ../../.bd_tree/nodes/49-1.md
   presentation key that creates directories: `section: true` names the directory
   by the node's placement name (explicit `name`, else the lowercase kebab-case
   `title` slug, else the ref), and `section: "<dir>"` uses the string verbatim
-  and may contain `/`. The section node's own file is
+  and may contain `/`. A leading `/` resolves the directory from the output root
+  instead of under the parent prefix, so a containment chain can keep layers as
+  siblings. The section node's own file is
   `<dir>/<placement-name>.md`; every containment descendant is placed at its
   normal relative path under that prefix, and nested sections stack. Otherwise a
   node is placed by explicit `name` (`<name>.md`), else

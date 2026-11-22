@@ -152,13 +152,16 @@ bd work 1-1 --path-template '{layer}/{ref}.md'
 opens a directory at the node's placement name (explicit `name`, else the `title`
 slug, else the ref) and nests its containment descendants inside; the node's own
 file is `<dir>/<placement-name>.md`. `section: "<dir>"` names the directory
-verbatim, slashes included, and nested sections stack. Otherwise `name` sets the
+verbatim, slashes included, and nested sections stack. A leading `/` resolves
+the directory from the output root instead of under the parent prefix, so a
+containment chain can keep layers as siblings. Otherwise `name` sets the
 file stem (`<name>.md`); without it the file is `<ref>-<title-slug>.md`, or
 `<ref>.md` when the title is unusable. `--path-template` opts out of section
 inheritance.
 
 ```yaml
 section: claims           # opens claims/ for this node's subtree
+section: /00-intent       # root-relative: 00-intent/ at the output root
 title: The Main Thesis    # -> claims/the-main-thesis.md
 name: custom-name         # optional override -> claims/custom-name.md
 ```

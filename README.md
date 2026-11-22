@@ -73,26 +73,26 @@ not edit it unless you mean to change the example.
 ```sh
 export BD_ROOT=examples
 
-bd check                       # clean, two complete trees
-bd tree 1-1 --depth 1          # the default tree named by ROOT
-bd tree 1-2                    # the other tree over the same ids
-bd show 1-1+1 --max-chars 300  # body plus one level
-bd tree 1-1 --columns ref,title,summary  # children as a table
-bd find Method --limit 3
-bd path 3-1                    # ancestor chain to a leaf
+bd check                       # clean, 15-node chain
+bd tree 20-1 --depth 1         # the tree named by ROOT
+bd tree 20-1 --depth 0         # the whole chain
+bd show 20-1+1 --max-chars 300 # body plus one level
+bd tree 20-1 --columns section,type,title  # children as a table
+bd find links --limit 3
+bd path 30-1                   # ancestor chain to a leaf
 ```
 
 Then open the work area:
 
 ```sh
-bd work 1-1                    # write <project>/bd_work for view 1-1
-bd current                     # <project>/bd_work (view 1-1)
+bd work 20-1                   # write <project>/bd_work for view 20-1
+bd current                     # <project>/bd_work (view 20-1)
 cd "$(bd current --path)"      # print only the path, for cd
 # node .md files here are symlinks; editing one edits .bd_tree/nodes/<ref>.md
 # INDEX.md, AGENTS.md, and REFS.md are regular generated files
 
-bd edit 2-1                    # absolute path of ref 2-1 in the active view
-bd work 1-2                    # switch the same area to the other tree
+bd edit 21-1                   # absolute path of ref 21-1 in the active view
+bd work 20-1+2                 # same area, first two levels only
 ```
 
 ## Create a store
@@ -209,6 +209,8 @@ current work area and errors if the ref is not in the materialized area.
 `section: true` opens a directory named by its placement name (explicit `name`,
 else the `title` slug, else the ref), and its containment descendants nest
 inside it; `section: "<dir>"` names the directory verbatim, slashes included.
+A leading `/` resolves the directory from the output root instead of under the
+parent prefix, so a containment chain can keep layers as siblings.
 The section node's own file is `<dir>/<placement-name>.md`, and nested sections
 stack. Otherwise a node is placed by explicit `name` (`<name>.md`), else
 `<ref>-<title-slug>.md`, else `<ref>.md` when there is no usable title; the
