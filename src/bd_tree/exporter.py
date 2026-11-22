@@ -171,12 +171,12 @@ def _section_layout(view: View) -> tuple[dict[str, str], dict[str, str]]:
 
 
 def _check_section_dirs(view: View, prefixes: dict[str, str]) -> None:
-    """Refuse relative sections that silently merge into one output directory.
+    """Refuse two sections that would merge their descendant subtrees.
 
-    Root-relative sections are an explicit placement, so several nodes may share
-    a directory (a carrier and its layer's leaves).  A relative section that
-    lands on such a directory, or on another relative section's directory, would
-    merge without the author saying so.
+    Sharing a directory is intentional when at most one node opens a subtree
+    there (a carrier beside its layer's leaves, or several leaves in one stage).
+    Two nodes that both have containment children would silently merge those
+    children, so that case is refused.
     """
     used: dict[str, tuple[str, bool]] = {}
     for ref in sorted(
@@ -187,12 +187,18 @@ def _check_section_dirs(view: View, prefixes: dict[str, str]) -> None:
         if not section or ref not in prefixes:
             continue
         directory = _with_prefix(prefixes[ref], section)
+        has_children = any(
+            child in view.nodes for child in view.store.effective_contains(ref)
+        )
         previous = used.get(directory)
-        if previous is not None and not (node.section_rooted and previous[1]):
+        if previous is None:
+            used[directory] = (ref, has_children)
+            continue
+        if has_children and previous[1]:
             raise ExportError(
                 f"sections {previous[0]} and {ref} both use directory '{directory}'"
             )
-        used[directory] = (ref, node.section_rooted)
+        used[directory] = (previous[0], previous[1] or has_children)
 
 
 def _default_path(node: Node, prefix: str = "") -> str:
