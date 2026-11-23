@@ -9,26 +9,27 @@ this file is the short operating protocol.
 
 1. Locate the store: plain `bd` works from the repo root because the committed
    `.bd_root` pointer names `examples` (the project root; the store is
-   `examples/.bd_tree`). Equivalent: `export BD_ROOT=examples`, or pass
-   `--root`. Install once from the clone with `pip install -e '.[test]'`, then
-   use `bd`. Without installing, run from the repo root with
-   `PYTHONPATH=src python3 -m bd_tree`.
+   `examples/.bd_tree`, a graph example with `ROOT` `1-1`). Equivalent:
+   `export BD_ROOT=examples`, or pass `--root`. Install once from the clone with
+   `pip install -e '.[test]'`, then use `bd`. Without installing, run from the
+   repo root with `PYTHONPATH=src python3 -m bd_tree`.
 2. Confirm the baseline:
 
    ```sh
    python3 -m pytest -q
-   bd check
+   bd audit
    ```
 
-3. See the shape: `bd tree 1-1 --depth 1`, `bd find <term>`, `bd path <ref>`.
-   For the example layout — a fan-out header tree — run the commands in
-   `examples/README.md`.
+3. See the shape: `bd graph`, `bd out 1-1`, `bd in 4-1`. The default example is
+   a staged graph of ten nodes (`1-1`..`10-1`), not a containment tree; run the
+   commands in `examples/README.md`.
 4. For a solution: `bd solution new NAME`, `cd` into the printed worktree
    project directory, then `bd work` with the printed default-view ref.
 5. For edits: prefer `bd edit REF` for the path inside `bd_work/`; direct edits
    to `.bd_tree/nodes/<ref>.md` are an escape hatch only. Change structure with
-   `bd contain` / `bd uncontain` / `bd link` / `bd unlink`.
-6. Validate: `bd check`, `bd stale`.
+   `bd contain` / `bd uncontain` / `bd link` / `bd unlink` (containment stores).
+6. Validate: `bd audit` for the graph example; `bd check` and `bd stale` in a
+   containment store.
 
 ## Two jobs
 
@@ -160,20 +161,25 @@ installing, prefix each with `PYTHONPATH=src python3 -m bd_tree` instead of `bd`
 ```sh
 export BD_ROOT=examples
 python3 -m pytest -q
-bd check
-bd tree 20-1 --depth 1
-bd show 20-1+1 --max-chars 400
-bd uncontain 43-1 36-1
-bd contain 43-1 36-1 --before 33-1
-bd link 21-1 24-1 --type supports
-bd clone 21-1 --subtree    # copy a subtree to new peer versions
-bd replace 21-1 21-2       # wire the copy in at 21-1's index (or repoint ROOT)
-bd work 20-1               # write the single <project>/bd_work area
-bd work 20-1+1             # same area, first two levels only
-bd current                 # <project>/bd_work (view 20-1+1)
-bd current --path          # print that directory; read-only, no build
-bd edit 21-1               # path of ref 21-1 in the active view
-bd work 20-1+3             # same area, three levels deep
+bd audit                    # graph example: 0 errors, 0 warnings
+bd graph                    # staged graph from ROOT 1-1
+bd out 1-1                  # authored out-edges
+bd in 4-1                   # derived in-edges
+bd export graph --view 1-1 --out /tmp/bd-graph
+
+# containment support is unchanged; demo it against docs/breakdown
+bd --root docs/breakdown check
+bd --root docs/breakdown tree 1-1 --depth 1
+bd --root docs/breakdown show 1-1+1 --max-chars 400
+# structural edits (containment stores only; substitute real refs)
+bd contain PARENT CHILD [--before REF]
+bd uncontain PARENT CHILD
+bd link FROM TO --type supports
+bd work REF                 # write the single <project>/bd_work area
+bd work REF+1               # same area, first two levels only
+bd current                  # <project>/bd_work (view REF+1)
+bd current --path           # print that directory; read-only, no build
+bd edit REF                 # path of a ref in the active view
 bd solution list
 ```
 
@@ -201,6 +207,8 @@ views, or generated output.
 - [`docs/DESIGN.md`](docs/DESIGN.md) — model, decisions, invariants.
 - [`docs/BRANCHES-AND-VERSIONS.md`](docs/BRANCHES-AND-VERSIONS.md) — the
   branch/version separation contract.
+- [`docs/GRAPH.md`](docs/GRAPH.md) — graph mode prototype: forward links, stage
+  layout, audit and export.
 - [`docs/breakdown/`](docs/breakdown/) — product breakdown as a second `bd`
   project (store `docs/breakdown/.bd_tree/`): current state, open work,
   scrutiny, and history. Run `bd tree --root docs/breakdown`, or `bd work 1-1`

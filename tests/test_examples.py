@@ -1,75 +1,53 @@
-"""The committed example store stays valid and keeps its documented shape."""
+"""The committed example store is a clean graph example with the documented shape."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from bd_tree.api import check, load, load_view
+from bd_tree import api
+from bd_tree.graph import audit, build_graph, graph_view, render_in
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 
 
-def test_example_store_is_clean():
-    hidden = load(EXAMPLES / ".bd_tree")
+def test_example_store_is_a_clean_graph():
+    hidden = api.load(EXAMPLES / ".bd_tree")
     assert hidden.root == (EXAMPLES / ".bd_tree").resolve()
     assert hidden.project_root == EXAMPLES.resolve()
-    store = load(EXAMPLES)
+    store = api.load(EXAMPLES)
     assert store.root == hidden.root
-    assert store.root_ref == "20-1"
-    result = check(EXAMPLES)
-    assert result.ok
-    assert result.view == "20-1"
+    assert store.root_ref == "1-1"
+    assert len(store.nodes) == 10
+    assert set(store.nodes) == {f"{node}-1" for node in range(1, 11)}
+
+    for node in store.nodes.values():
+        assert isinstance(node.meta.get("stage"), int)
+        assert "contains" not in node.meta
+        assert "section" not in node.meta
+
+    graph = build_graph(EXAMPLES)
+    assert graph.roots == ["1-1"]
+    assert audit(graph) == []
 
 
-def test_fan_out_header_example_matches_the_documented_layout(tmp_path):
-    from bd_tree import api
-
-    root = EXAMPLES
-    view = load_view(root, "20-1")
-    assert len(view.nodes) == 10
-    headers = {
-        "37-1": "00-intent",
-        "38-1": "01-product",
-        "43-1": "02-evolution",
-    }
-    for ref, section in headers.items():
-        assert view.nodes[ref].section == section
-        assert view.nodes[ref].section_rooted is True
-    # Claims inherit the header prefix instead of declaring their own section.
-    for ref in ("21-1", "24-1", "33-1"):
-        assert view.nodes[ref].section is None
-    assert view.nodes["36-1"].section == "suggested"
-    assert view.nodes["36-1"].section_rooted is False
-    assert view.nodes["34-1"].section == "01-placement"
-    assert view.nodes["35-1"].section == "02-snapshots"
-    assert set(load_view(root, "36-1").nodes) == {"36-1", "34-1", "35-1"}
-
-    work = (tmp_path / "view").resolve()
-    api.work(root, "20-1", work)
-    paths = {
-        path.relative_to(work).as_posix()
-        for path in work.rglob("*.md")
-        if path.is_symlink()
-    }
-    assert paths == {
-        "00-root/product-breakdown.md",
-        "00-intent/intent.md",
-        "00-intent/credibility-of-the-chain.md",
-        "01-product/product.md",
-        "01-product/two-axes.md",
-        "02-evolution/evolution.md",
-        "02-evolution/per-folder-index.md",
-        "02-evolution/suggested/suggested-work.md",
-        "02-evolution/suggested/01-placement/section-flat-idea.md",
-        "02-evolution/suggested/02-snapshots/snapshot-list-and-prune.md",
-    }
+def test_forward_closure_reaches_every_node():
+    graph = build_graph(EXAMPLES)
+    refs = graph_view(graph, "1-1")
+    assert len(refs) == 10
+    assert set(refs) == {f"{node}-1" for node in range(1, 11)}
 
 
-def test_example_export_writes_one_index_per_folder(tmp_path):
-    from bd_tree import api
+def test_two_parent_node_has_two_derived_in_edges():
+    graph = build_graph(EXAMPLES)
+    incoming = render_in(graph, "4-1")
+    assert incoming.startswith("2 in-links  [derived]")
+    assert "2-1 -> 4-1 (breaks_down)  [derived]" in incoming
+    assert "3-1 -> 4-1 (supports)  [derived]" in incoming
 
-    out = (tmp_path / "tree").resolve()
-    result = api.export_view("tree", EXAMPLES, "20-1", out)
+
+def test_example_graph_export_writes_stages_and_indexes(tmp_path):
+    out = (tmp_path / "graph").resolve()
+    result = api.export_view("graph", EXAMPLES, "1-1", out)
     assert result.nodes == 10
 
     generated = {
@@ -79,20 +57,16 @@ def test_example_export_writes_one_index_per_folder(tmp_path):
     }
     assert generated == {
         "INDEX.md",
-        "00-root/INDEX.md",
         "00-intent/INDEX.md",
-        "01-product/INDEX.md",
-        "02-evolution/INDEX.md",
-        "02-evolution/suggested/INDEX.md",
-        "02-evolution/suggested/01-placement/INDEX.md",
-        "02-evolution/suggested/02-snapshots/INDEX.md",
+        "01-breakdown/INDEX.md",
+        "02-claims/INDEX.md",
+        "03-verification/INDEX.md",
+        "04-operation/INDEX.md",
     }
 
     root = (out / "INDEX.md").read_text(encoding="utf-8")
-    assert "[Credibility belongs to the producing chain]" in root
-    evolution = (out / "02-evolution" / "INDEX.md").read_text(encoding="utf-8")
-    assert "[Evolution](evolution.md)" in evolution
-    assert "[One index per folder](per-folder-index.md)" in evolution
-    assert "[suggested](suggested/INDEX.md)" in evolution
-    assert evolution.index("evolution.md") < evolution.index("per-folder-index.md")
-    assert evolution.index("per-folder-index.md") < evolution.index("suggested/INDEX.md")
+    assert "[stage 0 — intent](00-intent/INDEX.md) — 1 node" in root
+    assert "[stage 4 — operation](04-operation/INDEX.md) — 2 nodes" in root
+    operation = (out / "04-operation" / "INDEX.md").read_text(encoding="utf-8")
+    assert "[9-1 Operate the graph](9-1-operate-the-graph.md)" in operation
+    assert "[10-1 Require sorted links](10-1-require-sorted-links.md)" in operation

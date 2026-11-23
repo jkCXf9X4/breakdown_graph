@@ -350,9 +350,12 @@ There is no generic importer yet. The pattern is:
    the title is unusable. `--path-template` sets another route for the whole view.
 5. `links` holds typed edges with full refs; prose citations are separate.
 
-`examples/` is a small worked project laid out this way, with its store under
-`examples/.bd_tree/`: one file per node version, `contains` listing ordered
-children, and root-relative `section` keys keeping layers as sibling directories.
+`examples/` is the default worked project: a graph store under
+`examples/.bd_tree/` with one file per node version, declared `links`, and an
+integer `stage` per node, and no `contains`. For a live containment tree with
+ordered `contains` and root-relative `section` keys, use the product breakdown
+store: `bd --root docs/breakdown check` and
+`bd --root docs/breakdown tree 1-1 --depth 1`.
 
 ## Troubleshooting
 

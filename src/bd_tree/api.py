@@ -11,6 +11,23 @@ from .exporter import EXPORTERS
 from .freshness import reconcile as _reconcile
 from .freshness import stale as _stale
 from .frontmatter import body_hash
+from .graph import (
+    Graph,
+    audit,
+    build_graph,
+    default_anchor,
+    export_graph,
+    graph_layout,
+    graph_view,
+    order,
+    render_audit,
+    render_dot,
+    render_graph,
+    render_in,
+    render_out,
+    resolve_graph_ref,
+    stage,
+)
 from .loader import load as _load
 from .loader import load_view as _load_view
 from .loader import node_path, parse_filename, parse_ref, parse_selector, ref_of
@@ -31,6 +48,7 @@ from .navigate import default_root as _default_root
 from .navigate import resolve_ref as _resolve_ref
 from .ops import MigrationResult
 from .ops import clear_root as _clear_root
+from .ops import clone as _clone
 from .ops import contain as _contain
 from .ops import delete as _delete
 from .ops import diff as _diff
@@ -38,11 +56,10 @@ from .ops import init_store as _init_store
 from .ops import link as _link
 from .ops import migrate as _migrate
 from .ops import new_node as _new_node
+from .ops import replace as _replace
 from .ops import set_root as _set_root
 from .ops import uncontain as _uncontain
 from .ops import unlink as _unlink
-from .ops import clone as _clone
-from .ops import replace as _replace
 from .ops import versions as _versions
 from .solutions import SolutionEntry, SolutionResult
 from .solutions import listing as _solution_list
@@ -61,6 +78,7 @@ __all__ = [
     "ExportError",
     "ExportResult",
     "GitContext",
+    "Graph",
     "Issue",
     "MigrationResult",
     "Node",
@@ -74,16 +92,23 @@ __all__ = [
     "WorkEntry",
     "WorkResult",
     "area",
+    "audit",
     "body_hash",
+    "build_graph",
     "check",
     "clear_root",
+    "clone",
     "contain",
     "current_ref",
+    "default_anchor",
     "default_root",
     "delete",
     "diff",
     "edit_path",
+    "export_graph",
     "export_view",
+    "graph_layout",
+    "graph_view",
     "init_store",
     "link",
     "load",
@@ -91,22 +116,29 @@ __all__ = [
     "migrate",
     "new_node",
     "node_path",
+    "order",
     "parse_filename",
     "parse_ref",
     "parse_selector",
     "reconcile",
     "ref_of",
+    "render_audit",
+    "render_dot",
+    "render_graph",
+    "render_in",
+    "render_out",
+    "replace",
+    "resolve_graph_ref",
     "resolve_ref",
     "root_ref",
     "set_root",
     "solution_list",
     "solution_new",
     "solution_remove",
+    "stage",
     "stale",
     "uncontain",
     "unlink",
-    "clone",
-    "replace",
     "versions",
     "work",
 ]
@@ -183,6 +215,10 @@ def export_view(
         raise BreakdownError(
             f"unknown export '{name}' (available: {', '.join(sorted(EXPORTERS))})"
         )
+    if name == "graph":
+        graph = build_graph(root)
+        anchor = resolve_graph_ref(graph, view)
+        return func(graph, anchor, Path(out), **opts)
     resolved = _load_view(root, view)
     errors = [issue for issue in resolved.issues if issue.level == "error"]
     if errors:

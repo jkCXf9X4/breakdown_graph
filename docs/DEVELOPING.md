@@ -10,7 +10,7 @@ git clone https://github.com/jkCXf9X4/breakdown-tree
 cd breakdown-tree
 pip install -e '.[test]'
 python3 -m pytest -q
-BD_ROOT=examples bd check
+bd audit
 ```
 
 Requirements: Python 3.10+, PyYAML, pytest. Graphviz `dot` only for dot export.
@@ -181,8 +181,9 @@ python3 -m pytest -q
 - `tests/conftest.py` provides `write_node`, a helper that writes arbitrary front
   matter; placement uses the node's `section`/`name`/`title`.
 - Use `tmp_path` and real files. Do not mock the loader.
-- `test_examples.py` runs the project at `examples/` (store under `.bd_tree/`)
-  through `bd check` and view loading, asserting both complete trees.
+- `test_examples.py` runs the graph example at `examples/` (store under
+  `.bd_tree/`) through `bd audit`, graph traversal, and graph export, asserting
+  ten nodes, integer stages, and no `contains`/`section`.
 - Root tests cover the precedence: explicit ref where a command takes one >
   `ROOT` > lowest `(id, version)`. They also cover `root-ref-missing`,
   `invalid-root`, and `check --view` narrowing only the report.
@@ -205,7 +206,8 @@ Before a commit:
 
 ```sh
 python3 -m pytest -q
-BD_ROOT=examples bd check
+bd audit
+bd check --root docs/breakdown   # containment support unchanged
 git diff --check
 ```
 

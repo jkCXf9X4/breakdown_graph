@@ -10,6 +10,8 @@ boundary, typed dependency edges, and a single custom symlink work area.
 - **Layout** — `bd work` renders one view as symlinks into the store, in a
   single `<project>/bd_work/` area; `bd current` reports which view is there.
 - **Freshness** — typed links record what depends on what and whether it still holds.
+- **Graph mode (prototype)** — declared `links` plus `stage` order compute a staged
+  graph; containment is unchanged. [Graph mode](docs/GRAPH.md).
 
 The store is the data; the work area is a disposable layout. An agent session
 reads exactly one view and edits the node files through that one area.
@@ -67,33 +69,38 @@ Without installing, run from the repository root:
 
 ## Five-minute tour
 
-The repository ships a small example project at `examples/`. Read it first; do
-not edit it unless you mean to change the example.
+The repository ships a small graph example at `examples/`, the default store
+(`ROOT` `1-1`). Read it first; do not edit it unless you mean to change the
+example.
 
 ```sh
 export BD_ROOT=examples
 
-bd check                       # clean, 10-node fan-out tree
-bd tree 20-1 --depth 1         # the tree named by ROOT
-bd tree 20-1 --depth 0         # the whole fan-out
-bd show 20-1+1 --max-chars 300 # body plus one level
-bd tree 20-1 --columns section,type,title  # children as a table
+bd audit                       # graph validation: 0 errors, 0 warnings
+bd graph                       # staged text render from 1-1
+bd graph 1-1 --depth 1         # direct children only
+bd out 1-1                     # authored out-edges, sorted
+bd in 4-1                      # derived in-edges for a two-parent node
 bd find links --limit 3
-bd path 34-1                   # ancestor path to a leaf
+bd export graph --view 1-1 --out /tmp/bd-graph
 ```
 
-Then open the work area:
+The export is a read-only snapshot (staged directories, one `INDEX.md` per
+stage, and a root index), never a work area.
+
+Containment is still fully supported. To see a live containment tree, point
+`bd` at the product breakdown store:
 
 ```sh
-bd work 20-1                   # write <project>/bd_work for view 20-1
-bd current                     # <project>/bd_work (view 20-1)
-cd "$(bd current --path)"      # print only the path, for cd
-# node .md files here are symlinks; editing one edits .bd_tree/nodes/<ref>.md
-# INDEX.md in every folder, AGENTS.md, and REFS.md are regular generated files
-
-bd edit 21-1                   # absolute path of ref 21-1 in the active view
-bd work 20-1+2                 # same area, first two levels only
+bd --root docs/breakdown check
+bd --root docs/breakdown tree 1-1 --depth 1
+bd --root docs/breakdown work 1-1
+cd "$(bd --root docs/breakdown current --path)"
 ```
+
+`bd work` writes the single `<project>/bd_work/` area and replaces its contents;
+node `.md` files there are symlinks into the store, while `INDEX.md`, `AGENTS.md`,
+and `REFS.md` are generated. Use `bd edit REF` to find a ref in the active view.
 
 ## Create a store
 
@@ -142,10 +149,10 @@ current directory to depth 3 and uses the store when exactly one is found.
   pass `--root`, or add a `.bd_root` pointer.
 - One store per checkout. A git worktree has its own store.
 
-The example project is at `examples/`, with its store at `examples/.bd_tree/`.
-Two stores sit below the repo root, so the repo root holds a committed
-`.bd_root` naming `examples`; `docs/` holds one naming `breakdown`, and
-`docs/breakdown/` finds its own store first. Plain `bd` therefore works from
+The example project is at `examples/`, with its graph store at
+`examples/.bd_tree/`. Two stores sit below the repo root, so the repo root holds
+a committed `.bd_root` naming `examples`; `docs/` holds one naming `breakdown`,
+and `docs/breakdown/` finds its own store first. Plain `bd` therefore works from
 anywhere in the checkout. `BD_ROOT=examples` and `--root` still override.
 
 ## Choose your path
@@ -296,7 +303,7 @@ src/bd_tree/               Python package
   ops.py                   init, new, structural edits, versions, delete, diff, migrate
   cli.py, api.py           command line and public API
 tests/                     pytest suite
-examples/                 example project: .bd_tree/ store + ignored bd_work/
+examples/                 graph example: .bd_tree/ store + ignored bd_work/
 docs/                      user, developer, design, branches/versions
 docs/breakdown/            product breakdown: bd store (.bd_tree/) + ignored bd_work/
 ```
@@ -304,9 +311,9 @@ docs/breakdown/            product breakdown: bd store (.bd_tree/) + ignored bd_
 ## Status
 
 - The suite passes: `python3 -m pytest -q`.
-- The committed example project `examples/` has a `.bd_tree/nodes/` tree of
-  `<id>-<version>.md` files, a `.bd_tree/ROOT` file, and a gitignored
-  `bd_work/`; `bd check` passes for it.
+- The committed example project `examples/` is a graph store: `.bd_tree/nodes/`
+  holds ten `<id>-<version>.md` files with declared `links` and integer `stage`,
+  `.bd_tree/ROOT` names `1-1`, and `bd_work/` is gitignored; `bd audit` is clean.
 - No JSON, TOML, lock, or state data files; the only exceptions are a
   store-level `ROOT` file with one ref line and a folder-level `.bd_root`
   pointer with one store path. Derived output is gitignored.

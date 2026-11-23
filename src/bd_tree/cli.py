@@ -14,6 +14,19 @@ from pathlib import Path
 
 from . import api
 from .errors import BreakdownError
+from .graph import (
+    audit as graph_audit,
+)
+from .graph import (
+    build_graph,
+    graph_view,
+    render_audit,
+    render_dot,
+    render_graph,
+    render_in,
+    render_out,
+    resolve_graph_ref,
+)
 from .loader import (
     DISCOVERY_DEPTH,
     resolve_store_root,
@@ -73,10 +86,12 @@ def _find_root(explicit: str | None, *, allow_missing: bool = False) -> Path:
     )
 
 
-def _add_root(parser: argparse.ArgumentParser) -> None:
+def _add_root(
+    parser: argparse.ArgumentParser, *, default: object = argparse.SUPPRESS
+) -> None:
     parser.add_argument(
         "--root",
-        default=None,
+        default=default,
         help="store or project root (default: $BD_ROOT, nearest parent with "
         "nodes/ or .bd_tree/nodes or a .bd_root pointer, else a unique store "
         "below cwd)",
@@ -255,10 +270,15 @@ def _cmd_export(args: argparse.Namespace) -> int:
     if view is None:
         raise BreakdownError("provide a view REF or --view REF")
     store = api.load(_find_root(args.root))
-    view = resolve_ref(store, view)
+    if args.view_name == "graph":
+        view = resolve_graph_ref(build_graph(store), view)
+    else:
+        view = resolve_ref(store, view)
     opts: dict[str, object] = {}
     if args.view_name in ("context", "tree"):
         opts.update(force=args.force, clean=args.clean, **_display_opts(args))
+    elif args.view_name == "graph":
+        opts.update(force=args.force, clean=args.clean)
     elif args.view_name == "dot":
         opts.update(color_by=args.color_by, shape_by=args.shape_by)
     result = api.export_view(
@@ -267,6 +287,56 @@ def _cmd_export(args: argparse.Namespace) -> int:
     print(f"{result.name} -> {result.out}")
     print(f"{result.nodes} nodes, {len(result.files)} files (view {view})")
     return 0
+
+
+def _parse_stage_range(text: str | None) -> tuple[int, int] | None:
+    if text is None:
+        return None
+    left, sep, right = text.partition(":")
+    if not sep:
+        raise BreakdownError(f"invalid --stage {text!r} (expected A:B)")
+    try:
+        low, high = int(left), int(right)
+    except ValueError as exc:
+        raise BreakdownError(
+            f"invalid --stage {text!r} (expected integers A:B)"
+        ) from exc
+    if low > high:
+        raise BreakdownError(f"invalid --stage {text!r} (A must be <= B)")
+    return low, high
+
+
+def _cmd_graph(args: argparse.Namespace) -> int:
+    graph = build_graph(api.load(_find_root(args.root)))
+    stages = _parse_stage_range(args.stage)
+    refs = graph_view(
+        graph,
+        args.ref,
+        depth=args.depth,
+        types=args.type,
+        stages=stages,
+    )
+    print(render_dot(graph, refs) if args.dot else render_graph(graph, refs))
+    return 0
+
+
+def _cmd_out(args: argparse.Namespace) -> int:
+    graph = build_graph(api.load(_find_root(args.root)))
+    print(render_out(graph, args.ref))
+    return 0
+
+
+def _cmd_in(args: argparse.Namespace) -> int:
+    graph = build_graph(api.load(_find_root(args.root)))
+    print(render_in(graph, args.ref))
+    return 0
+
+
+def _cmd_audit(args: argparse.Namespace) -> int:
+    graph = build_graph(api.load(_find_root(args.root)))
+    issues = graph_audit(graph, args.ref)
+    print(render_audit(graph, args.ref))
+    return 1 if any(issue.level == "error" for issue in issues) else 0
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
@@ -579,6 +649,7 @@ def build_parser() -> argparse.ArgumentParser:
         "Repair a work tree with `bd work REF --status` or `--writeback`.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    _add_root(parser, default=None)
     sub = parser.add_subparsers(dest="command", required=True)
 
     init = sub.add_parser(
@@ -693,6 +764,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, help_text in (
         ("context", "fresh nodes only, plus STALE.md and AGENTS.md"),
         ("dot", "Graphviz dot graph"),
+        ("graph", "staged forward-graph snapshot with stage indexes"),
         ("tree", "read-only copy of one view"),
     ):
         child = export_sub.add_parser(name, help=help_text)
@@ -719,6 +791,13 @@ def build_parser() -> argparse.ArgumentParser:
                 "--force", action="store_true", help="write into a non-empty dir"
             )
             _add_display(child)
+        elif name == "graph":
+            child.add_argument(
+                "--clean", action="store_true", help="remove the output first"
+            )
+            child.add_argument(
+                "--force", action="store_true", help="write into a non-empty dir"
+            )
         else:
             child.add_argument(
                 "--color-by",
@@ -732,6 +811,52 @@ def build_parser() -> argparse.ArgumentParser:
                 help="front-matter field mapped to a stable shape (default: box)",
             )
         child.set_defaults(func=_cmd_export)
+
+    graph = sub.add_parser(
+        "graph",
+        help="render the staged forward graph (prototype beside containment)",
+    )
+    _add_root(graph)
+    graph.add_argument(
+        "ref",
+        nargs="?",
+        default=None,
+        help="anchor ref or bare id (default: ROOT, else lowest root)",
+    )
+    graph.add_argument(
+        "--depth", type=int, default=None, help="edge hops to follow (default: all)"
+    )
+    graph.add_argument(
+        "--stage", default=None, metavar="A:B", help="inclusive stage range"
+    )
+    graph.add_argument(
+        "--type",
+        action="append",
+        default=None,
+        metavar="T",
+        help="only follow this link type (repeatable)",
+    )
+    graph.add_argument("--dot", action="store_true", help="emit Graphviz DOT")
+    graph.set_defaults(func=_cmd_graph)
+
+    out = sub.add_parser("out", help="list a node's authored out-edges")
+    _add_root(out)
+    out.add_argument("ref")
+    out.set_defaults(func=_cmd_out)
+
+    incoming = sub.add_parser(
+        "in", help="list a node's computed in-edges (derived)"
+    )
+    _add_root(incoming)
+    incoming.add_argument("ref")
+    incoming.set_defaults(func=_cmd_in)
+
+    audit = sub.add_parser("audit", help="validate graph-mode stages and edges")
+    _add_root(audit)
+    audit.add_argument(
+        "ref", nargs="?", default=None, help="anchor ref (default: store root)"
+    )
+    audit.set_defaults(func=_cmd_audit)
 
     check = sub.add_parser("check", help="validate the store and its views")
     _add_root(check)
