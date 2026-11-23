@@ -26,16 +26,17 @@ store-level default-view ref.
 ```sh
 bd root                             # print: <ref>  (ROOT|lowest)
 bd root REF                         # write ROOT: one full ref line, e.g. 1-1
-bd root --clear                     # delete ROOT; lowest (id, version) is the default
+bd root --clear                     # delete ROOT; use the topology's lowest root
 ```
 
 `ROOT` sits at the store top level and holds one full `id-version` ref on one
 line, nothing else. It is the default view root for `tree`, `find`, `work`,
 `check`, `stale`, and `reconcile`. An explicit ref where a command takes one
-wins over `ROOT`; `ROOT` wins over the lowest available node by
-`(id, version)`. `bd check --view REF` only narrows reporting; the checked root
-is `ROOT`, else the lowest `(id, version)`. A declared but missing ref is
-`root-ref-missing`; malformed content is `invalid-root`. `bd root` does not
+wins over `ROOT`; `ROOT` wins over a graph store's lowest graph root, else a
+containment store's lowest node by `(id, version)`. `bd check --view REF` only
+narrows reporting; the checked root is `ROOT`, else that topology default. A
+declared but missing ref is `root-ref-missing`; malformed content is
+`invalid-root`. `bd root` does not
 rewrite the view already in the work area; use `bd work REF` for that.
 
 Data refs are full `id-version`; `contains`, `links`, and `ROOT` never hold a
@@ -46,13 +47,22 @@ selected view and is never written to data.
 
 ```sh
 bd init [DIR]                       # create .bd_tree/nodes/1-1.md and .gitignore
-bd new --parent REF --field KEY=VALUE ... [--body TEXT]
+bd init --graph [DIR]               # relative-band root (layer: root, no stage)
+bd new --parent REF --field KEY=VALUE ... [--body TEXT]   # containment
+bd new --parent REF --type TYPE --layer BAND[/SUB] [--order N]  # graph, relative mode
+bd new --parent REF --type TYPE --stage N [--order N]     # graph, absolute mode
 bd migrate [--dry-run]              # convert a classic bare <id>.md store in place
 ```
 
-`bd new` allocates the next global integer at version 1, appends that full ref
-to the parent's `contains`, and seeds `title` and `summary` as empty
-placeholders; `--field` overrides them. `bd migrate` renames every bare
+`bd init` creates a containment root (`contains: []`); `bd init --graph` writes a
+relative-band graph root. `bd new` allocates the next global integer at
+version 1. In a containment store it appends that full ref to the parent's
+`contains`; in a graph store it adds a typed link (`--type`, default
+`breaks_down`). In relative mode `--layer` is required and takes a path
+`BAND[/SUB]`: the first segment is the band, the rest is an explicit subpath
+folder. `--stage` is refused. In absolute mode it takes `--stage`; both take `--order`. It seeds
+`title` and `summary` as empty placeholders; `--field` overrides them.
+`bd migrate` renames every bare
 `nodes/<id>.md` to the next free version and rewrites `contains`, `links`, and a
 bare `ROOT`; `--dry-run` prints the plan without touching disk.
 
@@ -65,8 +75,35 @@ bd tree [REF] --columns F,F [--depth N] [--max-chars N]
 bd show REF[+N] [--max-chars N] [--no-body] [--fields F,F] [--links]
 bd find QUERY [--view REF|--all] [--field F] [--regex] [--where K=V ...] [--limit N]
 bd path REF
+bd views
+
+# graph store
+bd graph [REF] [--depth N] [--stage A:B] [--type T] [--dot|--svg] [--out PATH]
+bd out REF
+bd in REF
+bd audit [REF]
 ```
 
+- `check` dispatches on the store's topology. In a graph store it runs the graph
+  audit; in a containment store it validates the containment tree.
+- `tree` renders layer or stage bands in a graph store; `--depth` bounds
+  containment only, because the bands are the graph's presentation. `show +N`
+  counts link hops in a graph store. `path` follows the first parent when a
+  graph node has several (deterministic, but one of several paths).
+- `views` lists topology roots: containment roots or graph roots.
+- `graph` renders the forward closure from an anchor; `out` lists authored
+  out-edges, `in` derived in-edges, and `audit` validates graph bands and edges.
+- `bd graph --svg --out graph.svg` renders the same view as SVG with Graphviz;
+  `--dot` is the dependency-free fallback and `--out` writes either render.
+- `--stage A:B` on `bd graph` keeps the inclusive band range: an absolute stage
+  ordinal or a top-level derived layer ordinal. A nested band inherits its
+  top-level ancestor's ordinal. The anchor band is always included.
+- `layer: band/sub` is a path. The first segment is the band; the rest is an
+  explicit folder below the band folder. Bands are inferred from cross-band
+  links by the shortest-path rule, so a detour may nest under a parent band.
+  See [`GRAPH-LAYOUT.md`](GRAPH-LAYOUT.md).
+- `group: <value>` is ordinary metadata. It places nothing in any topology; the
+  graph audit warns `graph-group-ignored`. Use the layer subpath instead.
 - `show 5-1+2`: node 5-1 plus two levels of descendant bodies. With N > 0 the
   body is capped at 4000 characters per node unless `--max-chars N` is given;
   `--max-chars 0` prints the full body.
@@ -83,14 +120,24 @@ bd path REF
 ## Structure
 
 ```sh
+# containment stores only
 bd contain PARENT CHILD [--before REF | --after REF]
 bd uncontain PARENT CHILD
+
+# both topologies
 bd link FROM TO --type TYPE [--propagates]
 bd unlink FROM TO [--type TYPE]
 ```
 
 - `contain` refuses cycles and duplicates; reorder with `uncontain` then `contain`.
+  In a graph store `contain`/`uncontain` fail with "graph stores use edges: bd
+  link / bd unlink".
 - `uncontain` writes `contains: []` when the list becomes empty.
+- In a graph store `link` is the child relation: in absolute mode it refuses a
+  back-edge (`stage(FROM) < stage(TO)` must hold); in relative mode it refuses a
+  link that would create a band cycle and a same-band edge where
+  `order(FROM) >= order(TO)`, including across subpaths. It keeps the target
+  list sorted by ref.
 - `link --propagates` pins the target body hash immediately.
 - A scalar link: `links: ['10-1']` takes the type from node `10-1`'s `type`;
   `bd link` writes that form when the requested type matches.
@@ -109,10 +156,12 @@ bd edit REF
 
 - Default: `<project>/bd_work/`. A project has exactly one writable work area;
   a different REF replaces its contents.
-- The view stays the full containment closure of one ref. `REF+N` or `--depth N`
-  materializes only the first `N` descendant levels in the area (`0` is the root
-  alone; `--depth` overrides a suffix). This is the same suffix that `bd show`
-  and `bd tree` accept, and a rebuild with a different depth replaces the area.
+- The view stays the full closure of one ref over the store's child relation.
+  `REF+N` or `--depth N` materializes only the first `N` descendant levels in
+  the area (`0` is the root alone; `--depth` overrides a suffix). In a graph
+  store a level is a link hop and the layout is the graph bands. This is the
+  same suffix that `bd show` and `bd tree` accept, and a rebuild with a
+  different depth replaces the area.
 - The generated `REFS.md`, each folder's `INDEX.md`, and `AGENTS.md` carry
   `REF+N`, so `bd current`, `--status`, `--writeback`, and `bd edit` recover the
   materialized depth.
@@ -126,7 +175,7 @@ bd edit REF
   area exists.
 - `--status` and `--writeback` inspect the view actually in the area, not the
   requested or default view.
-- `bd views` lists containment roots (`ref`, title), one per line, and marks the
+- `bd views` lists topology roots (`ref`, title), one per line, and marks the
   store default (`ROOT`) with `*`.
 - `bd edit REF` prints the absolute path of REF in the active view and errors if
   the ref is not there.
@@ -149,8 +198,9 @@ bd work 1-1                                    # restore the full closure
 bd work 1-1 --path-template '{layer}/{ref}.md'
 ```
 
-`section` is the only presentation key that creates directories: `section: true`
-opens a directory at the node's placement name (explicit `name`, else the `title`
+In a containment store, `section` is the only presentation key that creates
+directories: `section: true` opens a directory at the node's placement name
+(explicit `name`, else the `title`
 slug, else the ref) and nests its containment descendants inside; the node's own
 file is `<dir>/<placement-name>.md`. `section: "<dir>"` names the directory
 verbatim, slashes included, and nested sections stack. A leading `/` resolves
@@ -208,24 +258,26 @@ bd diff LEFT RIGHT
 
 Every node file is a version (`<id>-<version>.md`, version >= 1); versions of
 one id are peers. `bd versions ID` accepts `5` or `5-1` and uses the logical
-id. The version current in a view is the one its
-parent's `contains` names — there is no per-node pointer. `bd clone REF` copies
-the source file, including its declared `contains`, to the next free version of
-the same logical id (or to `--version N`) and wires nothing into the current
-view. `bd clone REF --subtree` clones every containment descendant and rewrites
-each cloned parent's `contains` to the cloned children, producing a
-self-contained copy while the original tree stays untouched; `--version` cannot
-be combined with `--subtree`. `bd replace OLD NEW` is the separate wiring step:
-it finds OLD in the store's default view and puts NEW at OLD's exact index in
-its parent's `contains`, or repoints `ROOT` when OLD is the store root; OLD's
-file stays as a peer. Clone and swap in one logical flow with `bd clone REF
---subtree` then `bd replace REF <printed new root ref>`. If OLD is outside the
-default view, `bd replace` errors and asks for `bd contain`; multiple parents is
-an error. The `duplicate-id` rule still forbids both versions in one view; to
-choose a different position, run `bd uncontain P OLD`,
-then `bd contain P NEW --before NEXT`. `bd delete REF` removes one version
-and refuses a `ROOT`, a reachable ref, or one referenced by any
-`contains`/`links` unless `--force`.
+id. There is no per-node pointer. In a containment store, the version current in
+a view is the one its parent's `contains` names. In a graph store, an edge pins
+a full ref, and a view warns when two versions of one id are reachable
+(`graph-duplicate-version`). `bd clone REF` copies the source file, including
+its declared `contains`, to the next free version of the same logical id (or to
+`--version N`) and wires nothing into the current view. `bd clone REF --subtree`
+clones every descendant and rewrites each cloned parent's child relation
+(`contains`, or `links` in a graph store), producing a self-contained copy while
+the original stays untouched; `--version` cannot be combined with `--subtree`.
+`bd replace OLD NEW` is the separate wiring step: it puts NEW at OLD's index in
+its parent's `contains` (containment), repoints inbound links (graph), or
+repoints `ROOT` when OLD is the store root; OLD's file stays as a peer. Clone
+and swap in one logical flow with `bd clone REF --subtree` then `bd replace REF
+<printed new root ref>`. If OLD is outside the default view, `bd replace` errors.
+Multiple parents is an error in a containment store; a graph edge may have
+several. The containment `duplicate-id` rule still forbids both versions in one
+view; to choose a different position, run `bd uncontain P OLD`, then
+`bd contain P NEW --before NEXT`. `bd delete REF` removes one version and refuses
+a `ROOT`, a reachable ref, or one referenced by any `contains`/`links` unless
+`--force`.
 
 Versions are alternatives inside one branch, not the solution boundary, and they
 never sync across branches. To switch, use `bd clone REF` then `bd replace REF
@@ -248,11 +300,25 @@ a propagating target makes the source edge stale until reconciled.
 ```sh
 bd export tree REF --out DIR [--path-template T] [--title-field F] [--summary-field F] [--clean] [--force]
 bd export context --view REF --out DIR
-bd export dot     --view REF --out FILE [--color-by FIELD] [--shape-by FIELD]
+bd export dot     --view REF --out FILE [--render FMT ...] [--render-out PATH] [--color-by FIELD] [--shape-by FIELD]
+bd export svg     --view REF --out FILE [--color-by FIELD] [--shape-by FIELD]
+bd export graph   --view REF --out DIR [--force] [--clean]
 ```
 
-`bd export tree` is the single read-only tree projection. `context` writes fresh
-node bodies plus `STALE.md` and `AGENTS.md`. `dot` is Graphviz.
+`bd export tree` is the single read-only topology projection: band layout for a
+graph store (relative layer paths with inferred nesting and explicit subpaths,
+or absolute stages), `section`/`contains` placement for a containment store.
+`graph` writes the same band projection with per-folder indexes; `context`
+writes fresh node bodies plus `STALE.md` and `AGENTS.md`; `dot` is Graphviz.
+
+```sh
+bd export dot --view 1-1 --out graph.dot --render svg   # graph.dot + graph.svg
+bd export svg --view 1-1 --out graph.svg                # rendered only
+```
+
+`--render` repeats for `svg`, `png`, or `pdf`; each file sits next to the `.dot`
+unless `--render-out` names the one rendered path. `bd graph --svg` remains the
+band-clustered visual.
 
 ## Git patterns
 
@@ -272,6 +338,7 @@ git restore --source=sol-a -- .bd_tree/nodes/5-1.md
 
 ```sh
 bd check
+bd audit                    # graph store; bd check already dispatches
 bd stale
 bd work --status
 git status --porcelain
@@ -287,7 +354,16 @@ python3 -m pytest -q
 | `bd edit REF` errors | The ref is not in the active view. Switch with `bd work REF` or pass a ref that is present. |
 | `root-ref-missing` / `invalid-root` | The `ROOT` file names an absent ref or is malformed. Fix it, or run `bd root --clear`. |
 | `bare-ref` / `invalid-ref` in data | `contains`, `links`, and `ROOT` need full `id-version` refs. A classic bare-file store converts once with `bd migrate`. |
-| `duplicate-id` | One view holds two versions of the same logical id. `bd uncontain` the unwanted one; `bd contain` refuses this clash up front. |
+| `duplicate-id` | A containment view holds two versions of the same logical id. `bd uncontain` the unwanted one; `bd contain` refuses this clash up front. |
+| `graph-layer-missing` / `graph-layer-invalid` | Relative mode: every graph node needs a valid `layer` path (`band[/sub]`). Add or fix it. |
+| `graph-layer-cycle` | Cross-band edges form a loop. Repoint an edge with `bd unlink` then `bd link`. |
+| `graph-order-back-edge` | A same-band edge has `order(source) >= order(target)`, including across subpaths. Raise the target's `order` or lower the source's. |
+| `graph-group-ignored` | Warning: `group` is ordinary metadata. Replace it with `layer: band/sub`. |
+| `graph-stage-missing` / `graph-stage-invalid` | Absolute mode only: a node lacks an integer `stage`. Add or fix it, or move the store to relative `layer`s by removing `stage`. |
+| `graph-back-edge` / `graph-cycle` | Absolute mode: an edge does not strictly increase `stage`, or links loop. Repoint the edge with `bd unlink` then `bd link`. |
+| `graph-dangling-link` | A graph link targets a missing node. Remove it or restore the target. |
+| `graph-orphan` | A non-anchor root has no incoming edge. Make it the anchor or link it into the graph. |
+| `graph-duplicate-version` | Two versions of one id are reachable from the anchor. Repoint one edge to the peer you want. |
 | Detached work file | `bd work --status`, then `bd work --writeback`. Switching views with detached files is refused until you do. |
 | Want two work folders | Not supported. `bd_work/` is the single area; switch with `bd work REF`. |
 | Stale layout after branch change | `bd work REF --clean`. |
