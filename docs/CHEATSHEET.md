@@ -202,19 +202,21 @@ In a containment store, `section` is the only presentation key that creates
 directories: `section: true` opens a directory at the node's placement name
 (explicit `name`, else the `title`
 slug, else the ref) and nests its containment descendants inside; the node's own
-file is `<dir>/<placement-name>.md`. `section: "<dir>"` names the directory
-verbatim, slashes included, and nested sections stack. A leading `/` resolves
-the directory from the output root instead of under the parent prefix, so a
-containment chain can keep layers as siblings. Otherwise `name` sets the
+file is `<dir>/<placement-name>.md`. `section: "<dir>"` supplies the base name;
+every folder layer is numbered zero-based with two digits (`NN-<base>`) in
+containment traversal order, an authored leading ordinal is stripped, and only
+the first segment is numbered (inner segments stay verbatim), so nested sections
+stack. A leading `/` numbers from the output root instead of under the parent
+directory, so a containment chain can keep layers as siblings. Otherwise `name` sets the
 file stem (`<name>.md`); without it the file is `<ref>-<title-slug>.md`, or
 `<ref>.md` when the title is unusable. `--path-template` opts out of section
 inheritance.
 
 ```yaml
-section: claims           # opens claims/ for this node's subtree
-section: /00-intent       # root-relative: 00-intent/ at the output root
-title: The Main Thesis    # -> claims/the-main-thesis.md
-name: custom-name         # optional override -> claims/custom-name.md
+section: claims           # opens 00-claims/ for this node's subtree
+section: /00-intent       # root-relative: numbered at the output root
+title: The Main Thesis    # -> 00-claims/the-main-thesis.md
+name: custom-name         # optional override -> 00-claims/custom-name.md
 ```
 
 `folder` is ordinary front matter: preserved, never read, with no effect on

@@ -352,14 +352,14 @@ def test_changing_name_removes_the_old_link_in_one_rebuild(write, tmp_path):
     write(nodes, 2, name="2-1", layer="claims")
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
-    assert (out / "dir" / "a.md").is_symlink()
+    assert (out / "00-dir" / "a.md").is_symlink()
 
     write(nodes, 1, contains=["2-1"], section="dir", name="b")
     api.work(tmp_path, "1-1", out)
 
-    assert (out / "dir" / "b.md").is_symlink()
-    assert not (out / "dir" / "a.md").is_symlink()
-    assert not (out / "dir" / "a.md").exists()
+    assert (out / "00-dir" / "b.md").is_symlink()
+    assert not (out / "00-dir" / "a.md").is_symlink()
+    assert not (out / "00-dir" / "a.md").exists()
     assert api.work(tmp_path, "1-1", out, status=True).ok
 
 
@@ -402,8 +402,8 @@ def test_section_and_title_build_nested_named_work_area(write, tmp_path):
     result = api.work(tmp_path, "1-1", out)
 
     assert result.symlinks == 2
-    root_link = out / "intent" / "root-intent.md"
-    idea_link = out / "intent" / "06-evolution" / "suggested" / "new-idea.md"
+    root_link = out / "00-intent" / "root-intent.md"
+    idea_link = out / "00-intent" / "00-evolution" / "suggested" / "new-idea.md"
     assert root_link.is_symlink() and root_link.resolve() == (nodes / "1-1.md").resolve()
     assert idea_link.is_symlink() and idea_link.resolve() == (nodes / "2-1.md").resolve()
     assert api.work(tmp_path, "1-1", out, status=True).ok
@@ -418,9 +418,9 @@ def test_section_and_title_build_nested_named_work_area(write, tmp_path):
     assert edit_path(tmp_path, "2", out) == idea_link
     index = (out / "INDEX.md").read_text(encoding="utf-8")
     refs = (out / "REFS.md").read_text(encoding="utf-8")
-    assert "[Root Intent](intent/root-intent.md)" in index
-    assert "[New Idea](intent/06-evolution/suggested/new-idea.md)" in index
-    assert "`intent/06-evolution/suggested/new-idea.md` | 2-1 |" in refs
+    assert "[Root Intent](00-intent/root-intent.md)" in index
+    assert "[New Idea](00-intent/00-evolution/suggested/new-idea.md)" in index
+    assert "`00-intent/00-evolution/suggested/new-idea.md` | 2-1 |" in refs
 
 
 def test_status_and_writeback_use_refs_manifest_when_placement_changes(
@@ -845,18 +845,18 @@ def test_work_places_descendants_inside_a_section(write, tmp_path):
 
     assert result.symlinks == 4
     assert (out / "1-1-root.md").is_symlink()
-    assert (out / "evolution" / "evolution.md").is_symlink()
-    assert (out / "evolution" / "4-1-idea.md").is_symlink()
-    assert (out / "claims" / "note.md").is_symlink()
+    assert (out / "00-evolution" / "evolution.md").is_symlink()
+    assert (out / "00-evolution" / "4-1-idea.md").is_symlink()
+    assert (out / "01-claims" / "note.md").is_symlink()
     assert api.work(tmp_path, "1-1", out, status=True).ok
 
     from bd_tree.work import edit_path
 
-    assert edit_path(tmp_path, "4", out) == out / "evolution" / "4-1-idea.md"
+    assert edit_path(tmp_path, "4", out) == out / "00-evolution" / "4-1-idea.md"
     index = (out / "INDEX.md").read_text(encoding="utf-8")
     refs = (out / "REFS.md").read_text(encoding="utf-8")
-    assert "[Idea](evolution/4-1-idea.md)" in index
-    assert "`evolution/4-1-idea.md` | 4-1 |" in refs
+    assert "[Idea](00-evolution/4-1-idea.md)" in index
+    assert "`00-evolution/4-1-idea.md` | 4-1 |" in refs
 
 
 def test_changing_section_removes_the_old_path_in_one_rebuild(write, tmp_path):
@@ -865,15 +865,15 @@ def test_changing_section_removes_the_old_path_in_one_rebuild(write, tmp_path):
     write(nodes, 2, section="claims", name="child")
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
-    assert (out / "old" / "root.md").is_symlink()
-    assert (out / "old" / "claims" / "child.md").is_symlink()
+    assert (out / "00-old" / "root.md").is_symlink()
+    assert (out / "00-old" / "00-claims" / "child.md").is_symlink()
 
     write(nodes, 1, contains=["2-1"], section="new", title="Root")
     api.work(tmp_path, "1-1", out)
 
-    assert (out / "new" / "root.md").is_symlink()
-    assert (out / "new" / "claims" / "child.md").is_symlink()
-    assert not (out / "old").exists()
+    assert (out / "00-new" / "root.md").is_symlink()
+    assert (out / "00-new" / "00-claims" / "child.md").is_symlink()
+    assert not (out / "00-old").exists()
     assert api.work(tmp_path, "1-1", out, status=True).ok
 
 
@@ -887,14 +887,14 @@ def test_depth_limited_work_keeps_section_prefixes(write, tmp_path):
     result = api.work(tmp_path, "1-1", out, depth=1)
 
     assert result.view_ref == "1-1+1"
-    assert (out / "a" / "root.md").is_symlink()
-    assert (out / "a" / "b" / "middle.md").is_symlink()
-    assert not (out / "a" / "b" / "3-1-leaf.md").exists()
+    assert (out / "00-a" / "root.md").is_symlink()
+    assert (out / "00-a" / "00-b" / "middle.md").is_symlink()
+    assert not (out / "00-a" / "00-b" / "3-1-leaf.md").exists()
     assert api.work(tmp_path, out=out, status=True).ok
 
     from bd_tree.work import edit_path
 
-    assert edit_path(tmp_path, "2", out) == out / "a" / "b" / "middle.md"
+    assert edit_path(tmp_path, "2", out) == out / "00-a" / "00-b" / "middle.md"
 
 
 def test_export_and_work_agree_on_section_paths(write, tmp_path):
@@ -918,7 +918,7 @@ def test_export_and_work_agree_on_section_paths(write, tmp_path):
         }
 
     assert relpaths(tree) == relpaths(work)
-    assert "section/claims/named.md" in relpaths(work)
+    assert "00-section/00-claims/named.md" in relpaths(work)
 
 
 def test_work_writes_nested_indexes_and_reports_a_subdir_stray(write, tmp_path):

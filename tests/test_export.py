@@ -17,11 +17,11 @@ def test_tree_view_writes_nodes_and_one_index_per_folder(write, tmp_path):
     index = (out / "INDEX.md").read_text(encoding="utf-8")
     assert "GENERATED FILE" in index
     assert "[Root intent](1-1-root-intent.md)" in index
-    assert "[Thesis](claims/2-1.md)" in index
+    assert "[Thesis](00-claims/2-1.md)" in index
     assert (out / "1-1-root-intent.md").is_file()
-    assert (out / "claims" / "2-1.md").is_file()
-    claims_index = (out / "claims" / "INDEX.md").read_text(encoding="utf-8")
-    assert "# claims/" in claims_index
+    assert (out / "00-claims" / "2-1.md").is_file()
+    claims_index = (out / "00-claims" / "INDEX.md").read_text(encoding="utf-8")
+    assert "# 00-claims/" in claims_index
     assert "[Thesis](2-1.md)" in claims_index
 
 
@@ -48,9 +48,9 @@ def test_version_view_exports_only_that_closure(write, tmp_path):
     out = tmp_path / "view"
     result = export_view("tree", tmp_path, "2-1", out)
     assert result.nodes == 2
-    assert (out / "claims" / "two-v1.md").is_file()
-    assert (out / "claims" / "evidence" / "three-v1.md").is_file()
-    assert not (out / "claims" / "two.md").exists()
+    assert (out / "00-claims" / "two-v1.md").is_file()
+    assert (out / "00-claims" / "00-evidence" / "three-v1.md").is_file()
+    assert not (out / "00-claims" / "two.md").exists()
 
 
 def test_context_excludes_stale_nodes(write, tmp_path, pin):
@@ -169,8 +169,10 @@ def test_section_and_title_slug_build_the_default_path(write, tmp_path):
     write(nodes, 2, section="06-evolution/suggested", title="Café: An Idea!")
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1-1", out)
-    assert (out / "claims" / "the-main-thesis.md").is_file()
-    assert (out / "claims" / "06-evolution" / "suggested" / "cafe-an-idea.md").is_file()
+    assert (out / "00-claims" / "the-main-thesis.md").is_file()
+    assert (
+        out / "00-claims" / "00-evolution" / "suggested" / "cafe-an-idea.md"
+    ).is_file()
 
 
 def test_name_overrides_the_title_for_the_file_stem(write, tmp_path):
@@ -179,8 +181,8 @@ def test_name_overrides_the_title_for_the_file_stem(write, tmp_path):
     write(nodes, 2, section="claims", name="custom-name", title="Ignored")
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1-1", out)
-    assert (out / "claims" / "custom-name.md").is_file()
-    assert not (out / "claims" / "ignored.md").exists()
+    assert (out / "00-claims" / "custom-name.md").is_file()
+    assert not (out / "00-claims" / "ignored.md").exists()
 
 
 def test_name_only_places_the_node_flat(write, tmp_path):
@@ -205,7 +207,7 @@ def test_section_and_name_win_over_home(write, tmp_path):
     )
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1-1", out)
-    assert (out / "claims" / "custom.md").is_file()
+    assert (out / "00-claims" / "custom.md").is_file()
     assert not (out / "explicit" / "home.md").exists()
 
 
@@ -216,8 +218,8 @@ def test_slug_falls_back_to_ref_when_title_has_no_slug(write, tmp_path):
     write(nodes, 3, title="")
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1-1", out)
-    assert (out / "odd" / "2-1.md").is_file()
-    assert (out / "odd" / "3-1.md").is_file()
+    assert (out / "00-odd" / "2-1.md").is_file()
+    assert (out / "00-odd" / "3-1.md").is_file()
 
 
 def test_folder_and_name_are_available_as_template_fields(write, tmp_path):
@@ -266,7 +268,7 @@ def test_folder_is_inert_and_the_title_slug_places_the_node(write, tmp_path):
 
 def test_prefix_collision_is_refused(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2"], name="a/b")
+    write(nodes, 1, contains=["2"], name="00-a/b")
     write(nodes, 2, section="a/b.md", name="c")
     out = tmp_path / "tree"
     with pytest.raises(ExportError) as caught:
@@ -302,21 +304,21 @@ def test_section_true_uses_the_title_slug_as_directory(write, tmp_path):
     write(nodes, 2, title="New Idea")
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1-1", out)
-    assert (out / "evolution" / "evolution.md").is_file()
-    assert (out / "evolution" / "2-1-new-idea.md").is_file()
+    assert (out / "00-evolution" / "evolution.md").is_file()
+    assert (out / "00-evolution" / "2-1-new-idea.md").is_file()
     index = (out / "INDEX.md").read_text(encoding="utf-8")
-    assert "[Evolution](evolution/evolution.md)" in index
-    assert "[New Idea](evolution/2-1-new-idea.md)" in index
+    assert "[Evolution](00-evolution/evolution.md)" in index
+    assert "[New Idea](00-evolution/2-1-new-idea.md)" in index
 
 
-def test_section_string_sets_the_directory_verbatim(write, tmp_path):
+def test_section_string_gets_a_numbered_directory(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"], section="06-evolution", title="Root")
     write(nodes, 2, section="claims", name="idea")
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1-1", out)
-    assert (out / "06-evolution" / "root.md").is_file()
-    assert (out / "06-evolution" / "claims" / "idea.md").is_file()
+    assert (out / "00-evolution" / "root.md").is_file()
+    assert (out / "00-evolution" / "00-claims" / "idea.md").is_file()
 
 
 def test_nested_sections_stack_their_directories(write, tmp_path):
@@ -326,9 +328,9 @@ def test_nested_sections_stack_their_directories(write, tmp_path):
     write(nodes, 3, title="Leaf")
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1-1", out)
-    assert (out / "alpha" / "alpha.md").is_file()
-    assert (out / "alpha" / "beta" / "beta.md").is_file()
-    assert (out / "alpha" / "beta" / "3-1-leaf.md").is_file()
+    assert (out / "00-alpha" / "alpha.md").is_file()
+    assert (out / "00-alpha" / "00-beta" / "beta.md").is_file()
+    assert (out / "00-alpha" / "00-beta" / "3-1-leaf.md").is_file()
 
 
 def test_root_relative_section_resolves_from_the_output_root(write, tmp_path):
@@ -350,9 +352,9 @@ def test_relative_section_still_nests_under_a_root_relative_parent(write, tmp_pa
     write(nodes, 3, title="Idea")
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1-1", out)
-    assert (out / "06-evolution" / "evolution.md").is_file()
-    assert (out / "06-evolution" / "suggested" / "suggested.md").is_file()
-    assert (out / "06-evolution" / "suggested" / "3-1-idea.md").is_file()
+    assert (out / "00-evolution" / "evolution.md").is_file()
+    assert (out / "00-evolution" / "00-suggested" / "suggested.md").is_file()
+    assert (out / "00-evolution" / "00-suggested" / "3-1-idea.md").is_file()
 
 
 def test_relative_section_may_span_several_segments(write, tmp_path):
@@ -362,8 +364,8 @@ def test_relative_section_may_span_several_segments(write, tmp_path):
     write(nodes, 3, title="Leaf")
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1-1", out)
-    assert (out / "06-evolution" / "suggested" / "01-indexes" / "indexes.md").is_file()
-    assert (out / "06-evolution" / "suggested" / "01-indexes" / "3-1-leaf.md").is_file()
+    assert (out / "00-evolution" / "00-suggested" / "01-indexes" / "indexes.md").is_file()
+    assert (out / "00-evolution" / "00-suggested" / "01-indexes" / "3-1-leaf.md").is_file()
 
 
 def test_root_relative_sections_may_share_a_layer_directory(write, tmp_path):
@@ -388,7 +390,7 @@ def test_relative_sections_resolving_to_one_directory_are_refused(write, tmp_pat
     write(nodes, 6, title="A")
     write(nodes, 7, title="B")
     out = tmp_path / "view"
-    with pytest.raises(ExportError, match="directory 'shared'"):
+    with pytest.raises(ExportError, match="directory '00-shared'"):
         export_view("tree", tmp_path, "1-1", out)
 
 
@@ -399,8 +401,8 @@ def test_relative_leaf_sections_may_share_a_stage_directory(write, tmp_path):
     write(nodes, 3, section="suggested", title="Two")
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1-1", out)
-    assert (out / "06-evolution" / "suggested" / "one.md").is_file()
-    assert (out / "06-evolution" / "suggested" / "two.md").is_file()
+    assert (out / "00-evolution" / "00-suggested" / "one.md").is_file()
+    assert (out / "00-evolution" / "00-suggested" / "two.md").is_file()
 
 
 def test_sections_coexist_with_unchanged_placement(write, tmp_path):
@@ -414,9 +416,9 @@ def test_sections_coexist_with_unchanged_placement(write, tmp_path):
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1-1", out)
     assert (out / "1-1-root.md").is_file()
-    assert (out / "section" / "section.md").is_file()
-    assert (out / "section" / "6-1-inside.md").is_file()
-    assert (out / "claims" / "named.md").is_file()
+    assert (out / "00-section" / "section.md").is_file()
+    assert (out / "00-section" / "6-1-inside.md").is_file()
+    assert (out / "01-claims" / "named.md").is_file()
     assert (out / "flat.md").is_file()
     assert (out / "5-1-titled.md").is_file()
 
@@ -440,7 +442,7 @@ def test_two_sibling_sections_with_the_same_directory_are_refused(write, tmp_pat
     write(nodes, 4, title="A")
     write(nodes, 5, title="B")
     out = tmp_path / "view"
-    with pytest.raises(ExportError, match="directory 'same'"):
+    with pytest.raises(ExportError, match="directory '00-same'"):
         export_view("tree", tmp_path, "1-1", out)
 
 
@@ -525,12 +527,12 @@ def test_multi_segment_section_indexes_each_prefix_directory(write, tmp_path):
     out = tmp_path / "view"
     export_view("tree", tmp_path, "1-1", out)
 
-    assert (out / "a" / "INDEX.md").is_file()
-    assert (out / "a" / "b" / "INDEX.md").is_file()
-    a_index = (out / "a" / "INDEX.md").read_text(encoding="utf-8")
-    assert "# a/" in a_index
+    assert (out / "00-a" / "INDEX.md").is_file()
+    assert (out / "00-a" / "b" / "INDEX.md").is_file()
+    a_index = (out / "00-a" / "INDEX.md").read_text(encoding="utf-8")
+    assert "# 00-a/" in a_index
     assert "[b](b/INDEX.md)" in a_index
-    b_index = (out / "a" / "b" / "INDEX.md").read_text(encoding="utf-8")
+    b_index = (out / "00-a" / "b" / "INDEX.md").read_text(encoding="utf-8")
     assert "[Nested](nested.md)" in b_index
 
 
@@ -553,3 +555,71 @@ def test_no_exported_path_ends_in_index_md(write, tmp_path):
         if path.name != "INDEX.md"
     ]
     assert all(not path.endswith("INDEX.md") for path in node_paths)
+
+
+def test_every_section_level_is_numbered_in_traversal_order(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3"], title="Root")
+    write(nodes, 2, contains=["4", "5"], section="evolution", title="Evolution")
+    write(nodes, 3, section="claims", title="Claims")
+    write(nodes, 4, contains=["6"], section="suggested", title="Suggested")
+    write(nodes, 5, section="indexes", title="Indexes")
+    write(nodes, 6, title="Idea")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1-1", out)
+    assert (out / "00-evolution" / "evolution.md").is_file()
+    assert (out / "00-evolution" / "00-suggested" / "suggested.md").is_file()
+    assert (out / "00-evolution" / "00-suggested" / "6-1-idea.md").is_file()
+    assert (out / "00-evolution" / "01-indexes" / "indexes.md").is_file()
+    assert (out / "01-claims" / "claims.md").is_file()
+
+
+def test_ordinals_follow_containment_order_and_recompute(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3"], title="Root")
+    write(nodes, 2, section="alpha", title="Alpha")
+    write(nodes, 3, section="beta", title="Beta")
+    export_view("tree", tmp_path, "1-1", tmp_path / "first")
+    assert (tmp_path / "first" / "00-alpha" / "alpha.md").is_file()
+    assert (tmp_path / "first" / "01-beta" / "beta.md").is_file()
+
+    write(nodes, 4, section="gamma", title="Gamma")
+    write(nodes, 1, contains=["3", "2", "4"], title="Root")
+    export_view("tree", tmp_path, "1-1", tmp_path / "second")
+    assert (tmp_path / "second" / "00-beta" / "beta.md").is_file()
+    assert (tmp_path / "second" / "01-alpha" / "alpha.md").is_file()
+    assert (tmp_path / "second" / "02-gamma" / "gamma.md").is_file()
+
+
+def test_sections_with_one_base_share_a_numbered_directory(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3"], title="Root")
+    write(nodes, 2, section="06-evolution", title="Alpha")
+    write(nodes, 3, section="evolution", title="Beta")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1-1", out)
+    assert (out / "00-evolution" / "alpha.md").is_file()
+    assert (out / "00-evolution" / "beta.md").is_file()
+    assert not (out / "01-evolution").exists()
+
+
+def test_only_the_first_section_segment_is_numbered(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], title="Root")
+    write(nodes, 2, section="06-evolution/suggested/01-indexes", title="Indexes")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1-1", out)
+    assert (out / "00-evolution" / "suggested" / "01-indexes" / "indexes.md").is_file()
+    assert not (out / "00-evolution" / "00-suggested").exists()
+
+
+def test_root_relative_section_numbers_in_the_output_root_space(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3"], title="Root")
+    write(nodes, 2, section="alpha", title="Alpha")
+    write(nodes, 3, section="/evolution", title="Evolution")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1-1", out)
+    assert (out / "00-alpha" / "alpha.md").is_file()
+    assert (out / "01-evolution" / "evolution.md").is_file()
+    assert not (out / "00-alpha" / "00-evolution").exists()

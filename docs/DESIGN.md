@@ -308,7 +308,7 @@ The project keeps exactly one writable work area:
 the project root is `<dir>`, so the work area is still `<dir>/bd_work/`.
 
 ```text
-bd_work/claims/thesis-claim.md -> ../../.bd_tree/nodes/49-1.md
+bd_work/00-claims/thesis-claim.md -> ../../.bd_tree/nodes/49-1.md
 ```
 
 - Each node `.md` is a relative symlink to its node file; editing the link edits
@@ -345,10 +345,13 @@ bd_work/claims/thesis-claim.md -> ../../.bd_tree/nodes/49-1.md
   `section` is the only presentation key that creates directories:
   `section: true` names the directory by the node's placement name (explicit
   `name`, else the lowercase kebab-case `title` slug, else the ref), and
-  `section: "<dir>"` uses the string verbatim
-  and may contain `/`. A leading `/` resolves the directory from the output root
-  instead of under the parent prefix, so a containment chain can keep layers as
-  siblings. The section node's own file is
+  `section: "<dir>"` supplies the base name and may contain `/`, but only the
+  first segment is numbered. Every folder layer gets a zero-based two-digit
+  ordinal (`NN-<base>`) in containment traversal order; an authored leading
+  ordinal is stripped, and sections that strip to one base share a directory.
+  A leading `/` numbers from the output root instead of under the parent
+  directory, so a containment chain can keep layers as siblings. The section
+  node's own file is
   `<dir>/<placement-name>.md`; every containment descendant is placed at its
   normal relative path under that prefix, and nested sections stack. Otherwise a
   node is placed by explicit `name` (`<name>.md`), else

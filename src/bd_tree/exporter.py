@@ -8,6 +8,7 @@ here.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -141,37 +142,61 @@ def _with_prefix(prefix: str, path: str) -> str:
     return f"{prefix}/{path}" if prefix else path
 
 
+_ORDINAL = re.compile(r"^\d+-")
+
+
+def _numbered_section(
+    parent: str, section: str, siblings: dict[str, dict[str, int]]
+) -> str:
+    """Number a section's first segment; inner segments stay explicit subpaths.
+
+    The ordinal is the section base's first-encounter position among the distinct
+    sibling directories under ``parent`` in containment traversal order, at least
+    two digits.  A leading authored ordinal is stripped first, and sections that
+    strip to the same base share one numbered directory.
+    """
+    segments = section.split("/")
+    base = _ORDINAL.sub("", segments[0], count=1) or "section"
+    under = siblings.setdefault(parent, {})
+    if base not in under:
+        under[base] = len(under)
+    first = f"{under[base]:02d}-{base}"
+    return _with_prefix(parent, "/".join([first, *segments[1:]]))
+
+
 def _section_layout(view: View) -> tuple[dict[str, str], dict[str, str]]:
-    """Inherited section prefix and containment parent for each reachable ref.
+    """Directory holding each reachable ref's own file, and its containment parent.
 
     Mirrors :func:`bd_tree.loader.load_view`: walk declared ``contains`` from the
-    view root, restricted to the refs in ``view.nodes``.  A section node's
-    directory applies to its descendants only; relative sections stack, while a
-    leading ``/`` resolves the directory from the output root.  A ref
-    unreachable from the root gets no prefix.
+    view root, restricted to the refs in ``view.nodes``.  A non-section node sits
+    in its parent's directory.  A section node opens a numbered directory for its
+    descendants and its own file sits there; relative sections stack under the
+    parent directory, while a leading ``/`` numbers from the output root.  A ref
+    unreachable from the root gets no directory.
     """
-    prefixes: dict[str, str] = {}
+    directories: dict[str, str] = {}
     parents: dict[str, str] = {}
+    siblings: dict[str, dict[str, int]] = {}
     seen: set[str] = set()
 
-    def walk(ref: str, prefix: str, parent: str) -> None:
+    def walk(ref: str, directory: str, parent: str) -> None:
         if ref in seen or ref not in view.nodes:
             return
         seen.add(ref)
         node = view.nodes[ref]
-        section = node.section
-        base = "" if section and node.section_rooted else prefix
-        prefixes[ref] = base
+        if node.section:
+            base = "" if node.section_rooted else directory
+            directory = _numbered_section(base, node.section, siblings)
+        directories[ref] = directory
         parents[ref] = parent
-        child_prefix = _with_prefix(base, section) if section else prefix
         for child in view.store.effective_contains(ref):
-            walk(child, child_prefix, ref)
+            walk(child, directory, ref)
 
     walk(view.ref, "", "")
-    return prefixes, parents
+    return directories, parents
 
 
-def _check_section_dirs(view: View, prefixes: dict[str, str]) -> None:
+def _check_section_dirs(view: View, directories: dict[str, str]) -> None:
     """Refuse two sections that would merge their descendant subtrees.
 
     Sharing a directory is intentional when at most one node opens a subtree
@@ -185,9 +210,9 @@ def _check_section_dirs(view: View, prefixes: dict[str, str]) -> None:
     ):
         node = view.nodes[ref]
         section = node.section
-        if not section or ref not in prefixes:
+        if not section or ref not in directories:
             continue
-        directory = _with_prefix(prefixes[ref], section)
+        directory = directories[ref]
         has_children = any(
             child in view.nodes for child in view.store.effective_contains(ref)
         )
@@ -202,24 +227,23 @@ def _check_section_dirs(view: View, prefixes: dict[str, str]) -> None:
         used[directory] = (previous[0], previous[1] or has_children)
 
 
-def _default_path(node: Node, prefix: str = "") -> str:
-    """Placement under any inherited ``prefix``.
+def _default_path(node: Node, directory: str = "") -> str:
+    """Place the node's file in the directory that holds it.
 
-    A section node opens ``<prefix>/<section>/`` and its own file sits there by
-    placement name.  Every other node uses its ``name`` as the stem, else
-    ``<ref>-<title-slug>.md``, else ``<ref>.md``.  ``folder`` is ordinary front
-    matter and never affects placement.
+    A section node's stem is its placement name; the directory already carries
+    its numbered section.  Every other node sits in its inherited directory and
+    uses its ``name``, else ``<ref>-<title-slug>``, else its ref.  ``folder`` is
+    ordinary front matter and never affects placement.
     """
     if node.section:
-        parts = [part for part in (prefix, node.section, _placement_name(node)) if part]
-        return _validated_path(node, "/".join(parts) + ".md")
-    if node.name:
-        return _validated_path(node, _with_prefix(prefix, f"{node.name}.md"))
-    slug = slugify(node.title)
-    # ``Node.title`` falls back to the ref, so an equal slug is not a title.
-    if slug and slug != node.ref:
-        return _validated_path(node, _with_prefix(prefix, f"{node.ref}-{slug}.md"))
-    return _validated_path(node, _with_prefix(prefix, f"{node.ref}.md"))
+        stem = _placement_name(node)
+    elif node.name:
+        stem = node.name
+    else:
+        slug = slugify(node.title)
+        # ``Node.title`` falls back to the ref, so an equal slug is not a title.
+        stem = f"{node.ref}-{slug}" if slug and slug != node.ref else node.ref
+    return _validated_path(node, _with_prefix(directory, f"{stem}.md"))
 
 
 def _build_paths(
@@ -233,23 +257,21 @@ def _build_paths(
     used: dict[str, str] = {}
     refs = list(refs)
     graph_paths: dict[str, str] | None = None
+    directories: dict[str, str] = {}
     if template is None and view.model == "graph":
         # Imported lazily: graph.py imports this module's banner and helpers.
         from .graph import build_graph, layout_paths
 
         graph_paths = layout_paths(build_graph(view.store), refs)
-        prefixes: dict[str, str] = {}
     elif template is None:
-        prefixes, _ = _section_layout(view)
-        _check_section_dirs(view, prefixes)
-    else:
-        prefixes = {}
+        directories, _ = _section_layout(view)
+        _check_section_dirs(view, directories)
     for ref in refs:
         node = view.nodes[ref]
         if graph_paths is not None:
             path = graph_paths[ref]
         elif template is None:
-            path = _default_path(node, prefixes.get(ref, ""))
+            path = _default_path(node, directories.get(ref, ""))
         else:
             path = render_path(node, template)
         # Reserved names are refused in every directory, not only the root: a

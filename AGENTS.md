@@ -82,8 +82,11 @@ behaviour change and update the docs listed at the bottom.
   presentation fields: work and export paths use `section` to open directories,
   else `<name>.md`, else `<ref>-<title-slug>.md`, else `<ref>.md`.
   `section: true` names the directory by the node's placement name;
-  `section: "<dir>"` names it verbatim. A leading `/` makes the section
-  directory root-relative; otherwise it inherits the parent prefix. In a graph
+  `section: "<dir>"` supplies the base name. Every folder layer is numbered
+  zero-based with two digits (`NN-<base>`) in traversal order; an authored
+  leading ordinal is stripped, and only the first segment is numbered (inner
+  segments are explicit subpaths). A leading `/` numbers from the output root;
+  otherwise it numbers under the parent directory. In a graph
   store, the layout is the graph bands instead: relative mode orders them by
   `layer` path (band plus explicit subpath, with inferred nesting) and absolute
   mode by `stage`; `order` positions a node inside its band. `group` is

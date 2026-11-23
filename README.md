@@ -255,10 +255,12 @@ is not in the materialized area.
 In a containment store, `section` is the only presentation key that creates
 directories. A node with `section: true` opens a directory named by its
 placement name (explicit `name`, else the `title` slug, else the ref), and its
-containment descendants nest inside it; `section: "<dir>"` names the directory
-verbatim, slashes included.
-A leading `/` resolves the directory from the output root instead of under the
-parent prefix, so a containment chain can keep layers as siblings.
+containment descendants nest inside it; `section: "<dir>"` supplies the base
+name, slashes included. Every folder layer gets a zero-based two-digit ordinal
+(`NN-`) in containment order, so nested sections are numbered too; an authored
+leading ordinal is stripped, and only the first segment is numbered. A leading
+`/` numbers from the output root instead of under the parent directory, so a
+containment chain can keep layers as siblings.
 The section node's own file is `<dir>/<placement-name>.md`, and nested sections
 stack. Otherwise a node is placed by explicit `name` (`<name>.md`), else
 `<ref>-<title-slug>.md`, else `<ref>.md` when there is no usable title; the

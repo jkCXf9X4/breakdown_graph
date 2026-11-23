@@ -306,8 +306,11 @@ In a containment store, `section` is the only presentation key that opens
 directories: `section: true` names the directory by the node's placement name
 (explicit `name`, else the `title` slug, else the ref), and its containment
 descendants land inside; with `title: Evolution` the node becomes
-`evolution/evolution.md`. `section: "<dir>"` names the directory verbatim; a
-leading `/` resolves it from the output root instead of under the parent prefix.
+`00-evolution/evolution.md`. `section: "<dir>"` supplies the base name, but
+only the first path segment is numbered; every folder layer gets a zero-based
+two-digit ordinal (`NN-`) in containment order, and an authored leading ordinal
+is stripped. A leading `/` numbers from the output root instead of under the
+parent directory.
 Otherwise a node is placed by `name` (`<name>.md`), else `<ref>-<title-slug>.md`,
 else `<ref>.md` when there is no usable title. `--path-template` sets another
 route for the whole view.

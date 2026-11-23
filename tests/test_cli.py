@@ -20,7 +20,7 @@ def test_export_tree_writes_view_output_shape(write, tmp_path):
         == 0
     )
     assert (out / "INDEX.md").is_file()
-    assert (out / "intent" / "1-1.md").is_file()
+    assert (out / "00-intent" / "1-1.md").is_file()
 
 
 def test_versions_and_delete_cli(write, tmp_path):
@@ -365,7 +365,7 @@ def test_edit_prints_a_nested_section_path(write, tmp_path, capsys):
     capsys.readouterr()
 
     assert main(["edit", "2-1", "--root", str(tmp_path)]) == 0
-    expected = tmp_path / "bd_work" / "06-evolution" / "claims" / "idea.md"
+    expected = tmp_path / "bd_work" / "00-evolution" / "00-claims" / "idea.md"
     assert capsys.readouterr().out == f"{expected}\n"
 
 
