@@ -20,7 +20,7 @@ two views, and a second work folder is not supported. The view is always the
 full closure of one ref over the store's child relation; `REF+N` or `--depth N`
 only prunes which descendant levels are materialized (`N=0` leaves the root
 alone). In a graph store a level is a link hop and the layout is the graph bands
-(`<NN>-<slug(band)>`, relative `layer` paths with inferred nesting and explicit
+(`<NN>-<slug(band)>`, relative bands with optional subpaths, inferred nesting and explicit
 subpaths, or absolute stages); in a containment store it
 is `section`/`name` placement.
 `bd edit` honors the prefix, so a ref in the full closure but below the
@@ -34,7 +34,7 @@ path), not a file named only by the ref.
 
 ## Placement paths (containment stores)
 
-In a graph store, the derived band layout decides the path: the `layer` band,
+In a graph store, the derived band layout decides the path: the `band`,
 inferred nesting, and the explicit subpath; `section` has no effect. `group` is
 inert in every topology. In a containment store, `section` is
 the only key that opens a
@@ -96,7 +96,7 @@ Direct edits skip nothing else: the same `bd check` applies afterwards.
 ```bash
 bd work --status            # no detached files left
 bd check                    # topology-aware structure and views
-bd audit                    # graph store: layer/stage and edge audit
+bd audit                    # graph store: band/stage and edge audit
 git status --porcelain      # node files only, never bd_work/
 ```
 

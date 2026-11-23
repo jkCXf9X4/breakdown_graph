@@ -19,6 +19,7 @@ from .frontmatter import (
 from .fsutil import atomic_copy, atomic_write, publish_new, store_lock
 from .graph import (
     layer_reaches,
+    parse_band_fields,
     relative_store,
     require_layer,
     require_layer_value,
@@ -170,9 +171,9 @@ def init_store(root: str | Path = ".", *, graph: bool = False) -> Path:
     """Create the canonical project with a hidden store and return its root.
 
     The default store is containment (``contains: []``).  ``graph=True`` writes
-    a root with ``layer: root``, no ``stage``, no ``contains`` and no links,
+    a root with ``band: root``, no ``stage``, no ``contains`` and no links,
     which the topology detection reads as a relative-band graph store ready
-    for ``bd new --parent --layer``.
+    for ``bd new --parent --band``.
     """
     project = Path(root).resolve()
     hidden = project / STORE_DIR / "nodes"
@@ -185,7 +186,7 @@ def init_store(root: str | Path = ".", *, graph: bool = False) -> Path:
     hidden.mkdir(parents=True, exist_ok=True)
     target = node_path(project / STORE_DIR, 1, 1)
     if graph:
-        meta: dict[str, Any] = {"id": 1, "title": "Root", "layer": "root"}
+        meta: dict[str, Any] = {"id": 1, "title": "Root", "band": "root"}
     else:
         meta = {"id": 1, "title": "Root", "contains": []}
     target.write_text(
@@ -498,6 +499,8 @@ def new_node(
     links: list[dict[str, Any]] | None = None,
     stage: int | None = None,
     layer: str | None = None,
+    band: str | None = None,
+    subpath: str | None = None,
     order: int | None = None,
     link_type: str = "breaks_down",
 ) -> Path:
@@ -506,8 +509,9 @@ def new_node(
     Containment appends the new ref to the parent's ``contains`` list.  A graph
     store instead appends a typed edge to the parent's ``links``.  An absolute
     graph (some node declares ``stage``) sets an integer ``stage`` (parent
-    stage + 1, else 0); a relative graph (no ``stage`` anywhere) requires a
-    non-empty ``layer`` and derives the band from it.  Both set ``order`` (0).
+    stage + 1, else 0); a relative graph (no ``stage`` anywhere) requires
+    ``--band`` (with optional ``--subpath``) or the older ``--layer`` path
+    shorthand, and derives the band from it.  Both set ``order`` (0).
 
     The whole id-pick/parent-rewrite/publish sequence holds the store lock, so
     concurrent writers get distinct ids and neither loses a sibling.  Both
@@ -538,11 +542,33 @@ def new_node(
 
     if graph and relative_store(store):
         if stage is not None or "stage" in fields:
-            raise BreakdownError("stores without stage use --layer")
-        if not isinstance(layer, str) or not layer.strip():
-            raise BreakdownError("a layer-band graph needs a non-empty --layer")
-        parsed_layer = require_layer_value(layer)
-        meta["layer"] = parsed_layer.raw
+            raise BreakdownError("stores without stage use --band or --layer")
+        if layer is not None and (band is not None or subpath is not None):
+            raise BreakdownError(
+                "use either --layer or --band/--subpath, not both"
+            )
+        if "layer" in fields and (band is not None or subpath is not None):
+            raise BreakdownError(
+                "fields cannot mix 'layer' with --band/--subpath"
+            )
+        if ("band" in fields or "subpath" in fields) and layer is not None:
+            raise BreakdownError(
+                "fields cannot mix 'band'/'subpath' with --layer"
+            )
+        if layer is not None:
+            if not isinstance(layer, str) or not layer.strip():
+                raise BreakdownError("a band graph needs a non-empty --layer")
+            parsed_layer = require_layer_value(layer)
+            meta["layer"] = parsed_layer.raw
+        elif band is not None or subpath is not None:
+            parsed_layer = parse_band_fields(band, subpath)
+            meta["band"] = parsed_layer.band
+            if parsed_layer.subpath:
+                meta["subpath"] = parsed_layer.subpath
+        else:
+            raise BreakdownError(
+                "a band graph needs a non-empty --band (or --layer)"
+            )
         if order is not None:
             if isinstance(order, bool) or not isinstance(order, int):
                 raise BreakdownError(f"invalid order {order!r}")
@@ -574,6 +600,8 @@ def new_node(
                     f"'{parsed_layer.band}'"
                 )
     elif graph:
+        if band is not None or subpath is not None:
+            raise BreakdownError("stores with stage use --stage")
         if layer is not None:
             meta["layer"] = layer
         if stage is not None:

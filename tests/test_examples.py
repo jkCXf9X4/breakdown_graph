@@ -16,13 +16,27 @@ from bd_tree.graph import (
 )
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
-LAYER_PATHS = {
-    "4-1": "claims/structural",
-    "5-1": "claims/structural",
-    "6-1": "claims/structural",
-    "7-1": "claims/verification",
-    "8-1": "verification/fan-in",
-    "11-1": "verification/fan-in2",
+BANDS = {
+    "1-1": "intent",
+    "2-1": "breakdown",
+    "3-1": "breakdown",
+    "4-1": "claims",
+    "5-1": "claims",
+    "6-1": "claims",
+    "7-1": "claims",
+    "8-1": "verification",
+    "9-1": "operation",
+    "10-1": "operation",
+    "11-1": "verification",
+    "12-1": "verification",
+}
+SUBPATHS = {
+    "4-1": "structural",
+    "5-1": "structural",
+    "6-1": "structural",
+    "7-1": "verification",
+    "8-1": "fan-in",
+    "11-1": "fan-in2",
 }
 GROUPED_PATHS = {
     "02-claims/structural/4-1-two-parents-one-node.md",
@@ -58,7 +72,8 @@ def test_example_store_is_a_clean_graph():
     assert set(store.nodes) == {f"{node}-1" for node in range(1, 13)}
 
     for node in store.nodes.values():
-        assert isinstance(node.meta.get("layer"), str) and node.meta["layer"].strip()
+        assert isinstance(node.meta.get("band"), str) and node.meta["band"].strip()
+        assert "layer" not in node.meta
         assert "contains" not in node.meta
         assert "section" not in node.meta
 
@@ -85,7 +100,8 @@ def test_two_parent_node_has_two_derived_in_edges():
 def test_verification_core_is_the_band_entry_and_fanout_basis():
     graph = build_graph(EXAMPLES)
     core = graph.store.nodes["12-1"]
-    assert core.meta["layer"] == "verification"
+    assert core.meta["band"] == "verification"
+    assert "subpath" not in core.meta
     assert core.meta["order"] == 0
     assert render_out(graph, "12-1").splitlines() == [
         "12-1 -> 8-1 (breaks_down)",
@@ -151,14 +167,17 @@ def test_example_graph_export_writes_stages_and_indexes(tmp_path):
     assert "← [2-1 Structural claims]" in structural
 
 
-def test_example_nodes_declare_layer_subpaths_and_no_group():
+def test_example_nodes_declare_bands_and_subpaths_and_no_group():
     graph = build_graph(EXAMPLES)
+    bands = {ref: node.meta["band"] for ref, node in graph.store.nodes.items()}
+    assert bands == BANDS
     declared = {
-        ref: node.meta["layer"]
+        ref: node.meta["subpath"]
         for ref, node in graph.store.nodes.items()
-        if "/" in node.meta["layer"]
+        if "subpath" in node.meta
     }
-    assert declared == LAYER_PATHS
+    assert declared == SUBPATHS
+    assert all("layer" not in node.meta for node in graph.store.nodes.values())
     assert all("group" not in node.meta for node in graph.store.nodes.values())
     paths = layout_paths(graph, graph_view(graph, "1-1"))
     assert {path for path in paths.values() if path.count("/") > 1} == GROUPED_PATHS

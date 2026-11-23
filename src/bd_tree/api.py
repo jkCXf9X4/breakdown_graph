@@ -308,6 +308,8 @@ def new_node(
     links: list[dict[str, Any]] | None = None,
     stage: int | None = None,
     layer: str | None = None,
+    band: str | None = None,
+    subpath: str | None = None,
     order: int | None = None,
     link_type: str = "breaks_down",
 ) -> Path:
@@ -320,6 +322,8 @@ def new_node(
         links=links,
         stage=stage,
         layer=layer,
+        band=band,
+        subpath=subpath,
         order=order,
         link_type=link_type,
     )

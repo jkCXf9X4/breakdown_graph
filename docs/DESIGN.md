@@ -30,7 +30,7 @@ declared closure, and make stale material visible rather than silently present.
 2. **Identity is not location.** A node is a running integer; its path in a view
    is presentation metadata.
 3. **Topology is data.** A graph store declares parent→child `links`, ordered
-   into relative `layer` bands (derived) or absolute `stage` bands; a containment
+   into relative bands (derived) or absolute `stage` bands; a containment
    store declares an ordered `contains` list. Neither is
    a directory hierarchy. A view is the closure of one ref over the store's child
    relation.
@@ -93,7 +93,9 @@ Built-in keys (structural keys are reserved; presentation keys are placement onl
 | `legacy` | string | Original identifier from an imported tree |
 | `contains` | list of refs | Ordered children in a containment store |
 | `links` | list of edge objects | Semantic edges; parent→child edges in a graph store |
-| `layer` | string | Relative graph store: path `band[/subpath]`; the band order and nesting are derived |
+| `band` | string | Relative graph store: the band name; the band order and nesting are derived |
+| `subpath` | string | Relative graph store: optional explicit folder below the band folder |
+| `layer` | string | Older shorthand `band/subpath`, normalized to the two keys above |
 | `stage` | int | Absolute graph store: stage index; every edge must strictly increase it |
 | `order` | int | Graph store: node position inside its band (default `0`) |
 | `group` | string | Ordinary metadata; inert in every topology and never placement |
@@ -126,8 +128,8 @@ links:
 
 A store is a **containment store** when any node declares a `contains` key.
 Otherwise it is a **graph store** when at least one node declares `links`,
-`stage`, or a non-empty `layer`; an empty or legacy store with none of those
-keys is containment. Detection is per store, never per node. Both read the
+`stage`, or a non-empty `layer`/`band`; an empty or legacy store with none of
+those keys is containment. Detection is per store, never per node. Both read the
 same flat store and differ only in the child relation.
 
 #### Containment
@@ -168,23 +170,24 @@ and are never written to a node file.
 - Bands have two modes. When any node declares `stage` (absolute mode), every
   node needs an integer `stage`; edges must go forward:
   `stage(parent) < stage(child)`. Otherwise (relative mode, the default example)
-  every node needs a non-empty `layer` path. Its first segment is the band; the
-  rest is an explicit subpath folder. A link that crosses bands adds a band
-  edge, and the bands are topologically sorted with a deterministic
+  every node needs a non-empty `band` (or the older `layer: band/subpath`
+  shorthand) and may add a `subpath` folder. A link that crosses bands adds a
+  band edge, and the bands are topologically sorted with a deterministic
   lexicographic tie-break. The shortest-path rule then chooses top-level bands
   and nests the rest under an inferred parent folder; equal-length branches stay
   top-level. Inference is a projection convention, not a semantic proof.
   `order` (default `0`) positions nodes inside a band. A same-band edge needs
   `order(source) < order(target)`, including across subpaths; a band cycle is
-  `graph-layer-cycle`. An invalid `layer` path is `graph-layer-invalid`, a
-  missing one `graph-layer-missing`, and both modes report a non-integer
+  `graph-layer-cycle`. An invalid `band`/`subpath` or `layer` path is
+  `graph-layer-invalid`, a missing one `graph-layer-missing`, and both modes
+  report a non-integer
   `order`. A back-edge, dangling target, or cycle is an error. `group` is
   ordinary metadata in every topology: it changes no path, band, or validation.
   See [`GRAPH-LAYOUT.md`](GRAPH-LAYOUT.md) for the exact algorithm.
 - The band ordinal and folder are a projection. In relative mode `<NN>` is the
   derived top-level ordinal and inferred nesting adds directories below it, so
   inserting a band renumbers later folder paths without touching node data.
-  Missing or invalid layers still render in one trailing `unlayered` band, but
+  Missing or invalid bands still render in one trailing `unlayered` band, but
   the audit errors; that is a fallback, not a synthetic band assignment.
 - A view is the forward closure of one anchor. A node reached through several
   parents appears once, so `multiple-parents`, per-view `duplicate-id`, and
@@ -410,7 +413,8 @@ branch is checked out where; `bd work` remains the layout inside one checkout.
 ## 6. Schema-agnostic by construction
 
 Nothing in the tool knows the article's layer names; the graph's band key is
-`layer` in relative mode and `stage` in absolute mode. The only reserved
+`band` plus optional `subpath` in relative mode (`layer` is the older
+shorthand) and `stage` in absolute mode. The only reserved
 vocabulary is structural: `id`, `legacy`, `contains`,
 `links`, and the freshness keys `to`, `type`, `propagates`, `pinned`. `name`,
 `title`, and `section` are presentation fields: they change placement only,
@@ -419,7 +423,7 @@ ordinary front matter: preserved, never read, and it affects no placement,
 naming, validation, or warning.
 
 Consequences: any workflow can define fields (`phase`, `status`, `stream`); the
-graph orders bands by `layer` or `stage` and nodes by `order`; path templates
+graph orders bands by `band` or `stage` and nodes by `order`; path templates
 read any front-matter field; dot styling is chosen by arbitrary fields
 (`--color-by`, `--shape-by`); and `bd check --require FIELD` is the escape hatch
 when a project wants a schema.
@@ -434,7 +438,7 @@ when a project wants a schema.
    version and no unsuffixed file exists.
 4. **Topology as explicit ordered data.** A containment tree is an ordered
    `contains` list; a graph is forward parent→child `links` with relative
-   `layer` bands or absolute `stage` bands.
+   bands or absolute `stage` bands.
    Both survive renames of refs and can differ per view.
 5. **Views as closures, not branches.** No branch names, branch directories, or
    global selector.
@@ -516,7 +520,7 @@ These are enforced or assumed:
 2. `contains`, `links`, and `ROOT` hold full `id-version` refs; a bare id is a
    CLI selector resolved inside the selected view and is never written to data.
 3. In a containment store, `contains` order is display order; in a graph store,
-   the band (`layer` in relative mode, `stage` in absolute mode) then `order`
+   the band (`band` in relative mode, `stage` in absolute mode) then `order`
    order the layout.
 4. In a containment store, containment is a tree per view; no node is reached
    twice in one view, and one view holds at most one version per logical id

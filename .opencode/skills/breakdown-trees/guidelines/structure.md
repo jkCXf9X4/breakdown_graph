@@ -6,8 +6,8 @@ the tool cannot express the change.
 
 A store's topology is detected once: **containment** when any node declares
 `contains`; otherwise **graph** when at least one node has `links`, `stage`, or
-a non-empty `layer`. The choice is per store, never per node. `examples/` is the
-default relative-layer graph; `docs/breakdown/` is a containment store.
+a non-empty `layer`/`band`. The choice is per store, never per node. `examples/`
+is the default relative-band graph; `docs/breakdown/` is a containment store.
 
 ## Graph stores
 
@@ -16,7 +16,7 @@ parent as `parent -> child` with a full ref and a type. Out-edges are authored;
 in-edges are derived and are never rewritten.
 
 ```bash
-bd new --parent REF --type breaks_down --layer BAND[/SUB] [--order N]  # relative mode
+bd new --parent REF --type breaks_down --band BAND [--subpath SUB] [--order N]  # relative
 bd new --parent REF --type breaks_down --stage N [--order N]      # absolute mode
 bd link FROM TO --type supports
 bd unlink FROM TO [--type TYPE]
@@ -25,8 +25,9 @@ bd unlink FROM TO [--type TYPE]
 Bands have two modes, selected per store.
 
 - **Relative mode (default).** When no node declares `stage`, every node needs a
-  non-empty `layer` path; missing/empty is `graph-layer-missing` /
-  `graph-layer-invalid`, and a bad path segment is also `graph-layer-invalid`.
+  non-empty `band` (or `layer` path); missing/empty is `graph-layer-missing` /
+  `graph-layer-invalid`, and a bad `band`/`subpath` is also
+  `graph-layer-invalid`.
   The first segment is the band; later segments are explicit subfolders. Band
   order and nesting are derived from cross-band links by the shortest-path rule:
   a top-level band lies on a shortest root→sink path, every other band nests
@@ -44,13 +45,14 @@ Bands have two modes, selected per store.
   sorted by ref.
   Repoint an edge with `bd unlink` then `bd link`; do not hand-sort.
 - `group` is ordinary metadata in every topology and places nothing; the graph
-  audit warns `graph-group-ignored`. Use a layer subpath instead.
+  audit warns `graph-group-ignored`. Use `band` plus `subpath` instead.
 - A node reached through several parents appears once in a view. There is no
   `multiple-parents`, per-view `duplicate-id`, or `external-link` in a graph store.
 - `bd contain` and `bd uncontain` fail in a graph store with "graph stores use
   edges: bd link / bd unlink". Do not use them to move a graph node.
 - `bd new` adds a typed link (`--type` defaults to `breaks_down`). Relative mode
-  requires `--layer BAND[/SUB]` and refuses `--stage`; absolute mode takes
+  requires `--band` (optional `--subpath`; older `--layer BAND[/SUB]`) and
+  refuses `--stage`; absolute mode takes
   `--stage`; both take `--order`. It refuses an explicit `id`.
 - Fan-out above 200 warns; insert an intermediate header instead of hundreds of
   direct edges.
@@ -61,7 +63,7 @@ Bands have two modes, selected per store.
 and must be a tree.
 
 ```bash
-bd new --parent REF --field title=... --field layer=...   # next global id
+bd new --parent REF --field title=... --field phase=...   # next global id
 bd contain P C --before REF
 bd contain P C --after REF
 bd uncontain P C

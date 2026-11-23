@@ -15,8 +15,9 @@ bd --help
 
 The repository ships `examples/` as the default store (`ROOT` `1-1`). It is a
 graph: no node declares `contains` and every node declares `links`. No node
-declares `stage` either, so it is a **relative-layer** graph: each node names a
-`layer` path, and the band order and nesting are derived from cross-band links.
+declares `stage` either, so it is a **relative-band** graph: each node names a
+`band` plus an optional `subpath`, and the band order and nesting are derived
+from cross-band links.
 
 ```sh
 export BD_ROOT=examples
@@ -41,7 +42,7 @@ A node file looks like this:
 ---
 id: 1
 title: Verify the staged graph
-layer: intent
+band: intent
 links:
   - to: 2-1
     type: breaks_down
@@ -53,21 +54,21 @@ links:
 
 The filename is identity and version: logical id `1`, version `1`. The rest of
 the front matter is arbitrary. `links` declares parent→child edges as full
-`id-version` refs; `layer` is a path, and its first segment is the band. The
-edges order the bands `intent` → `breakdown` → `claims` → `verification` →
-`operation`; leftover path segments are explicit subfolders such as
-`claims/structural`.
+`id-version` refs; `band` names the rank and an optional `subpath` names a
+folder below it (`layer: band/subpath` is the older shorthand). The edges order
+the bands `intent` → `breakdown` → `claims` → `verification` → `operation`; a
+`subpath` such as `structural` adds an explicit folder below its band.
 
 A store's topology is detected once, per store:
 
 - **Containment** — any store with a `contains` key, including an empty or
   legacy store. `contains` is the ordered child relation.
 - **Graph** — no `contains`, and at least one node has `links`, `stage`, or a
-  non-empty `layer`. Bands are relative `layer` paths when no node declares
-  `stage`; absolute integer `stage`s otherwise (older stores).
+  non-empty `layer`/`band`. Bands are relative `band` plus `subpath` values when
+  no node declares `stage`; absolute integer `stage`s otherwise (older stores).
 
 Both topologies read the same flat node files. `docs/breakdown/` is a live
-containment store; `examples/` is the relative-layer graph. `bd init` creates a
+containment store; `examples/` is the relative-band graph. `bd init` creates a
 containment root (`contains: []`); `bd init --graph` creates a relative-band
 graph root.
 
@@ -114,9 +115,8 @@ bd check
 The graph audit checks the rules that make the forward graph meaningful. In
 relative mode:
 
-- every node has a non-empty `layer` path;
-- the first path segment is the band, and later segments are explicit
-  subfolders;
+- every node has a non-empty `band` (or `layer` shorthand);
+- `subpath` adds an explicit folder below that band;
 - links that cross bands order those bands; a band cycle is
   `graph-layer-cycle`;
 - the shortest-path rule chooses which bands are top-level and nests detours
@@ -139,20 +139,21 @@ is containment", so use `bd check` there.
 Absolute stage mode is the older alternative, not a requirement. If any node
 declares `stage`, the bands are integer stages: every node needs an integer
 `stage`, and every edge must satisfy `stage(parent) < stage(child)`. The modes
-are selected per store; do not mix them. A new graph uses `layer`
+are selected per store; do not mix them. A new graph uses `band`/`subpath`
 (`bd init --graph`).
 
 In a graph store, structure is edited with links:
 
 ```sh
-bd new --parent 1-1 --type breaks_down --layer claims/structural --order 0
+bd new --parent 1-1 --type breaks_down --band claims --subpath structural --order 0
 bd link 2-1 8-1 --type supports
 bd unlink 2-1 8-1 --type supports
 ```
 
 `bd new` allocates the next global id at version 1 and adds a typed link to the
 parent; `--type` defaults to `breaks_down` in a graph store. In relative mode
-`--layer` is required and takes `BAND[/SUB]`; `--stage` is refused. In absolute
+`--band` is required and `--subpath` is optional (`--layer BAND[/SUB]` is the
+older shorthand); `--stage` is refused. In absolute
 mode use `--stage`; both take `--order`. `bd link` refuses a back-edge or a band
 cycle and keeps each target list sorted by ref. `bd contain` and
 `bd uncontain` are containment commands; in a graph store they fail with "graph
@@ -171,7 +172,7 @@ ls "$work_dir"
 ```
 
 In a graph store the layout is the derived band layout, `<NN>-<slug(band)>`,
-plus any inferred nested band folder and explicit layer subpath. In relative
+plus any inferred nested band folder and explicit `subpath`. In relative
 mode the label is the band name and `<NN>` is the derived top-level ordinal:
 
 ```
@@ -183,7 +184,7 @@ INDEX.md  AGENTS.md  REFS.md
 Inserting a band before others renumbers the later top-level directory prefixes
 on the next build; no node is renumbered. A detour band can nest under a parent
 band instead of getting its own prefix. In absolute mode the label is the
-dominant `layer` in that stage, and `<NN>` is the stage.
+dominant band/layer label in that stage, and `<NN>` is the stage.
 
 Only the node `.md` files are symlinks; `INDEX.md`, `AGENTS.md`, and `REFS.md`
 are regular generated files. Each `INDEX.md` carries a `nodes:` front-matter
@@ -269,8 +270,8 @@ contains: []
 Add two nodes and inspect the tree:
 
 ```sh
-bd new --parent 1-1 --field title="Why does this exist?" --field layer=intent
-bd new --parent 1-1 --field title="What is true?"       --field layer=claims
+bd new --parent 1-1 --field title="Why does this exist?" --field phase=intent
+bd new --parent 1-1 --field title="What is true?"       --field phase=claims
 bd tree 1-1
 ```
 
@@ -479,9 +480,10 @@ There is no generic importer yet. The pattern is:
 2. `id` matches the logical id in the filename.
 3. Pick one topology per store:
    - **Graph (relative, the default):** no `contains` anywhere; a non-empty
-     `layer` path on every node; `links` lists parent→child edges as full refs,
+     `band` on every node with an optional `subpath` (`layer: band/subpath` is
+     the older shorthand); `links` lists parent→child edges as full refs,
      sorted; the cross-band edges derive the band order and nesting.
-     `bd init --graph` writes a root with `layer: root`.
+     `bd init --graph` writes a root with `band: root`.
    - **Graph (absolute, older stores):** no `contains` anywhere; integer `stage`
      on every node; `links` sorted and strictly increasing by `stage`.
    - **Containment:** `contains` lists ordered children as full `id-version`
@@ -489,12 +491,13 @@ There is no generic importer yet. The pattern is:
 4. `links` holds typed edges with full refs in both topologies; prose citations
    are separate.
 5. `--path-template` and presentation fields apply to a containment store; a
-   graph store uses its derived band plan (path layers with inference, or
-   absolute stages).
+   graph store uses its derived band plan (bands with subpaths and inference,
+   or absolute stages).
 
 `examples/` is the default worked project: a graph store under
 `examples/.bd_tree/` with one file per node version, declared `links`, a
-relative `layer` path per node, no `stage`, no `group`, and no `contains`. For a
+relative `band` plus optional `subpath` per node, no `stage`, no `group`, and
+no `contains`. For a
 live containment tree with ordered `contains` and root-relative `section` keys,
 use the product breakdown store: `bd --root docs/breakdown check` and
 `bd --root docs/breakdown tree 1-1 --depth 1`.
@@ -508,10 +511,10 @@ use the product breakdown store: `bd --root docs/breakdown check` and
 | `root-ref-missing` / `invalid-root` | The `ROOT` file names an absent ref or is malformed. Fix it, or run `bd root --clear`. |
 | `bare-ref` / `invalid-ref` in data | `contains`, `links`, and `ROOT` need full `id-version` refs. Convert a classic bare-file store once with `bd migrate`. |
 | `duplicate-id` | A containment view holds two versions of the same logical id. `bd uncontain` the unwanted one. |
-| `graph-layer-missing` / `graph-layer-invalid` | Relative mode: a graph node lacks a valid `layer` path. Add or fix it; later segments are explicit subfolders. |
+| `graph-layer-missing` / `graph-layer-invalid` | Relative mode: a graph node lacks a valid `band`/`subpath` (or `layer` path). Add or fix it; `subpath` adds an explicit folder. |
 | `graph-layer-cycle` / `graph-order-back-edge` | Relative mode: cross-band edges loop, or a same-band edge is not forward by `order` (including across subpaths). Repoint the edge or adjust `order`. |
 | `graph-stage-missing` / `graph-back-edge` | Absolute mode: a graph node lacks an integer `stage`, or an edge does not move forward. Fix the field or repoint the edge. |
-| `graph-group-ignored` | Warning: `group` places nothing. Replace it with `layer: band/sub`. |
+| `graph-group-ignored` | Warning: `group` places nothing. Replace it with `band` plus `subpath`. |
 | `graph-orphan` | A non-anchor root has no incoming link. Make it the anchor or link it into the graph. |
 | `bd contain` says graph stores use edges | The store is a graph. Use `bd link` / `bd unlink`. |
 | `bd work` refuses to switch | `bd_work/` has detached or stray files. Run `--status`, then `--writeback` to keep them or `--clean` to discard them. |

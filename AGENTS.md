@@ -22,7 +22,7 @@ this file is the short operating protocol.
    ```
 
 3. See the shape: `bd check`, `bd tree 1-1`, `bd graph`, `bd out 1-1`,
-   `bd in 4-1`. The default example is a relative-layer graph of twelve nodes
+   `bd in 4-1`. The default example is a relative-band graph of twelve nodes
    (`1-1`..`12-1`); run the commands in `examples/README.md`.
 4. For a solution: `bd solution new NAME`, `cd` into the printed worktree
    project directory, then `bd work` with the printed default-view ref.
@@ -55,7 +55,7 @@ behaviour change and update the docs listed at the bottom.
   it is never written to data.
 - Topology is detected per store: containment when any node declares
   `contains`; otherwise graph when any node has `links`, `stage`, or a non-empty
-  `layer`. A view is the closure of one ref over that store's child relation.
+  `layer`/`band`. A view is the closure of one ref over that store's child relation.
 - In a containment store, `contains` is an ordered tree per view, and one view
   holds at most one version per logical id (`duplicate-id`); the chain selects
   what is current. `links` is a DAG and never adds nodes to a view; it keeps an
@@ -69,15 +69,17 @@ behaviour change and update the docs listed at the bottom.
   Bands have two modes. When any node declares `stage` (absolute mode), edges go
   forward (`stage(parent) < stage(child)`); `order` breaks ties inside a stage.
   Otherwise (relative mode, the default example) every node needs a non-empty
-  `layer` path: the first segment is the band, later segments are an explicit
-  subpath. Band order and nesting come from cross-band edges by the
+  `band` (or the older `layer: band/subpath` shorthand), and an optional
+  `subpath` names an explicit folder below the band. Band order and nesting
+  come from cross-band edges by the
   shortest-path rule (equal-length branches stay top-level), and `order`
   positions nodes inside a band, where a same-band edge needs
   `order(source) < order(target)`, including across subpaths. See
   [`docs/GRAPH-LAYOUT.md`](docs/GRAPH-LAYOUT.md).
 - Front matter is arbitrary; only the identity/containment/link/freshness keys
   (`id`, `legacy`, `contains`, `links`, `to`, `type`, `propagates`, `pinned`)
-  and the graph band keys (`layer`, `stage`, `order`, `group`) are reserved. In
+  and the graph band keys (`layer`, `band`, `subpath`, `stage`, `order`,
+  `group`) are reserved. In
   a containment store, `section`, `name`, and `title` are
   presentation fields: work and export paths use `section` to open directories,
   else `<name>.md`, else `<ref>-<title-slug>.md`, else `<ref>.md`.
@@ -88,7 +90,7 @@ behaviour change and update the docs listed at the bottom.
   segments are explicit subpaths). A leading `/` numbers from the output root;
   otherwise it numbers under the parent directory. In a graph
   store, the layout is the graph bands instead: relative mode orders them by
-  `layer` path (band plus explicit subpath, with inferred nesting) and absolute
+  `band` and optional `subpath` (with inferred nesting) and absolute
   mode by `stage`; `order` positions a node inside its band. `group` is
   ordinary metadata in every topology: it places nothing and the graph audit
   warns `graph-group-ignored`. Presentation only: it changes no identity or
@@ -164,9 +166,9 @@ behaviour change and update the docs listed at the bottom.
 | Task | Command |
 | --- | --- |
 | New store | `bd init DIR` (containment root; `bd init --graph DIR` writes a relative-band root) |
-| Add a node (graph, relative) | `bd new --parent REF --type breaks_down --layer NAME [--order N]` |
+| Add a node (graph, relative) | `bd new --parent REF --type breaks_down --band NAME [--subpath SUB] [--order N]` |
 | Add a node (graph, absolute) | `bd new --parent REF --type breaks_down --stage N [--order N]` |
-| Add a node (containment) | `bd new --parent REF --field title=... --field layer=...` |
+| Add a node (containment) | `bd new --parent REF --field title=... --field phase=...` |
 | Move a child (containment) | `bd uncontain P C` then `bd contain P C --before REF` |
 | Clone and replace a node | `bd clone OLD` then `bd replace OLD NEW` |
 | Replace a version in place | `bd replace OLD NEW` |
@@ -210,7 +212,7 @@ bd export tree 1-1 --out /tmp/bd-tree
 bd export graph --view 1-1 --out /tmp/bd-graph
 
 # graph structural edits (substitute real refs)
-bd new --parent 1-1 --type breaks_down --layer claims --order 0
+bd new --parent 1-1 --type breaks_down --band claims --order 0
 bd link FROM TO --type supports   # refuses a back-edge or layer cycle, sorts targets
 bd unlink FROM TO
 
@@ -254,7 +256,7 @@ views, or generated output.
 - [`docs/GRAPH.md`](docs/GRAPH.md) — the graph topology: forward links, relative
   layer bands and absolute stages, audit and export, and how graph commands
   dispatch.
-- [`docs/GRAPH-LAYOUT.md`](docs/GRAPH-LAYOUT.md) — the layer-path layout
+- [`docs/GRAPH-LAYOUT.md`](docs/GRAPH-LAYOUT.md) — the band/subpath layout
   algorithm: band inference, nesting, tie-breaks, diagnostics, worked examples,
   command map, and test map.
 - [`docs/breakdown/`](docs/breakdown/) — product breakdown as a second `bd`

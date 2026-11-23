@@ -34,7 +34,7 @@ run from the repo root with `PYTHONPATH=src python3 -m bd_tree`.
 - `Store` is the full index: ref → node, all files, all edges, all issues.
   `Store.model` is `"graph"` or `"containment"`, detected once per store:
   containment when any node declares `contains`; otherwise graph when any node
-  has `links`, `stage`, or a non-empty `layer`.
+  has `links`, `stage`, or a non-empty `layer`/`band`.
 - `Store.children(ref)` and `Store.parents(ref)` are the topology seam:
   `effective_contains` in a containment store, forward `links` in a graph store.
   `Store.topology_roots()` returns containment roots or graph roots.
@@ -57,7 +57,7 @@ CLI selector resolved inside the selected view (`current_ref(view, id)`).
 | --- | --- |
 | `loader.py` | Filename grammar, store scan, `ROOT`, topology view resolution (`_load_graph_view`), `current_ref`, citation edges |
 | `model.py` | `Node`, `Store` (`model`, `children`, `parents`, `topology_roots`), `View`, `Edge`, `Issue`, `Link` |
-| `graph.py` | Graph adjacency, band layout (`Graph.relative`, `band`, `band_label`), layer-order derivation, graph audit and export |
+| `graph.py` | Graph adjacency, band layout (`Graph.relative`, `band`, `band_label`), band-order derivation, graph audit and export |
 | `frontmatter.py` | Parse and rewrite front matter; body bytes are never re-serialised |
 | `checker.py` | Structural checks; dispatches to the graph audit or containment checks, `--require`, size limits |
 | `freshness.py` | Pins, stale edges, reconcile |
@@ -158,7 +158,7 @@ relation behind `Store.children` / `Store.parents`:
    cycle, or a same-band order back-edge, and keep
    targets sorted.
 7. Test both topologies and both graph modes: the same temporary store shape,
-   one with `contains`, one with `links` and relative `layer`s, one with `links`
+   one with `contains`, one with `links` and relative `band`s, one with `links`
    and `stage`.
 
 ## Add an exporter
@@ -189,9 +189,9 @@ Rules:
   otherwise explicit `name` (`<name>.md`), then `<ref>-<title-slug>.md`, then
   `<ref>.md` when there is no usable title. `--path-template` opts out of
   section inheritance. In a graph store, place through the plan: a top-level
-  band is `<NN>-<slug(band)>`, inferred nested bands and explicit layer
+  band is `<NN>-<slug(band)>`, inferred nested bands and explicit `subpath`
   subpaths are appended by `graph.folders`, and `group` is inert. In absolute
-  mode `<NN>` is the stage and the label is the dominant layer. `folder` is not
+  mode `<NN>` is the stage and the label is the dominant band/layer label. `folder` is not
   read.
 - In a path template, `{name}`/`{slug}` is the explicit `name`, else the title
   slug, else the ref.
@@ -235,13 +235,14 @@ python3 -m pytest -q
 - Use `tmp_path` and real files. Do not mock the loader.
 - `test_examples.py` runs the graph example at `examples/` (store under
   `.bd_tree/`) through `bd audit`, graph traversal, and graph export, asserting
-  twelve nodes, relative `layer`s and no `stage`, and no `contains`/`section`.
+  twelve nodes, relative `band`/`subpath` values and no `stage`, and no
+  `contains`/`section`.
 - `test_topology.py` covers detection, `children`/`parents`, forward closure, a
   multi-parent node appearing once, band layout, graph audit codes, and graph
   structural edits. `test_layers.py` covers the relative plan: derived band
   order, `graph-layer-missing`/`graph-layer-invalid`, `graph-layer-cycle`,
   `graph-order-back-edge`, and the `unlayered` rendering fallback.
-  `test_layer_paths.py` covers the layout seam: path parsing, the shortest-path
+  `test_layer_paths.py` covers the layout seam: band/subpath parsing, the shortest-path
   top-level rule, inferred nesting, explicit subpaths, disconnected and cyclic
   fallbacks, `group` inertness, absolute mode, and materialization through
   `bd work`/`bd edit`/exports. Keep its worked examples in step with
@@ -320,7 +321,7 @@ Common mistakes:
    >= 1; a bare `<id>.md` is invalid.
 3. In a containment store, `contains` is an ordered tree per view and `links`
    is a DAG. In a graph store, `links` is the child relation: ordered by a
-   relative `layer` path band (derived from cross-band edges) or an absolute
+   relative band (derived from cross-band edges) or an absolute
    `stage`, sorted, with derived in-edges.
 4. Data refs are full `id-version`; a bare id is a CLI selector only.
 5. Arbitrary front matter survives edits and exports.
@@ -356,7 +357,7 @@ The repo is documentation-driven. When behaviour changes:
 - `docs/DESIGN.md` — model, decisions, invariants.
 - `docs/GRAPH.md` — graph topology, relative and absolute bands, audit, export,
   and dispatch.
-- `docs/GRAPH-LAYOUT.md` — the layer-path layout algorithm, tie-breaks, worked
+- `docs/GRAPH-LAYOUT.md` — the band/subpath layout algorithm, tie-breaks, worked
   examples, diagnostics, command map, and test map.
 - `docs/BRANCHES-AND-VERSIONS.md` — branch/version separation contract.
 - `AGENTS.md` — operating rules for agents.

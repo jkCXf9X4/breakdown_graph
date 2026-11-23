@@ -3,7 +3,8 @@ name: breakdown-trees
 description: >
   Use when working in a `bd` breakdown store — locating the store (`.bd_root`,
   `BD_ROOT`, `--root`), detecting its topology (graph from forward `links` with
-  relative `layer` or absolute `stage` bands, or containment from `contains`),
+  relative `band`/`subpath` or absolute `stage` bands, or containment from
+  `contains`),
   browsing one view, editing nodes
   through the single `bd_work/` area, restructuring a graph with
   `link`/`unlink` or a containment tree with `contain`/`uncontain`, adding typed
@@ -11,8 +12,8 @@ description: >
   worktrees, or validating with `bd check`, `bd audit`, `bd stale`, and
   `reconcile`. Covers the filesystem model (flat `nodes/` or
   `.bd_tree/nodes/`, filename as identity and version), full-ref data, bare ids
-  as selectors, view resolution and `ROOT`, graph `layer` paths with
-  shortest-path band inference and `group` inert, the work-area
+  as selectors, view resolution and `ROOT`, graph `band` and optional
+  `subpath` with shortest-path band inference and `group` inert, the work-area
   symlink contract and `+N`/`--depth` materialization, containment section
   placement (root-relative and nested), issue codes, and the browse → edit →
   validate loop with exact `bd` commands. The layout algorithm lives in
@@ -29,8 +30,8 @@ disposable. One store per checkout; a git worktree has its own store.
 
 A store is a **containment store** when any node declares `contains`; otherwise
 it is a **graph store** when at least one node declares `links`, `stage`, or a
-non-empty `layer` (an empty or legacy store is containment). Detection is per
-store, never per node. The default example `examples/` is a relative-layer
+non-empty `layer`/`band` (an empty or legacy store is containment). Detection is
+per store, never per node. The default example `examples/` is a relative-band
 graph; `docs/breakdown/` is a containment store.
 
 This skill is the mechanism: how to find the store, detect its topology, read
@@ -50,7 +51,7 @@ node should say.
   written to data.
 - **Topology is detected per store** — containment when any node declares
   `contains`; otherwise graph when at least one node has `links`, `stage`, or a
-  non-empty `layer`. A view is the
+  non-empty `layer`/`band`. A view is the
   closure of one ref over that store's child relation.
 - **A containment store** — `contains` is an ordered list; order is data, and a
   view is the closure of one ref where a node may appear only once. A node
@@ -68,19 +69,19 @@ node should say.
   node needs an integer `stage`, edges must go forward
   (`stage(parent) < stage(child)`), and `order` breaks ties inside a stage.
   Otherwise (relative mode, the default example) every node needs a non-empty
-  `layer` path: the first segment is the band, later segments are an explicit
-  subpath. The band order and nesting are derived from cross-band edges by the
-  shortest-path rule — a top-level band lies on a shortest root→sink path;
-  every other band nests under its deepest already-placed parent, ties by name
-  — and `order` positions nodes inside a band, where a same-band edge needs
-  `order(source) < order(target)`, including across subpaths. Keep `links`
-  sorted; `bd link` refuses a back-edge, a band cycle, or
-  a same-band order back-edge, and sorts targets. A view warns
+  `band` (or the older `layer: band/subpath` shorthand), plus an optional
+  `subpath` folder. The band order and nesting are derived from cross-band
+  edges by the shortest-path rule — a top-level band lies on a shortest
+  root→sink path; every other band nests under its deepest already-placed
+  parent, ties by name — and `order` positions nodes inside a band, where a
+  same-band edge needs `order(source) < order(target)`, including across
+  subpaths. Keep `links` sorted; `bd link` refuses a back-edge, a band cycle,
+  or a same-band order back-edge, and sorts targets. A view warns
   (`graph-duplicate-version`) when two versions of one id are reachable. See
   `docs/GRAPH-LAYOUT.md` for the algorithm and diagnostics.
 - **Front matter is arbitrary** — the only built-in keys are structural (`id`,
-  `legacy`, `contains`, `links`), graph band/ordering (`layer`, `stage`,
-  `order`, `group`), link
+  `legacy`, `contains`, `links`), graph band/ordering (`band`, `subpath`,
+  `layer`, `stage`, `order`, `group`), link
   freshness (`to`, `type`, `propagates`, `pinned`), and containment presentation
   (`section`, `name`, `title`). Everything else is yours; add no schema unless
   the project asks for one. In a containment store, `section` is the only key
@@ -90,7 +91,7 @@ node should say.
   share a directory unless both have containment children there. Otherwise
   placement is `name`, else `<ref>-<title-slug>.md`, else `<ref>.md` when the
   title is unusable. A graph store uses the derived band layout instead: the
-  layer path's band plus inferred nesting and explicit subpaths. `group` is
+  band plus optional subpath, with inferred nesting. `group` is
   ordinary metadata in every topology and places nothing; the graph audit warns
   `graph-group-ignored`. `folder` is
   inert ordinary front matter; `home` means nothing.
@@ -103,8 +104,8 @@ node should say.
 a time. `bd work REF` replaces its contents: node `.md` files become symlinks
 into the store, while `INDEX.md`, `AGENTS.md`, `REFS.md` are generated regular
 files. With no REF, `bd work` uses the default view. In a graph store the
-layout is the graph bands `<NN>-<slug(band)>` (relative `layer` paths with
-inferred nesting and explicit subpaths, or absolute stages);
+layout is the graph bands `<NN>-<slug(band)>` (relative bands with optional
+subpaths and inferred nesting, or absolute stages);
 in a containment store it is
 `section`/`name` placement. `bd work REF+N` (or `--depth N`) materializes only
 the first N descendant levels; a graph level is a link hop. The view is still
@@ -166,7 +167,8 @@ through a branch name.
    downward scan to depth 3 for a unique store. Several stores below the cwd is
    refused; a `.bd_root` file holds one store path.
 2. Detect the topology (`Store.model`, visible in `bd tree`/`bd views` output):
-   graph uses forward `links` with relative `layer` or absolute `stage` bands;
+   graph uses forward `links` with relative `band`/`subpath` or absolute `stage`
+   bands;
    containment uses `contains`.
 3. Baseline: `bd check` (topology-aware), `bd audit` in a graph store, and
    `bd stale` — know what was already broken.
@@ -179,8 +181,8 @@ through a branch name.
 ```bash
 export BD_ROOT=path/to/project       # or: bd <cmd> --root path/to/project
 bd check                             # topology-aware; exit 0 = no errors
-bd audit                             # graph store: layer/stage and edge audit
-bd tree --depth 1                    # graph: layer/stage bands; containment: outline
+bd audit                             # graph store: band/stage and edge audit
+bd tree --depth 1                    # graph: band/stage bands; containment: outline
 bd graph                             # graph: forward render with in/out edges
 bd out REF && bd in REF              # graph: authored out / derived in
 bd show 5-1+2 --max-chars 800        # node plus 2 descendant levels (graph: hops)
@@ -194,7 +196,7 @@ bd work REF --depth 2                # equivalent explicit form
 $EDITOR "$(bd edit REF)"             # edit the store file through the symlink
 
 # graph store: links are the child relation
-bd new --parent REF --type breaks_down --layer BAND[/SUB] --order N   # relative mode
+bd new --parent REF --type breaks_down --band BAND [--subpath SUB] --order N  # relative mode
 bd new --parent REF --type breaks_down --stage N --order N     # absolute mode
 bd link FROM TO --type supports      # refuses a back-edge or band cycle, sorts targets
 bd unlink FROM TO

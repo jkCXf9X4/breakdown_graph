@@ -84,7 +84,7 @@ def test_init_prints_next_steps(tmp_path, capsys):
     assert (
         "next:\n"
         f"  cd {root}\n"
-        '  bd new --parent 1-1 --field title="First claim" --field layer=claims\n'
+        '  bd new --parent 1-1 --field title="First claim" --band claims\n'
         "  bd tree 1-1\n"
         "  bd work 1-1\n"
     ) in out
@@ -119,7 +119,7 @@ def test_init_graph_cli_creates_a_staged_root_end_to_end(tmp_path, capsys):
     meta = parse_document(
         (project / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")
     ).meta
-    assert meta == {"id": 1, "title": "Root", "layer": "root"}
+    assert meta == {"id": 1, "title": "Root", "band": "root"}
     assert api.load(project).model == "graph"
 
     assert main(["graph", "--root", str(project)]) == 0
@@ -131,7 +131,7 @@ def test_init_graph_cli_creates_a_staged_root_end_to_end(tmp_path, capsys):
     assert result.nodes_scanned == 1
 
     assert main(
-        ["new", "--parent", "1-1", "--layer", "next", "--field", "title=X", "--root", str(project)]
+        ["new", "--parent", "1-1", "--band", "next", "--field", "title=X", "--root", str(project)]
     ) == 0
     links = parse_document(
         (project / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")

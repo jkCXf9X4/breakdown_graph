@@ -72,7 +72,7 @@ def write_node(
         "summary": fields.pop("summary", "summary"),
     }
     data.update(fields)
-    if isinstance(data.get("layer"), str):
+    if isinstance(data.get("layer"), str) or isinstance(data.get("band"), str):
         data.setdefault("name", ref)
     if meta:
         data.update(meta)

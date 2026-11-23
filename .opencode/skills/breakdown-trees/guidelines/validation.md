@@ -9,7 +9,7 @@ targets.
 It dispatches on the store's topology. A containment store validates filenames,
 front matter, `contains`, `links`, reachability, tree shape for every
 node-rooted view, pins, and size. A graph store runs the graph audit: its band
-mode (relative `layer` or absolute `stage`), forward edges, cycles, dangling
+mode (relative `band`/`subpath` or absolute `stage`), forward edges, cycles, dangling
 links, fan-out, sorted links, duplicate
 versions. Containment section placement is not checked here; collisions
 surface when a work area or export is built.
@@ -70,8 +70,8 @@ Relative mode (no node declares `stage`):
 
 | Code | Meaning |
 |---|---|
-| `graph-layer-missing` | The node has no `layer` |
-| `graph-layer-invalid` | `layer` is not a valid path: wrong type, empty, or a bad segment |
+| `graph-layer-missing` | The node has no `band` or `layer` |
+| `graph-layer-invalid` | Invalid `band`, `subpath`, or `layer`, a `subpath` without `band`, or both forms at once |
 | `graph-layer-cycle` | Cross-band edges form a cycle; the bands are reported |
 | `graph-order-back-edge` | A same-band edge has `order(source) >= order(target)`, including across subpaths |
 
@@ -151,7 +151,7 @@ a missing body there is a freshness signal, not a bug.
 
 ```bash
 bd check                    # must be exit 0; topology-aware
-bd audit                    # graph store: layer/stage and edge audit
+bd audit                    # graph store: band/stage and edge audit
 bd stale                    # explain or reconcile every row
 bd work --status            # no detached files (when an area is active)
 git status --porcelain      # node files only

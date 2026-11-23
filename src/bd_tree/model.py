@@ -189,19 +189,21 @@ class Store:
         """Topology family of this store: ``"graph"`` or ``"containment"``.
 
         A graph store is one where no node declares a ``contains`` key and at
-        least one node has a non-empty ``links`` list, declares ``stage``, or
-        declares a non-empty ``layer``.  The ``stage`` and ``layer`` clauses
-        let a fresh graph store exist before it has any edge.  Everything else
-        — an empty store, a legacy store with none of those keys, or any store
-        with a containment list — is containment.  The choice is per store,
-        never per node.
+        least one node has a non-empty ``links`` list, declares ``stage``,
+        declares a non-empty ``layer``, or declares ``band``/``subpath``.  The
+        band clauses let a fresh graph store exist before it has any edge.
+        Everything else — an empty store, a legacy store with none of those
+        keys, or any store with a containment list — is containment.  The
+        choice is per store, never per node.
         """
         if any("contains" in node.meta for node in self.nodes.values()):
             return "containment"
 
         def layered(node: Node) -> bool:
             value = node.meta.get("layer")
-            return isinstance(value, str) and bool(value.strip())
+            if isinstance(value, str) and bool(value.strip()):
+                return True
+            return "band" in node.meta or "subpath" in node.meta
 
         if any(
             node.links or "stage" in node.meta or layered(node)

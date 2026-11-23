@@ -10,9 +10,9 @@ computed from those declarations and are reported as derived.
 Two band modes exist per store.  If any node declares ``stage``, bands are the
 absolute integer stages and ``order`` is the within-stage tie-break.  If no
 node declares ``stage``, bands are relative: every node needs a non-empty
-``layer``, the band order is derived from cross-layer edges, and ``order``
-positions nodes inside a band.  A bare CLI id selects the highest existing
-version; a full ref is used verbatim.
+``band`` (or the older ``layer: band/subpath`` shorthand), the band order is
+derived from cross-band edges, and ``order`` positions nodes inside a band.  A
+bare CLI id selects the highest existing version; a full ref is used verbatim.
 """
 
 from __future__ import annotations
@@ -97,7 +97,8 @@ def group(node: Node) -> str:
     """The node's optional ``group`` as ordinary metadata, never placement.
 
     ``group`` is inert in every topology: it changes no path, no band, and no
-    validation.  Use ``layer: <band>/<subpath>`` for graph placement.
+    validation.  Use ``band`` plus ``subpath`` (or the older
+    ``layer: <band>/<subpath>``) for graph placement.
     """
     value = node.meta.get("group")
     return value if isinstance(value, str) else ""
@@ -105,7 +106,7 @@ def group(node: Node) -> str:
 
 @dataclass(frozen=True)
 class LayerPath:
-    """A parsed layer: its first segment (``band``) and the rest (``subpath``)."""
+    """A parsed band: its ``band`` name and optional ``subpath`` placement."""
 
     raw: str
     band: str
@@ -130,14 +131,77 @@ def _layer_problem(value: object) -> str | None:
     return None
 
 
+def _band_problem(value: object) -> str | None:
+    """Why ``value`` is not a safe band name, or ``None`` when it is one."""
+    if isinstance(value, str) and "/" in value:
+        return "must be a single band name, not a path"
+    return _layer_problem(value)
+
+
 def parse_layer(value: object) -> LayerPath | None:
-    """Parse a valid layer value; an invalid or absent value yields ``None``."""
+    """Parse a valid ``layer: band/subpath`` value; invalid/absent yields None."""
     if _layer_problem(value):
         return None
     assert isinstance(value, str)
     text = value.strip()
     band, _, subpath = text.partition("/")
     return LayerPath(text, band, subpath)
+
+
+def parse_band_fields(band: object, subpath: object = None) -> LayerPath:
+    """Validate and parse explicit ``band`` plus optional ``subpath`` values."""
+    problem = _band_problem(band)
+    if problem:
+        raise BreakdownError(f"graph-layer-invalid: band {band!r}: {problem}")
+    assert isinstance(band, str)
+    band = band.strip()
+    sub = ""
+    if subpath is not None and not (
+        isinstance(subpath, str) and not subpath.strip()
+    ):
+        problem = _layer_problem(subpath)
+        if problem:
+            raise BreakdownError(
+                f"graph-layer-invalid: subpath {subpath!r}: {problem}"
+            )
+        assert isinstance(subpath, str)
+        sub = subpath.strip()
+    raw = f"{band}/{sub}" if sub else band
+    return LayerPath(raw, band, sub)
+
+
+def _band_fields(node: Node) -> LayerPath | None:
+    """The normalized path from ``band``/``subpath``, or None when absent.
+
+    None also covers a malformed pair; :func:`layer_path` reports the reason.
+    An empty ``subpath`` counts as absent.
+    """
+    meta = node.meta
+    if "band" not in meta:
+        return None
+    try:
+        return parse_band_fields(meta.get("band"), meta.get("subpath"))
+    except BreakdownError:
+        return None
+
+
+def node_layer_path(node: Node) -> LayerPath | None:
+    """Normalize ``layer`` or ``band``/``subpath`` to one path; None if absent.
+
+    A malformed value, a pair missing ``band``, or a node declaring both
+    forms also yields None; the audit reports the reason.
+    """
+    meta = node.meta
+    if "layer" in meta and ("band" in meta or "subpath" in meta):
+        return None
+    if "band" in meta:
+        return _band_fields(node)
+    if "subpath" in meta or "layer" not in meta:
+        return None
+    value = meta.get("layer")
+    if _layer_problem(value):
+        return None
+    return parse_layer(value)
 
 
 def require_layer_value(value: object) -> LayerPath:
@@ -153,21 +217,69 @@ def require_layer_value(value: object) -> LayerPath:
 
 
 def layer_path(node: Node, issues: list[Issue] | None = None) -> LayerPath | None:
-    """The node's parsed layer path, reporting missing/invalid values.
+    """The node's parsed band path, reporting missing/invalid values.
 
-    With no ``issues`` list the error raises :class:`BreakdownError`; audit
-    passes a list so every bad node is collected instead of aborting.
+    Accepts ``layer: band/subpath`` or the split ``band`` plus optional
+    ``subpath``.  With no ``issues`` list the error raises
+    :class:`BreakdownError`; audit passes a list so every bad node is
+    collected instead of aborting.
     """
-    value = node.meta.get("layer")
-    if value is None:
+    meta = node.meta
+    has_layer = "layer" in meta
+    has_band = "band" in meta
+    has_subpath = "subpath" in meta
+    if has_layer and (has_band or has_subpath):
         _invalid(
             issues,
-            "graph-layer-missing",
-            f"node '{node.ref}' has no 'layer'; stores without 'stage' "
-            "order bands by layer",
+            "graph-layer-invalid",
+            f"node '{node.ref}' declares 'layer' and 'band'/'subpath'; use one form",
             node.ref,
         )
         return None
+    if has_subpath and not has_band:
+        _invalid(
+            issues,
+            "graph-layer-invalid",
+            f"node '{node.ref}' declares 'subpath' without 'band'",
+            node.ref,
+        )
+        return None
+    if has_band:
+        problem = _band_problem(meta.get("band"))
+        if problem:
+            _invalid(
+                issues,
+                "graph-layer-invalid",
+                f"node '{node.ref}' has invalid 'band' {meta.get('band')!r}: "
+                f"{problem}",
+                node.ref,
+            )
+            return None
+        value = meta.get("subpath")
+        if value is not None and not (
+            isinstance(value, str) and not value.strip()
+        ):
+            problem = _layer_problem(value)
+            if problem:
+                _invalid(
+                    issues,
+                    "graph-layer-invalid",
+                    f"node '{node.ref}' has invalid 'subpath' {value!r}: "
+                    f"{problem}",
+                    node.ref,
+                )
+                return None
+        return _band_fields(node)
+    if not has_layer:
+        _invalid(
+            issues,
+            "graph-layer-missing",
+            f"node '{node.ref}' has no 'layer' or 'band'; stores without "
+            "'stage' order bands by band",
+            node.ref,
+        )
+        return None
+    value = meta.get("layer")
     problem = _layer_problem(value)
     if problem:
         _invalid(
@@ -181,7 +293,7 @@ def layer_path(node: Node, issues: list[Issue] | None = None) -> LayerPath | Non
 
 
 def require_layer(node: Node) -> LayerPath:
-    """The node's parsed layer path or a :class:`BreakdownError`."""
+    """The node's parsed band path or a :class:`BreakdownError`."""
     parsed = layer_path(node)
     assert parsed is not None
     return parsed
@@ -195,11 +307,9 @@ def _stage_of(node: Node) -> int | None:
 
 
 def node_layer(node: Node) -> str | None:
-    """The node's non-empty string ``layer``, or ``None`` when absent/invalid."""
-    value = node.meta.get("layer")
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return None
+    """The node's normalized band path, or ``None`` when absent/invalid."""
+    parsed = node_layer_path(node)
+    return parsed.raw if parsed is not None else None
 
 
 def relative_store(store: Store) -> bool:
@@ -259,14 +369,14 @@ def _band_edges(
     """Band constraints from links whose endpoints sit in different bands."""
     edges: dict[str, set[str]] = defaultdict(set)
     for node in store.nodes.values():
-        source = parse_layer(node.meta.get("layer"))
+        source = node_layer_path(node)
         if source is None:
             continue
         for link in node.links:
             target = store.nodes.get(link.to)
             if target is None:
                 continue
-            destination = parse_layer(target.meta.get("layer"))
+            destination = node_layer_path(target)
             if destination is not None and destination.band != source.band:
                 edges[source.band].add(destination.band)
     if extra is not None and extra[0] != extra[1]:
@@ -1219,7 +1329,7 @@ def audit(graph: Graph, anchor: str | int | None = None) -> list[Issue]:
                     "graph-group-ignored",
                     "node "
                     f"'{ref}' declares 'group', which is ordinary metadata in "
-                    f"a graph; use layer: band/{group(node) or '<subpath>'}",
+                    "a graph; use 'band' plus 'subpath' for placement",
                     node=ref,
                 )
             )

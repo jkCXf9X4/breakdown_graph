@@ -5,7 +5,7 @@ read one view, edit through the single `bd_work/` area, change structure with
 `bd` commands, and prove the result valid.
 
 Why: the store is a flat set of node files and everything else is derived. A
-store is a graph (forward `links` with relative `layer` or absolute `stage`
+store is a graph (forward `links` with relative `band`/`subpath` or absolute `stage`
 bands) or containment (`contains`), detected per store. Agents break it by
 editing the wrong layer — hand-editing
 generated files, keeping a second work folder, hand-writing `contains` or

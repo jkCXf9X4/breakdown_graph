@@ -5,20 +5,22 @@ boundary, typed dependency edges, and a single custom symlink work area.
 
 - **Store** — one markdown file per node version, keyed by `<id>-<version>`.
 - **Structure — topology per store.** A graph store declares parent→child edges in
-  `links`; bands are relative `layer` paths, ordered and nested from cross-band
+  `links`; bands are relative `band` names with optional `subpath`s (or the
+  older `layer: band/subpath` shorthand), ordered and nested from cross-band
   edges, or absolute integer `stage`s when a node declares one. A containment
   store declares an ordered `contains` list of full refs. Paths do not define
   either. Detection: containment when any node declares `contains`; otherwise
-  graph when any node has `links`, `stage`, or a non-empty `layer`.
+  graph when any node has `links`, `stage`, or a non-empty `layer`/`band`.
 - **Root** — an optional `ROOT` file names the default view root in one full ref.
 - **Solutions** — git branches and worktrees.
 - **Layout** — `bd work` renders one view as symlinks into the store, in a
-  single `<project>/bd_work/` area: band layout for a graph store (path layers,
-  with inferred nesting and explicit subpaths), `section` placement for a
+  single `<project>/bd_work/` area: band layout for a graph store (bands and
+  subpaths, with inferred nesting), `section` placement for a
   containment store. `bd current` reports which view is there.
 - **Freshness** — typed links record what depends on what and whether it still holds.
-- **Graph is the default example** — `examples/` is a twelve-node relative-layer
-  graph with `ROOT` `1-1`, path layers such as `claims/structural`, and no
+- **Graph is the default example** — `examples/` is a twelve-node relative-band
+  graph with `ROOT` `1-1`, bands with subpaths such as `claims` plus
+  `subpath: structural`, and no
   `group`. [Graph topology](docs/GRAPH.md), [layout algorithm](docs/GRAPH-LAYOUT.md).
   Containment remains supported; see [`docs/breakdown/`](docs/breakdown/).
 
@@ -89,7 +91,7 @@ export BD_ROOT=examples
 bd check                       # 12 nodes, 0 errors, 0 warnings
 bd audit                       # graph validation: 0 errors, 0 warnings
 bd tree 1-1                    # derived band layout
-bd graph                       # text render with layer bands from 1-1
+bd graph                       # text render with band layout from 1-1
 bd graph --svg --out /tmp/bd-graph.svg  # rendered SVG (needs Graphviz)
 bd graph 1-1 --depth 1         # direct children only
 bd out 1-1                     # authored out-edges, sorted
@@ -123,23 +125,26 @@ and `REFS.md` are generated. Use `bd edit REF` to find a ref in the active view.
 
 ```sh
 mkdir my-graph && cd my-graph
-bd init
-bd new --parent 1-1 --field title="What is true?" --field layer=claims
-bd new --parent 1-1 --field title="Why does this exist?" --field layer=intent
+bd init --graph
+bd new --parent 1-1 --field title="What is true?" --band claims
+bd new --parent 1-1 --field title="Why does this exist?" --band intent
 bd tree 1-1
 bd work 1-1
 ```
 
-`bd init` creates `.bd_tree/nodes/1-1.md` as a containment root (`contains: []`),
-writes a `.gitignore` entry for `bd_work/`, and prints the next commands.
+`bd init --graph` creates `.bd_tree/nodes/1-1.md` as a relative-band graph root
+(`band: root`), writes a `.gitignore` entry for `bd_work/`, and prints the next
+commands. Plain `bd init` creates a containment root (`contains: []`) instead.
 `bd init DIR` scaffolds the same layout inside `DIR`. A graph store is the same
 flat files with no `contains` anywhere and parent→child `links`; bands are
-relative `layer` paths by default, or absolute integer `stage`s when a node
+relative `band` plus optional `subpath` values by default (or the older `layer:
+band/subpath` shorthand), or absolute integer `stage`s when a node
 declares one (older stores). `bd init --graph` writes a relative-band root
-(`layer: root`, no `stage`). `examples/` is the shipped graph. `bd new` allocates
+(`band: root`, no `stage`). `examples/` is the shipped graph. `bd new` allocates
 the next global id at version 1. In a containment store it appends the full ref
 to the parent's `contains`; in a graph store it adds a typed link (`--type`,
-default `breaks_down`) and takes `--layer BAND[/SUB]` in relative mode
+default `breaks_down`) and takes `--band` with optional `--subpath` (or the
+older `--layer BAND[/SUB]`) in relative mode
 (required) or `--stage` in absolute mode, plus `--order`. It prefills `title`
 and `summary` as empty placeholders, and `--field` overrides them. Front matter
 is arbitrary: use `status`, `phase`, `audience`, or anything else.
@@ -216,7 +221,8 @@ bd contain | bd uncontain                     # containment stores only
 ```
 
 `bd new` seeds empty `title` and `summary`; `--field` overrides them. In a graph
-store it adds a typed link and takes `--layer`/`--stage` and `--order`; in a
+store it adds a typed link and takes `--band`/`--subpath` (or `--layer`),
+`--stage`, and `--order`; in a
 containment store it appends to the parent's `contains`.
 
 Root:
@@ -240,7 +246,7 @@ view. The view is always the full closure of one ref over the store's child
 relation; the work area may materialize only its first `N` descendant levels
 with `REF+N` (the same suffix `bd show`/`bd tree` use) or `--depth N`, where `0`
 is the root alone and `--depth` overrides a suffix. In a graph store a level is
-a link hop and the layout is the graph bands (derived layers or absolute
+a link hop and the layout is the graph bands (derived bands or absolute
 stages). `REFS.md`, each folder's `INDEX.md`, and `AGENTS.md` carry the
 materialized expression (`REF+N`), so `bd current` and `bd edit` recover it. A
 rebuild with a different depth replaces the area. `bd current` is read-only and
@@ -328,7 +334,7 @@ bd export svg --view REF --out FILE
 ```
 
 `bd export tree REF --out DIR` is the single read-only topology projection: band
-layout for a graph store (derived layers or absolute stages),
+layout for a graph store (derived bands or absolute stages),
 `section`/`contains` placement for a containment store,
 with one generated `INDEX.md` per folder. `export graph` is the same projection
 written as a band snapshot; `context` is the other export choice.
@@ -352,7 +358,7 @@ src/bd_tree/               Python package
   loader.py                filename grammar, store index, topology view resolution
   model.py                 Node, Store.model, View, Edge, Issue
   checker.py               structural validation; dispatches per topology
-  graph.py                 graph adjacency, band/layer layout, audit, graph export
+  graph.py                 graph adjacency, band layout, audit, graph export
   exporter.py              tree/context/dot projections
   freshness.py             pins, stale edges, reconcile
   navigate.py              show/tree/find/path
@@ -370,7 +376,8 @@ docs/breakdown/            product breakdown: bd store (.bd_tree/) + ignored bd_
 
 - The suite passes: `python3 -m pytest -q`.
 - The committed example project `examples/` is a graph store: `.bd_tree/nodes/`
-  holds twelve `<id>-<version>.md` files with declared `links` and relative `layer`s,
+  holds twelve `<id>-<version>.md` files with declared `links` and relative
+  `band`/`subpath` values,
   `.bd_tree/ROOT` names `1-1`, and `bd_work/` is gitignored; `bd audit` is clean.
 - No JSON, TOML, lock, or state data files; the only exceptions are a
   store-level `ROOT` file with one ref line and a folder-level `.bd_root`

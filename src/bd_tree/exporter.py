@@ -664,8 +664,13 @@ def _value_map(
 
 def _dot_text(view: View, color_by: str | None, shape_by: str | None) -> str:
     nodes = list(view.nodes.values())
-    if color_by is None and any(node.meta.get("layer") not in (None, "") for node in nodes):
-        color_by = "layer"
+    if color_by is None:
+        if any(node.meta.get("band") not in (None, "") for node in nodes):
+            color_by = "band"
+        elif any(
+            node.meta.get("layer") not in (None, "") for node in nodes
+        ):
+            color_by = "layer"
     color_index = _value_map(nodes, color_by)
     shape_index = _value_map(nodes, shape_by)
 

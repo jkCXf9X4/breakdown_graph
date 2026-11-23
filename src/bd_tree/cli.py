@@ -132,7 +132,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
     print(f"store initialized at {root}")
     print("next:")
     print(f"  cd {root}")
-    print('  bd new --parent 1-1 --field title="First claim" --field layer=claims')
+    print('  bd new --parent 1-1 --field title="First claim" --band claims')
     print("  bd tree 1-1")
     print("  bd work 1-1")
     return 0
@@ -509,6 +509,8 @@ def _cmd_new(args: argparse.Namespace) -> int:
         body=args.body or "",
         stage=args.stage,
         layer=args.layer,
+        band=args.band,
+        subpath=args.subpath,
         order=args.order,
         link_type=args.type,
     )
@@ -684,15 +686,15 @@ def build_parser() -> argparse.ArgumentParser:
         "init",
         help="create a store with one root node in an empty directory",
         description="Create a hidden store. The default is a containment root "
-        "with contains: []; --graph writes a layer-band root with layer: root, "
+        "with contains: []; --graph writes a band root with band: root, "
         "no stage, no contains and no links (add edges with bd new --parent "
-        "--layer / bd link).",
+        "--band / bd link).",
     )
     init.add_argument("dir", nargs="?", default=".", help="store directory (default: .)")
     init.add_argument(
         "--graph",
         action="store_true",
-        help="create a relative-band graph root (layer: root) instead of a "
+        help="create a relative-band graph root (band: root) instead of a "
         "containment root",
     )
     init.set_defaults(func=_cmd_init)
@@ -869,7 +871,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     graph = sub.add_parser(
         "graph",
-        help="render the banded forward graph, stage or layer (graph stores only)",
+        help="render the banded forward graph, stage or band (graph stores only)",
     )
     _add_root(graph)
     graph.add_argument(
@@ -885,7 +887,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--stage",
         default=None,
         metavar="A:B",
-        help="inclusive band range (stage ordinal or top-level layer ordinal)",
+        help="inclusive band range (stage ordinal or top-level band ordinal)",
     )
     graph.add_argument(
         "--type",
@@ -920,7 +922,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     audit = sub.add_parser(
         "audit",
-        help="validate the bands (stage or layer) and edges of a graph store "
+        help="validate the bands (stage or band) and edges of a graph store "
         "(graph only)",
     )
     _add_root(audit)
@@ -1037,13 +1039,13 @@ def build_parser() -> argparse.ArgumentParser:
     new = sub.add_parser(
         "new",
         help="create the next global id under a parent "
-        "(containment: appends contains; graph: stage or layer, --order/--type, "
+        "(containment: appends contains; graph: stage or band, --order/--type, "
         "and a link)",
         description="Containment: append the new ref to the parent's contains. "
         "Absolute graph (a node declares stage): set stage/order. Relative "
-        "graph (no stage anywhere): --layer is required and order places the "
-        "node inside its band. Both append a typed edge. The mode is detected "
-        "from the store.",
+        "graph (no stage anywhere): --band (with optional --subpath) or the "
+        "older --layer path is required, and order places the node inside its "
+        "band. Both append a typed edge. The mode is detected from the store.",
     )
     _add_root(new)
     new.add_argument(
@@ -1065,14 +1067,24 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="absolute graph only: integer stage (default: parent stage + 1, "
-        "else 0); a store without stage rejects it in favour of --layer",
+        "else 0); a store without stage rejects it in favour of --band",
+    )
+    new.add_argument(
+        "--band",
+        default=None,
+        help="relative graph only: band name (required unless --layer is "
+        "given; bare band names may nest by the shortest-path rule)",
+    )
+    new.add_argument(
+        "--subpath",
+        default=None,
+        help="relative graph only: presentation subfolder under --band",
     )
     new.add_argument(
         "--layer",
         default=None,
-        help="relative graph only: layer path BAND/SUBPATH (required when no "
-        "node declares stage; the band is the first segment and bare layer "
-        "names may nest by the shortest-path rule)",
+        help="relative graph only: older shorthand layer path BAND/SUBPATH "
+        "(mutually exclusive with --band/--subpath)",
     )
     new.add_argument(
         "--order",

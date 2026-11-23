@@ -328,7 +328,8 @@ def test_scratch_store_renders_and_audits_clean():
     for node in graph.store.nodes.values():
         assert "contains" not in node.meta
         assert "section" not in node.meta
-        assert isinstance(node.meta["layer"], str) and node.meta["layer"].strip()
+        assert isinstance(node.meta["band"], str) and node.meta["band"].strip()
+        assert "layer" not in node.meta
         assert "stage" not in node.meta
 
 

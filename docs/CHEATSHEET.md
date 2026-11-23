@@ -47,9 +47,9 @@ selected view and is never written to data.
 
 ```sh
 bd init [DIR]                       # create .bd_tree/nodes/1-1.md and .gitignore
-bd init --graph [DIR]               # relative-band root (layer: root, no stage)
+bd init --graph [DIR]               # relative-band root (band: root, no stage)
 bd new --parent REF --field KEY=VALUE ... [--body TEXT]   # containment
-bd new --parent REF --type TYPE --layer BAND[/SUB] [--order N]  # graph, relative mode
+bd new --parent REF --type TYPE --band BAND [--subpath SUB] [--order N]  # graph, relative
 bd new --parent REF --type TYPE --stage N [--order N]     # graph, absolute mode
 bd migrate [--dry-run]              # convert a classic bare <id>.md store in place
 ```
@@ -58,9 +58,9 @@ bd migrate [--dry-run]              # convert a classic bare <id>.md store in pl
 relative-band graph root. `bd new` allocates the next global integer at
 version 1. In a containment store it appends that full ref to the parent's
 `contains`; in a graph store it adds a typed link (`--type`, default
-`breaks_down`). In relative mode `--layer` is required and takes a path
-`BAND[/SUB]`: the first segment is the band, the rest is an explicit subpath
-folder. `--stage` is refused. In absolute mode it takes `--stage`; both take `--order`. It seeds
+`breaks_down`). In relative mode `--band` is required and `--subpath` adds an
+explicit folder below the band (`--layer BAND[/SUB]` is the older shorthand).
+`--stage` is refused. In absolute mode it takes `--stage`; both take `--order`. It seeds
 `title` and `summary` as empty placeholders; `--field` overrides them.
 `bd migrate` renames every bare
 `nodes/<id>.md` to the next free version and rewrites `contains`, `links`, and a
@@ -86,7 +86,7 @@ bd audit [REF]
 
 - `check` dispatches on the store's topology. In a graph store it runs the graph
   audit; in a containment store it validates the containment tree.
-- `tree` renders layer or stage bands in a graph store; `--depth` bounds
+- `tree` renders band or stage bands in a graph store; `--depth` bounds
   containment only, because the bands are the graph's presentation. `show +N`
   counts link hops in a graph store. `path` follows the first parent when a
   graph node has several (deterministic, but one of several paths).
@@ -96,14 +96,15 @@ bd audit [REF]
 - `bd graph --svg --out graph.svg` renders the same view as SVG with Graphviz;
   `--dot` is the dependency-free fallback and `--out` writes either render.
 - `--stage A:B` on `bd graph` keeps the inclusive band range: an absolute stage
-  ordinal or a top-level derived layer ordinal. A nested band inherits its
+  ordinal or a top-level derived band ordinal. A nested band inherits its
   top-level ancestor's ordinal. The anchor band is always included.
-- `layer: band/sub` is a path. The first segment is the band; the rest is an
-  explicit folder below the band folder. Bands are inferred from cross-band
-  links by the shortest-path rule, so a detour may nest under a parent band.
+- `band` names the band; `subpath` is an explicit folder below the band folder
+  (`layer: band/sub` is the older shorthand). Bands are inferred from
+  cross-band links by the shortest-path rule, so a detour may nest under a
+  parent band.
   See [`GRAPH-LAYOUT.md`](GRAPH-LAYOUT.md).
 - `group: <value>` is ordinary metadata. It places nothing in any topology; the
-  graph audit warns `graph-group-ignored`. Use the layer subpath instead.
+  graph audit warns `graph-group-ignored`. Use `band` plus `subpath` instead.
 - `show 5-1+2`: node 5-1 plus two levels of descendant bodies. With N > 0 the
   body is capped at 4000 characters per node unless `--max-chars N` is given;
   `--max-chars 0` prints the full body.
@@ -111,7 +112,7 @@ bd audit [REF]
   as `source -> target`. The target stays out of the closure; read it with
   `bd show REF` or switch with `bd work REF`.
 - `tree 5-1 --depth 0`: whole subtree. A missing ref uses the store root.
-- `tree 1-1 --columns ref,title,layer,status`: arbitrary fields as columns
+- `tree 1-1 --columns ref,title,band,subpath`: arbitrary fields as columns
   (tables default to depth 1); without `--columns`, `tree` prints the outline.
 - `find` searches title, summary, body, and all string fields; `--regex` treats
   the query as a pattern. It searches the default view unless `--view REF` or
@@ -197,7 +198,7 @@ bd work 5-1                                    # switch the same area to view 5-
 bd work 1-1+1                                  # root plus immediate children only
 bd work 1-1 --depth 0                          # root only
 bd work 1-1                                    # restore the full closure
-bd work 1-1 --path-template '{layer}/{ref}.md'
+bd work 1-1 --path-template '{band}/{ref}.md'
 ```
 
 In a containment store, `section` is the only presentation key that creates
@@ -223,10 +224,10 @@ name: custom-name         # optional override -> 00-claims/custom-name.md
 
 `folder` is ordinary front matter: preserved, never read, with no effect on
 placement, naming, validation, or warnings. `bd new` no longer derives `folder`
-from `layer`, `group`, or `type`.
+from `band`, `layer`, `group`, or `type`.
 `--path-template '{name}.md'` uses the computed fields directly;
 `{name}` and `{slug}` are the explicit `name`, else the title slug, else the
-ref. A template such as `'{layer}/{ref}.md'` needs `layer` on every node in the
+ref. A template such as `'{band}/{ref}.md'` needs `band` on every node in the
 view.
 `bd export tree` and the other `bd export` choices are read-only snapshots, not
 a second work area.
@@ -310,8 +311,8 @@ bd export graph   --view REF --out DIR [--force] [--clean]
 ```
 
 `bd export tree` is the single read-only topology projection: band layout for a
-graph store (relative layer paths with inferred nesting and explicit subpaths,
-or absolute stages), `section`/`contains` placement for a containment store.
+graph store (relative bands with inferred nesting and explicit subpaths, or
+absolute stages), `section`/`contains` placement for a containment store.
 `graph` writes the same band projection with per-folder indexes; `context`
 writes fresh node bodies plus `STALE.md` and `AGENTS.md`; `dot` is Graphviz.
 
@@ -359,11 +360,11 @@ python3 -m pytest -q
 | `root-ref-missing` / `invalid-root` | The `ROOT` file names an absent ref or is malformed. Fix it, or run `bd root --clear`. |
 | `bare-ref` / `invalid-ref` in data | `contains`, `links`, and `ROOT` need full `id-version` refs. A classic bare-file store converts once with `bd migrate`. |
 | `duplicate-id` | A containment view holds two versions of the same logical id. `bd uncontain` the unwanted one; `bd contain` refuses this clash up front. |
-| `graph-layer-missing` / `graph-layer-invalid` | Relative mode: every graph node needs a valid `layer` path (`band[/sub]`). Add or fix it. |
+| `graph-layer-missing` / `graph-layer-invalid` | Relative mode: every graph node needs a valid `band`/`subpath` (or `layer` path). Add or fix it. |
 | `graph-layer-cycle` | Cross-band edges form a loop. Repoint an edge with `bd unlink` then `bd link`. |
 | `graph-order-back-edge` | A same-band edge has `order(source) >= order(target)`, including across subpaths. Raise the target's `order` or lower the source's. |
-| `graph-group-ignored` | Warning: `group` is ordinary metadata. Replace it with `layer: band/sub`. |
-| `graph-stage-missing` / `graph-stage-invalid` | Absolute mode only: a node lacks an integer `stage`. Add or fix it, or move the store to relative `layer`s by removing `stage`. |
+| `graph-group-ignored` | Warning: `group` is ordinary metadata. Replace it with `band` plus `subpath`. |
+| `graph-stage-missing` / `graph-stage-invalid` | Absolute mode only: a node lacks an integer `stage`. Add or fix it, or move the store to relative bands by removing `stage`. |
 | `graph-back-edge` / `graph-cycle` | Absolute mode: an edge does not strictly increase `stage`, or links loop. Repoint the edge with `bd unlink` then `bd link`. |
 | `graph-dangling-link` | A graph link targets a missing node. Remove it or restore the target. |
 | `graph-orphan` | A non-anchor root has no incoming edge. Make it the anchor or link it into the graph. |

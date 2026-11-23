@@ -14,7 +14,7 @@ and `--max-chars` on any body dump.
   `.bd_tree/nodes/`. Classic layout: `nodes/` at the repo root.
 - The store's topology is detected once: containment when any node declares
   `contains`; otherwise graph when at least one node has `links`, `stage`, or a
-  non-empty `layer`. `Store.model`
+  non-empty `layer`/`band`. `Store.model`
   exposes it, and `bd tree` / `bd views` show the result.
 - The default view root is `ROOT` when present, else a graph store's lowest
   graph root, else a containment store's lowest node by `(id, version)`. An
@@ -33,7 +33,7 @@ continues an ancestor column. Default depth is 2; `--depth 0` is unlimited. In a
 graph store it renders the graph bands (`layer N — label` in relative mode,
 `stage N — label` in absolute mode, then `[ref] title`
 with authored `→ out` and derived `← in` lines); inferred nested bands and
-explicit layer subpaths print as indented folder headings. `--depth` bounds
+explicit subpaths print as indented folder headings. `--depth` bounds
 containment only. `--summary` appends summaries and `--fields F,F` appends field values.
 `--columns F,F` switches to the table view (`ref title summary` by default,
 depth 1), with descendants indented two spaces per level and cells capped by
@@ -48,8 +48,9 @@ containment view — in the outline only; the `--columns` table ignores it:
 
 `bd graph [REF]` — graph-only: the forward closure as graph bands, with
 `--depth N` link hops, `--stage A:B` (an absolute stage or top-level derived
-layer ordinal range; a nested band inherits its ancestor's ordinal), `--type T`,
-and `--dot`. In relative mode a band comes from the first `layer` segment;
+band ordinal range; a nested band inherits its ancestor's ordinal), `--type T`,
+and `--dot`. In relative mode a band comes from `band` (or the first `layer`
+segment);
 later segments are explicit subfolders and inferred nesting adds more.
 `--svg [--out PATH]` renders the same graph through Graphviz; `bd export dot
 --render svg|png|pdf` and `bd export svg` write rendered files. `bd out REF`

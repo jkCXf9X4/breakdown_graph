@@ -16,6 +16,7 @@ from bd_tree.graph import (
     build_graph,
     graph_layout,
     graph_view,
+    layout_paths,
     render_graph,
 )
 
@@ -139,9 +140,9 @@ def test_link_refuses_a_same_layer_order_back_edge(write, tmp_path):
 def test_new_requires_layer_and_rejects_stage(tmp_path):
     api.init_store(tmp_path, graph=True)
 
-    with pytest.raises(BreakdownError, match="needs a non-empty --layer"):
-        api.new_node(tmp_path, parent="1-1", fields={"title": "No layer"})
-    with pytest.raises(BreakdownError, match="stores without stage use --layer"):
+    with pytest.raises(BreakdownError, match="needs a non-empty --band"):
+        api.new_node(tmp_path, parent="1-1", fields={"title": "No band"})
+    with pytest.raises(BreakdownError, match="stores without stage use --band"):
         api.new_node(tmp_path, parent="1-1", stage=1)
 
     created = api.new_node(
@@ -166,14 +167,101 @@ def test_new_validates_the_parent_edge_in_relative_mode(write, tmp_path):
         api.new_node(tmp_path, parent="2-1", layer="build")
 
 
-def test_init_graph_writes_a_layer_root_and_audits_clean(tmp_path):
+def test_init_graph_writes_a_band_root_and_audits_clean(tmp_path):
     api.init_store(tmp_path, graph=True)
     meta = parse_document(
         (tmp_path / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")
     ).meta
-    assert meta == {"id": 1, "title": "Root", "layer": "root"}
+    assert meta == {"id": 1, "title": "Root", "band": "root"}
     assert api.load(tmp_path).model == "graph"
     assert _codes(build_graph(tmp_path), "1-1") == []
+
+
+def test_band_and_subpath_replace_the_layer_path(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, band="intent", links=[{"to": "2", "type": "breaks_down"}])
+    write(nodes, 2, band="claims", subpath="structural")
+
+    graph = build_graph(tmp_path)
+    assert graph.relative
+    assert graph.band == {"1-1": 0, "2-1": 1}
+    assert graph.folders["2-1"] == "01-claims/structural"
+    paths = layout_paths(graph, graph_view(graph, "1-1"))
+    assert paths["2-1"] == "01-claims/structural/2-1.md"
+    assert _codes(graph) == []
+
+
+def test_layer_shorthand_and_split_keys_produce_the_same_paths(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, band="intent", links=[{"to": "2", "type": "breaks_down"}])
+    write(nodes, 2, layer="claims/structural")
+
+    graph = build_graph(tmp_path)
+    assert graph.band == {"1-1": 0, "2-1": 1}
+    assert graph.folders["2-1"] == "01-claims/structural"
+    paths = layout_paths(graph, graph_view(graph, "1-1"))
+    assert paths["2-1"] == "01-claims/structural/2-1.md"
+    assert _codes(graph) == []
+
+
+def test_band_fields_are_validated(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, band="intent", links=[{"to": "2", "type": "breaks_down"}])
+    write(nodes, 2, subpath="orphan")
+    issues = audit(build_graph(tmp_path))
+    assert [issue.code for issue in issues] == ["graph-layer-invalid"]
+    assert "without 'band'" in issues[0].message
+
+    write(nodes, 2, band="claims", layer="claims/structural")
+    issues = audit(build_graph(tmp_path))
+    assert [issue.code for issue in issues] == ["graph-layer-invalid"]
+    assert "use one form" in issues[0].message
+
+    write(nodes, 2, band="claims/structural")
+    issues = audit(build_graph(tmp_path))
+    assert [issue.code for issue in issues] == ["graph-layer-invalid"]
+    assert "single band name" in issues[0].message
+
+    write(nodes, 2, band="claims", subpath="a//b")
+    issues = audit(build_graph(tmp_path))
+    assert [issue.code for issue in issues] == ["graph-layer-invalid"]
+    assert "invalid 'subpath'" in issues[0].message
+
+    write(nodes, 2, band="claims", subpath="")
+    assert _codes(build_graph(tmp_path)) == []
+    assert build_graph(tmp_path).folders["2-1"] == "01-claims"
+
+
+def test_band_only_store_is_detected_as_a_graph(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, band="root")
+    assert api.load(tmp_path).model == "graph"
+    assert _codes(build_graph(tmp_path), "1-1") == []
+
+
+def test_new_accepts_band_and_subpath(tmp_path):
+    api.init_store(tmp_path, graph=True)
+    created = api.new_node(
+        tmp_path,
+        parent="1-1",
+        band="claims",
+        subpath="structural",
+        fields={"title": "Claim"},
+    )
+    meta = parse_document(created.read_text(encoding="utf-8")).meta
+    assert meta["band"] == "claims"
+    assert meta["subpath"] == "structural"
+    assert "layer" not in meta
+    assert check_ok(tmp_path)
+
+    with pytest.raises(BreakdownError, match="not both"):
+        api.new_node(tmp_path, parent="1-1", layer="claims", band="claims")
+
+
+def check_ok(root):
+    from bd_tree.checker import check
+
+    return check(root).ok
 
 
 def test_relative_tree_and_graph_label_bands_as_layers(write, tmp_path, monkeypatch, capsys):
