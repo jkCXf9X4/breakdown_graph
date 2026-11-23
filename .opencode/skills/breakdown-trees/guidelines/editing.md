@@ -17,22 +17,30 @@ $EDITOR "$(bd edit REF)"    # exits 2 if REF is outside the materialized prefix
 `bd work REF` replaces the area's contents: stale links are removed and
 `INDEX.md`, `AGENTS.md`, `REFS.md` are regenerated. The area never accumulates
 two views, and a second work folder is not supported. The view is always the
-full containment closure; `REF+N` or `--depth N` only prunes which descendant
-levels are materialized (`N=0` leaves the root alone). `bd edit` honors that
-prefix, so a ref in the full closure but below the materialized depth is
-refused. A bare id such as `bd edit 5` is a selector resolved in the active
-view; the path returned is the placement path (for example
-`bd_work/5-1-<title-slug>.md`, or a `section`/`name` path when the node sets
-them), not a file named only by the ref.
+full closure of one ref over the store's child relation; `REF+N` or `--depth N`
+only prunes which descendant levels are materialized (`N=0` leaves the root
+alone). In a graph store a level is a link hop and the layout is the graph bands
+(`<NN>-<slug(band)>`, relative `layer` paths with inferred nesting and explicit
+subpaths, or absolute stages); in a containment store it
+is `section`/`name` placement.
+`bd edit` honors the prefix, so a ref in the full closure but below the
+materialized depth is refused. A bare id such as `bd edit 5` is a selector
+resolved in the active view; the path returned is the placement path (for
+example `bd_work/5-1-<title-slug>.md`, a `section`/`name` path, or a band
+path), not a file named only by the ref.
 
 `bd current --path` prints the directory without building anything;
 `bd work REF --clean` discards detached files while switching.
 
-## Placement paths
+## Placement paths (containment stores)
 
-`section` is the only key that opens a directory. `section: true` uses the
-node's placement name (explicit `name`, else the title slug, else the ref);
-`section: "<dir>"` is verbatim and may contain several segments.
+In a graph store, the derived band layout decides the path: the `layer` band,
+inferred nesting, and the explicit subpath; `section` has no effect. `group` is
+inert in every topology. In a containment store, `section` is
+the only key that opens a
+directory. `section: true` uses the node's placement name (explicit `name`, else
+the title slug, else the ref); `section: "<dir>"` is verbatim and may contain
+several segments.
 
 - A relative value (`suggested`, `suggested/01-indexes`) inherits the parent
   prefix, so nested stages stack inside one another.
@@ -87,7 +95,8 @@ Direct edits skip nothing else: the same `bd check` applies afterwards.
 
 ```bash
 bd work --status            # no detached files left
-bd check                    # structure and views
+bd check                    # topology-aware structure and views
+bd audit                    # graph store: layer/stage and edge audit
 git status --porcelain      # node files only, never bd_work/
 ```
 

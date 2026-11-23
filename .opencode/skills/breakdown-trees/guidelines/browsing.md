@@ -12,9 +12,14 @@ and `--max-chars` on any body dump.
   not require a flag when a pointer names it.
 - Project layout: store at `<project>/.bd_tree/`, nodes under
   `.bd_tree/nodes/`. Classic layout: `nodes/` at the repo root.
-- The default view root is `ROOT` when present, else the lowest available node
-  by `(id, version)`. An explicit ref argument or `--view` wins over both;
-  `bd check --view` only narrows reporting.
+- The store's topology is detected once: containment when any node declares
+  `contains`; otherwise graph when at least one node has `links`, `stage`, or a
+  non-empty `layer`. `Store.model`
+  exposes it, and `bd tree` / `bd views` show the result.
+- The default view root is `ROOT` when present, else a graph store's lowest
+  graph root, else a containment store's lowest node by `(id, version)`. An
+  explicit ref argument or `--view` wins over both; `bd check --view` only
+  narrows reporting.
 - Data refs are full `id-version`. A bare id on the command line is a selector
   resolved inside the selected view, never written to data.
 - `bd work REF` does **not** change the default root; it changes the view held
@@ -22,13 +27,18 @@ and `--max-chars` on any body dump.
 
 ## Output shapes
 
-`bd tree` — one node per line, `ref title`; `+-` marks a non-last child, `` `- ``
-the last, and `|` continues an ancestor column. Default depth is 2; `--depth 0`
-is unlimited. `--summary` appends summaries and `--fields F,F` appends field
-values. `--columns F,F` switches to the table view (`ref title summary` by
-default, depth 1), with descendants indented two spaces per level and cells
-capped by `--max-chars`. `--links` appends a `links:` footer for edges leaving
-the view — in the outline only; the `--columns` table ignores it:
+`bd tree` — the topology outline. In a containment store it is one node per
+line, `ref title`; `+-` marks a non-last child, `` `- `` the last, and `|`
+continues an ancestor column. Default depth is 2; `--depth 0` is unlimited. In a
+graph store it renders the graph bands (`layer N — label` in relative mode,
+`stage N — label` in absolute mode, then `[ref] title`
+with authored `→ out` and derived `← in` lines); inferred nested bands and
+explicit layer subpaths print as indented folder headings. `--depth` bounds
+containment only. `--summary` appends summaries and `--fields F,F` appends field values.
+`--columns F,F` switches to the table view (`ref title summary` by default,
+depth 1), with descendants indented two spaces per level and cells capped by
+`--max-chars`. `--links` appends a `links:` footer for edges leaving a
+containment view — in the outline only; the `--columns` table ignores it:
 
 ```
 1-1 Root
@@ -36,25 +46,38 @@ the view — in the outline only; the `--columns` table ignores it:
 `- 3-1 What is true?
 ```
 
-`bd show REF+N` — the node plus N levels of descendant bodies, each capped at
-4000 characters when N > 0. `--max-chars 0` prints the full body; `--no-body`
-prints headings only; `bd path REF` gives the breadcrumb. `--links` appends the
-same footer, as `source -> target  title  (type)`; it is a pointer, not
-membership — open the target with `bd show REF`.
+`bd graph [REF]` — graph-only: the forward closure as graph bands, with
+`--depth N` link hops, `--stage A:B` (an absolute stage or top-level derived
+layer ordinal range; a nested band inherits its ancestor's ordinal), `--type T`,
+and `--dot`. In relative mode a band comes from the first `layer` segment;
+later segments are explicit subfolders and inferred nesting adds more.
+`--svg [--out PATH]` renders the same graph through Graphviz; `bd export dot
+--render svg|png|pdf` and `bd export svg` write rendered files. `bd out REF`
+lists authored out-edges; `bd in REF` lists derived in-edges.
+
+`bd show REF+N` — the node plus N levels of descendant bodies (link hops in a
+graph store), each capped at 4000 characters when N > 0. `--max-chars 0` prints
+the full body; `--no-body` prints headings only. `--links` appends the same
+footer, as `source -> target  title  (type)`; it is a pointer, not membership —
+open the target with `bd show REF`. `bd path REF` gives the breadcrumb: the
+ancestor chain oldest first, or in a graph store the reverse link chain with the
+first parent chosen when a node has several.
 
 `bd current` — exactly `<project>/bd_work (view <ref>)`; `--path` prints only
 the path, `--view` only the ref, and it errors when no area exists.
 
-`bd views` — containment roots, one `ref title` per line, store default marked
-`*`. A history or decisions view appears here without joining the default
-closure; switch to it with `bd work REF` when you need to edit it.
+`bd views` — topology roots (containment roots or graph roots), one
+`ref title` per line, store default marked `*`. A history or decisions view
+appears here without joining the default containment closure; switch to it with
+`bd work REF` when you need to edit it.
 
 `bd root` — `<ref>  (ROOT|lowest node)`.
 
 `bd check` — `N nodes, N errors, N warnings (view REF)` on the last line, with
-one `LEVEL path: message` line per issue. The output does not print issue codes;
-use the code tables in [`validation.md`](validation.md) to read the message.
-`bd path REF` — the ancestor chain, oldest first.
+one `LEVEL path: message` line per issue. It dispatches on topology: graph
+audit for a graph store, containment checks otherwise. The output does not print
+issue codes; use the code tables in [`validation.md`](validation.md) to read the
+message. `bd audit [REF]` is the explicit graph audit.
 
 ## Search
 
@@ -68,9 +91,10 @@ simply be outside it — check `--view` before concluding it does not exist.
 
 ## Reading discipline
 
-- Start wide and cheap: `bd views`, then `bd tree REF --depth 1`.
+- Start wide and cheap: `bd views`, then `bd tree REF --depth 1`; in a graph
+  store read the graph bands once with `bd graph`.
 - Go deep only on the branch the question is about; `+N` and `--max-chars`
-  exist to keep bodies bounded.
+  exist to keep bodies bounded. In a graph store `+N` is link hops.
 - When a node cites another ref, trust the ref and read it directly rather
   than searching for the text again.
 - `bd check` is a store-wide scan and can be slow on large stores; use it as a
