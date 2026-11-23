@@ -216,7 +216,8 @@ edges are written `source -> target`.
 ### 6.1 Single chain: the example store
 
 Layers: `intent`, `breakdown`, `claims/structural`,
-`claims/verification`, `verification/fan-in`, `operation`.
+`claims/verification`, `verification`, `verification/fan-in`,
+`verification/fan-in2`, `operation`.
 
 Band edges: `intent -> breakdown`, `breakdown -> claims`,
 `claims -> verification`, `verification -> operation`.
@@ -232,11 +233,14 @@ Every band lies on the one root-to-sink path, so all are top-level and kind
 | 3 | verification | `03-verification` |
 | 4 | operation | `04-operation` |
 
-Explicit subpaths produce `02-claims/structural`, `02-claims/verification`, and
-`03-verification/fan-in`. Example paths:
+Explicit subpaths produce `02-claims/structural`, `02-claims/verification`,
+`03-verification/fan-in`, and `03-verification/fan-in2`; `12-1` has a
+band-level layer and sits directly in `03-verification`. Example paths:
 `02-claims/structural/4-1-two-parents-one-node.md`,
 `02-claims/verification/7-1-derived-in-edges.md`,
-`03-verification/fan-in/8-1-verification-fan-in.md`.
+`03-verification/12-1-verification-core.md`,
+`03-verification/fan-in/8-1-verification-fan-in.md`,
+`03-verification/fan-in2/11-1-verification-fan-in-2.md`.
 
 Test: `test_single_chain_example_is_all_top_level_with_identical_paths`.
 

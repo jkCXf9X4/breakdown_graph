@@ -234,11 +234,13 @@ graph without keeping the `.dot` source.
 `examples/` is the default graph store, with no `contains`, no `section`, and no
 `stage` key: it is a relative-layer graph. It proves a claim with two parents,
 sorted links, path layers (`intent`, `breakdown`, `claims/structural`,
-`claims/verification`, `verification/fan-in`, `operation`), and no `group` key.
+`claims/verification`, `verification`, `verification/fan-in`,
+`verification/fan-in2`, `operation`), and no `group` key. Node `12-1` sits at
+the band root as the verification core and fans out to the check subfolders.
 Every band is on the one shortest root-to-sink path, so all stay top-level and
 the folders are `00-intent` through `04-operation`; the subpaths add
-`02-claims/structural`, `02-claims/verification`, and
-`03-verification/fan-in`.
+`02-claims/structural`, `02-claims/verification`,
+`03-verification/fan-in`, and `03-verification/fan-in2`.
 
 ```sh
 bd check

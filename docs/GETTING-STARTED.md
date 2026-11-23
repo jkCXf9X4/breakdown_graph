@@ -24,7 +24,7 @@ bd check
 ```
 
 ```
-10 nodes, 0 errors, 0 warnings (view 1-1)
+12 nodes, 0 errors, 0 warnings (view 1-1)
 ```
 
 The store layout is unchanged from a containment store:

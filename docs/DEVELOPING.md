@@ -235,7 +235,7 @@ python3 -m pytest -q
 - Use `tmp_path` and real files. Do not mock the loader.
 - `test_examples.py` runs the graph example at `examples/` (store under
   `.bd_tree/`) through `bd audit`, graph traversal, and graph export, asserting
-  ten nodes, relative `layer`s and no `stage`, and no `contains`/`section`.
+  twelve nodes, relative `layer`s and no `stage`, and no `contains`/`section`.
 - `test_topology.py` covers detection, `children`/`parents`, forward closure, a
   multi-parent node appearing once, band layout, graph audit codes, and graph
   structural edits. `test_layers.py` covers the relative plan: derived band
@@ -270,7 +270,7 @@ Before a commit:
 
 ```sh
 python3 -m pytest -q
-bd check                         # examples: graph, 10 nodes
+bd check                         # examples: graph, 12 nodes
 bd audit                         # graph audit
 bd check --root docs/breakdown   # containment: 57 nodes
 git diff --check

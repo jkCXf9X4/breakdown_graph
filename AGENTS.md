@@ -18,12 +18,12 @@ this file is the short operating protocol.
    ```sh
    python3 -m pytest -q
    bd audit
-   bd check                    # 10 nodes, 0 errors, 0 warnings
+   bd check                    # 12 nodes, 0 errors, 0 warnings
    ```
 
 3. See the shape: `bd check`, `bd tree 1-1`, `bd graph`, `bd out 1-1`,
-   `bd in 4-1`. The default example is a relative-layer graph of ten nodes
-   (`1-1`..`10-1`); run the commands in `examples/README.md`.
+   `bd in 4-1`. The default example is a relative-layer graph of twelve nodes
+   (`1-1`..`12-1`); run the commands in `examples/README.md`.
 4. For a solution: `bd solution new NAME`, `cd` into the printed worktree
    project directory, then `bd work` with the printed default-view ref.
 5. For edits: prefer `bd edit REF` for the path inside `bd_work/`; direct edits
@@ -196,7 +196,7 @@ installing, prefix each with `PYTHONPATH=src python3 -m bd_tree` instead of `bd`
 ```sh
 export BD_ROOT=examples
 python3 -m pytest -q
-bd check                    # 10 nodes, 0 errors, 0 warnings
+bd check                    # 12 nodes, 0 errors, 0 warnings
 bd audit                    # graph example: 0 errors, 0 warnings
 bd tree 1-1                 # derived band layout
 bd graph                    # relative-band graph from ROOT 1-1

@@ -75,7 +75,13 @@ def _paths(root: Path) -> dict[str, str]:
 
 def test_single_chain_example_is_all_top_level_with_identical_paths():
     graph = build_graph(EXAMPLES)
-    bands = graph_layout(graph, ["1-1", "2-1", "3-1", "4-1", "5-1", "6-1", "7-1", "8-1", "9-1", "10-1"])
+    bands = graph_layout(
+        graph,
+        [
+            "1-1", "2-1", "3-1", "4-1", "5-1", "6-1",
+            "7-1", "8-1", "9-1", "10-1", "11-1", "12-1",
+        ],
+    )
     assert [band.label for band in bands] == [
         "intent", "breakdown", "claims", "verification", "operation"
     ]
@@ -85,6 +91,10 @@ def test_single_chain_example_is_all_top_level_with_identical_paths():
     assert paths["4-1"] == "02-claims/structural/4-1-two-parents-one-node.md"
     assert paths["7-1"] == "02-claims/verification/7-1-derived-in-edges.md"
     assert paths["8-1"] == "03-verification/fan-in/8-1-verification-fan-in.md"
+    assert paths["11-1"] == (
+        "03-verification/fan-in2/11-1-verification-fan-in-2.md"
+    )
+    assert paths["12-1"] == "03-verification/12-1-verification-core.md"
 
 
 def test_parallel_detours_nest_under_their_shortest_path_parent(write, tmp_path):

@@ -17,7 +17,7 @@ boundary, typed dependency edges, and a single custom symlink work area.
   with inferred nesting and explicit subpaths), `section` placement for a
   containment store. `bd current` reports which view is there.
 - **Freshness** — typed links record what depends on what and whether it still holds.
-- **Graph is the default example** — `examples/` is a ten-node relative-layer
+- **Graph is the default example** — `examples/` is a twelve-node relative-layer
   graph with `ROOT` `1-1`, path layers such as `claims/structural`, and no
   `group`. [Graph topology](docs/GRAPH.md), [layout algorithm](docs/GRAPH-LAYOUT.md).
   Containment remains supported; see [`docs/breakdown/`](docs/breakdown/).
@@ -86,7 +86,7 @@ example.
 ```sh
 export BD_ROOT=examples
 
-bd check                       # 10 nodes, 0 errors, 0 warnings
+bd check                       # 12 nodes, 0 errors, 0 warnings
 bd audit                       # graph validation: 0 errors, 0 warnings
 bd tree 1-1                    # derived band layout
 bd graph                       # text render with layer bands from 1-1
@@ -370,7 +370,7 @@ docs/breakdown/            product breakdown: bd store (.bd_tree/) + ignored bd_
 
 - The suite passes: `python3 -m pytest -q`.
 - The committed example project `examples/` is a graph store: `.bd_tree/nodes/`
-  holds ten `<id>-<version>.md` files with declared `links` and relative `layer`s,
+  holds twelve `<id>-<version>.md` files with declared `links` and relative `layer`s,
   `.bd_tree/ROOT` names `1-1`, and `bd_work/` is gitignored; `bd audit` is clean.
 - No JSON, TOML, lock, or state data files; the only exceptions are a
   store-level `ROOT` file with one ref line and a folder-level `.bd_root`

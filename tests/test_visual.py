@@ -41,13 +41,15 @@ def test_render_dot_has_one_cluster_per_effective_folder_and_edge_labels():
     graph, refs = _example_graph()
     dot = render_dot(graph, refs)
 
-    assert dot.count("subgraph cluster_") == 6
+    assert dot.count("subgraph cluster_") == 8
     for label in (
         "layer 0 — intent",
         "layer 1 — breakdown",
         "layer 2 — claims/structural",
         "layer 2 — claims/verification",
+        "layer 3 — verification",
         "layer 3 — verification/fan-in",
+        "layer 3 — verification/fan-in2",
         "layer 4 — operation",
     ):
         assert f'label="{label}"' in dot
@@ -137,7 +139,7 @@ def test_visual_filters_narrow_the_render(monkeypatch, capsys, tmp_path):
     stage = _node_lines(render("--stage", "0:1"))
     typed = _node_lines(render("--type", "breaks_down"))
 
-    assert len(full) == 10
+    assert len(full) == 12
     assert len(depth) == 3 and len(depth) < len(full)
     assert len(stage) == 3 and len(stage) < len(full)
     assert len(typed) == 6 and len(typed) < len(full)

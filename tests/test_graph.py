@@ -395,7 +395,7 @@ def test_work_materializes_graph_stage_bands_and_indexes(tmp_path):
     out = root / "bd_work"
     result = api.work(root, "1-1")
 
-    assert result.nodes == 10 and result.symlinks == 10
+    assert result.nodes == 12 and result.symlinks == 12
     assert {path.name for path in out.iterdir() if path.is_dir()} == set(STAGE_DIRS)
     for directory in STAGE_DIRS:
         assert (out / directory / "INDEX.md").is_file()
@@ -403,7 +403,7 @@ def test_work_materializes_graph_stage_bands_and_indexes(tmp_path):
 
     status = api.work(root, status=True)
     assert status.ok
-    assert len(status.entries) == 10
+    assert len(status.entries) == 12
     assert {entry.status for entry in status.entries} == {"ok"}
 
     edited = api.edit_path(root, "4-1")
@@ -414,6 +414,7 @@ def test_work_materializes_graph_stage_bands_and_indexes(tmp_path):
     for directory in ("structural", "verification"):
         assert (out / "02-claims" / directory / "INDEX.md").is_file()
     assert (out / "03-verification" / "fan-in" / "INDEX.md").is_file()
+    assert (out / "03-verification" / "fan-in2" / "INDEX.md").is_file()
 
 
 def test_work_depth_limits_graph_closure_to_link_hops(tmp_path):
@@ -594,11 +595,11 @@ def test_graph_commands_refuse_a_containment_store(
 def test_graph_export_context_and_dot(tmp_path):
     root = _example_store(tmp_path)
     context = api.export_view("context", root, "1-1", tmp_path / "ctx")
-    assert context.nodes == 10
+    assert context.nodes == 12
     assert (tmp_path / "ctx" / "STALE.md").is_file()
     dot_file = tmp_path / "graph.dot"
     dot = api.export_view("dot", root, "1-1", dot_file)
-    assert dot.nodes == 10
+    assert dot.nodes == 12
     text = dot_file.read_text(encoding="utf-8")
     assert text.startswith("digraph bd_tree {")
     assert '"1-1"' in text
