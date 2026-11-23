@@ -113,13 +113,14 @@ bd edit REF
   materializes only the first `N` descendant levels in the area (`0` is the root
   alone; `--depth` overrides a suffix). This is the same suffix that `bd show`
   and `bd tree` accept, and a rebuild with a different depth replaces the area.
-- The generated `REFS.md`, `INDEX.md`, and `AGENTS.md` carry `REF+N`, so
-  `bd current`, `--status`, `--writeback`, and `bd edit` recover the materialized
-  depth.
+- The generated `REFS.md`, each folder's `INDEX.md`, and `AGENTS.md` carry
+  `REF+N`, so `bd current`, `--status`, `--writeback`, and `bd edit` recover the
+  materialized depth.
 - Node `.md` files are symlinks to the store's `nodes/<ref>.md`, where `<ref>`
   is the full `id-version` (`.bd_tree/nodes/<ref>.md` in a project layout).
-  `INDEX.md`, `AGENTS.md`, and `REFS.md` are regular generated files, never
-  symlinks.
+  `INDEX.md` in every directory, `AGENTS.md`, and `REFS.md` are regular
+  generated files, never symlinks. Those three names are reserved in every
+  directory.
 - `bd current` is read-only: it prints `<project>/bd_work (view <ref>)`;
   `--path` prints only the path, `--view` only the ref. It errors if no work
   area exists.
@@ -134,7 +135,7 @@ bd edit REF
 - Switching with detached (edited but unsynced) files is refused: run
   `--writeback` to keep them, or `--clean` to discard them.
 - Re-running a healthy tree refreshes it in place: stale links are removed and
-  `INDEX.md`, `REFS.md`, and `AGENTS.md` are rewritten.
+  every folder's `INDEX.md`, plus `REFS.md` and `AGENTS.md`, are rewritten.
 
 Switch the one area between views:
 

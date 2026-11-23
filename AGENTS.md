@@ -21,7 +21,7 @@ this file is the short operating protocol.
    ```
 
 3. See the shape: `bd tree 1-1 --depth 1`, `bd find <term>`, `bd path <ref>`.
-   For the example layout — a header-free chained tree — run the commands in
+   For the example layout — a fan-out header tree — run the commands in
    `examples/README.md`.
 4. For a solution: `bd solution new NAME`, `cd` into the printed worktree
    project directory, then `bd work` with the printed default-view ref.
@@ -73,7 +73,8 @@ behaviour change and update the docs listed at the bottom.
   is the merge unit; `bd work` is a layout inside one checkout, never a branch
   mechanism.
 - Work folders are symlink views: node `.md` files are symlinks, while
-  `INDEX.md`, `AGENTS.md`, and `REFS.md` are regular generated files. Never copy
+  `INDEX.md` in every directory, `AGENTS.md`, and `REFS.md` are regular generated
+  files. These three names are reserved in every directory. Never copy
   node content into a work folder and never introduce a sync layer.
 - A project has exactly one writable work area, `<project>/bd_work/`. It holds
   one view at a time; `bd work REF` replaces its contents. Read-only `bd export`
@@ -123,8 +124,8 @@ behaviour change and update the docs listed at the bottom.
   repoints `ROOT` when REF is the root, and leaves the old file as a peer. These
   are the only switches; a view uses the version named by its parent's
   `contains`.
-- Never hand-edit generated `INDEX.md`, `AGENTS.md`, or `REFS.md` inside a work or
-  output directory.
+- Never hand-edit generated `INDEX.md` (one in every directory), `AGENTS.md`, or
+  `REFS.md` inside a work or output directory.
 
 ## Common tasks
 
@@ -162,9 +163,9 @@ python3 -m pytest -q
 bd check
 bd tree 20-1 --depth 1
 bd show 20-1+1 --max-chars 400
-bd uncontain 21-1 23-1
-bd contain 21-1 23-1 --before 22-1
-bd link 23-1 25-1 --type supports
+bd uncontain 43-1 36-1
+bd contain 43-1 36-1 --before 33-1
+bd link 21-1 24-1 --type supports
 bd clone 21-1 --subtree    # copy a subtree to new peer versions
 bd replace 21-1 21-2       # wire the copy in at 21-1's index (or repoint ROOT)
 bd work 20-1               # write the single <project>/bd_work area

@@ -73,13 +73,13 @@ not edit it unless you mean to change the example.
 ```sh
 export BD_ROOT=examples
 
-bd check                       # clean, 17-node chain
+bd check                       # clean, 10-node fan-out tree
 bd tree 20-1 --depth 1         # the tree named by ROOT
-bd tree 20-1 --depth 0         # the whole chain
+bd tree 20-1 --depth 0         # the whole fan-out
 bd show 20-1+1 --max-chars 300 # body plus one level
 bd tree 20-1 --columns section,type,title  # children as a table
 bd find links --limit 3
-bd path 30-1                   # ancestor chain to a leaf
+bd path 34-1                   # ancestor path to a leaf
 ```
 
 Then open the work area:
@@ -89,7 +89,7 @@ bd work 20-1                   # write <project>/bd_work for view 20-1
 bd current                     # <project>/bd_work (view 20-1)
 cd "$(bd current --path)"      # print only the path, for cd
 # node .md files here are symlinks; editing one edits .bd_tree/nodes/<ref>.md
-# INDEX.md, AGENTS.md, and REFS.md are regular generated files
+# INDEX.md in every folder, AGENTS.md, and REFS.md are regular generated files
 
 bd edit 21-1                   # absolute path of ref 21-1 in the active view
 bd work 20-1+2                 # same area, first two levels only
@@ -195,8 +195,9 @@ contents; it does not create a second folder. With no REF it uses the default
 view. The view is always the full containment closure of one ref; the work area
 may materialize only its first `N` descendant levels with `REF+N` (the same
 suffix `bd show`/`bd tree` use) or `--depth N`, where `0` is the root alone and
-`--depth` overrides a suffix. `REFS.md`, `INDEX.md`, and `AGENTS.md` carry the
-materialized expression (`REF+N`), so `bd current` and `bd edit` recover it. A
+`--depth` overrides a suffix. `REFS.md`, each folder's `INDEX.md`, and
+`AGENTS.md` carry the materialized expression (`REF+N`), so `bd current` and
+`bd edit` recover it. A
 rebuild with a different depth replaces the area. `bd current` is read-only and
 prints `<project>/bd_work (view <ref>)`; `--path` prints only the path and
 `--view` only the ref, and it errors when no area exists. `--status` and
@@ -220,6 +221,12 @@ are the explicit `name`, else the title slug, else the ref.
 
 `folder` is ordinary front matter: preserved, never read, and it affects no
 placement, naming, validation, or warning.
+
+Every directory in the work area and in `bd export tree` gets a generated
+`INDEX.md` listing its direct node files, then its immediate subfolders. It is
+derived from placement and `contains` order on every build, so it cannot go
+stale. The names `INDEX.md`, `AGENTS.md`, and `REFS.md` are reserved in every
+directory.
 
 Solutions:
 
@@ -267,8 +274,9 @@ bd export tree REF --out DIR
 bd export context|dot --view REF --out PATH
 ```
 
-`bd export tree REF --out DIR` is the single read-only tree projection;
-`context` and `dot` are the other export choices.
+`bd export tree REF --out DIR` is the single read-only tree projection, with one
+generated `INDEX.md` per folder; `context` and `dot` are the other export
+choices.
 
 Full syntax: [`docs/CHEATSHEET.md`](docs/CHEATSHEET.md) or `bd <command> --help`.
 

@@ -6,21 +6,23 @@ from bd_tree.api import export_view
 from bd_tree.errors import ExportError
 
 
-def test_tree_view_writes_nodes_and_one_index(write, tmp_path):
+def test_tree_view_writes_nodes_and_one_index_per_folder(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, contains=["2"], title="Root intent")
     write(nodes, 2, type="claim", layer="claims", section="claims", title="Thesis")
     out = tmp_path / "tree"
     result = export_view("tree", tmp_path, "1-1", out)
     assert result.nodes == 2
-    assert len(result.files) == 3
+    assert len(result.files) == 4
     index = (out / "INDEX.md").read_text(encoding="utf-8")
     assert "GENERATED FILE" in index
     assert "[Root intent](1-1-root-intent.md)" in index
     assert "[Thesis](claims/2-1.md)" in index
     assert (out / "1-1-root-intent.md").is_file()
     assert (out / "claims" / "2-1.md").is_file()
-    assert not (out / "claims" / "INDEX.md").exists()
+    claims_index = (out / "claims" / "INDEX.md").read_text(encoding="utf-8")
+    assert "# claims/" in claims_index
+    assert "[Thesis](2-1.md)" in claims_index
 
 
 def test_tree_refuses_non_empty_unless_force_or_clean(write, tmp_path):
@@ -471,3 +473,83 @@ def test_section_is_available_as_a_template_field(write, tmp_path):
     export_view("tree", tmp_path, "1-1", out, path_template="{section}/{ref}.md")
     assert (out / "dir" / "1-1.md").is_file()
     assert (out / "child-dir" / "2-1.md").is_file()
+
+
+def _folder_order_view(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2", "3", "4"], title="Root")
+    write(nodes, 2, section="/00-evolution", title="Evolution")
+    write(nodes, 3, section="/00-evolution", title="Index idea")
+    write(nodes, 4, section="/00-evolution/suggested", title="Stage")
+    return nodes
+
+
+def test_folder_index_lists_direct_files_then_subfolders_in_view_order(
+    write, tmp_path
+):
+    _folder_order_view(write, tmp_path)
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1-1", out)
+
+    index = (out / "00-evolution" / "INDEX.md").read_text(encoding="utf-8")
+    assert "# 00-evolution/" in index
+    assert "[Evolution](evolution.md)" in index
+    assert "[Index idea](index-idea.md)" in index
+    assert "[suggested](suggested/INDEX.md)" in index
+    assert index.index("evolution.md") < index.index("index-idea.md")
+    assert index.index("index-idea.md") < index.index("suggested/INDEX.md")
+    assert "[Stage]" not in index  # the stage file belongs to suggested/
+
+
+def test_folder_index_order_follows_contains_and_is_deterministic(write, tmp_path):
+    nodes = _folder_order_view(write, tmp_path)
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1-1", out)
+    first = (out / "00-evolution" / "INDEX.md").read_bytes()
+
+    write(nodes, 1, contains=["3", "2", "4"], title="Root")
+    export_view("tree", tmp_path, "1-1", out, force=True)
+    second = (out / "00-evolution" / "INDEX.md").read_text(encoding="utf-8")
+    assert second.index("[Index idea](index-idea.md)") < second.index(
+        "[Evolution](evolution.md)"
+    )
+
+    export_view("tree", tmp_path, "1-1", out, force=True)
+    assert (out / "00-evolution" / "INDEX.md").read_bytes() == second.encode()
+
+
+def test_multi_segment_section_indexes_each_prefix_directory(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"], title="Root")
+    write(nodes, 2, section="a/b", title="Nested")
+    out = tmp_path / "view"
+    export_view("tree", tmp_path, "1-1", out)
+
+    assert (out / "a" / "INDEX.md").is_file()
+    assert (out / "a" / "b" / "INDEX.md").is_file()
+    a_index = (out / "a" / "INDEX.md").read_text(encoding="utf-8")
+    assert "# a/" in a_index
+    assert "[b](b/INDEX.md)" in a_index
+    b_index = (out / "a" / "b" / "INDEX.md").read_text(encoding="utf-8")
+    assert "[Nested](nested.md)" in b_index
+
+
+def test_nested_index_name_collision_is_refused(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2"])
+    write(nodes, 2, section="claims", name="INDEX", title="Clash")
+    out = tmp_path / "view"
+    with pytest.raises(ExportError, match="collides with generated"):
+        export_view("tree", tmp_path, "1-1", out)
+
+
+def test_no_exported_path_ends_in_index_md(write, tmp_path):
+    _folder_order_view(write, tmp_path)
+    out = tmp_path / "view"
+    result = export_view("tree", tmp_path, "1-1", out)
+    node_paths = [
+        path.relative_to(out).as_posix()
+        for path in result.files
+        if path.name != "INDEX.md"
+    ]
+    assert all(not path.endswith("INDEX.md") for path in node_paths)

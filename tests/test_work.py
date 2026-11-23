@@ -919,3 +919,79 @@ def test_export_and_work_agree_on_section_paths(write, tmp_path):
 
     assert relpaths(tree) == relpaths(work)
     assert "section/claims/named.md" in relpaths(work)
+
+
+def test_work_writes_nested_indexes_and_reports_a_subdir_stray(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1-1", out)
+
+    for rel in (
+        "INDEX.md",
+        "intent/INDEX.md",
+        "claims/INDEX.md",
+        "review/INDEX.md",
+        "evidence/INDEX.md",
+    ):
+        path = out / rel
+        assert path.is_file() and not path.is_symlink()
+    index = (out / "claims" / "INDEX.md").read_text(encoding="utf-8")
+    assert "# claims/" in index
+    assert "[Title of 2-1](2-1.md)" in index
+    assert api.work(tmp_path, "1-1", out, status=True).ok
+
+    stray = out / "claims" / "stray.md"
+    stray.write_text("not a view node\n", encoding="utf-8")
+    status = api.work(tmp_path, "1-1", out, status=True)
+    assert not status.ok
+    assert _entry(status, "claims/stray.md").status == "stray"
+
+    stray.unlink()
+    assert api.work(tmp_path, "1-1", out, status=True).ok
+
+
+def test_work_nested_index_name_collision_is_refused(write, tmp_path):
+    from bd_tree.errors import ExportError
+
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, contains=["2-1"])
+    write(nodes, 2, section="claims", name="INDEX", title="Clash")
+    out = tmp_path / "work"
+    with pytest.raises(ExportError, match="collides with generated"):
+        api.work(tmp_path, "1-1", out)
+
+
+def test_work_rebuild_is_byte_identical_for_every_index(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1-1", out)
+    before = {
+        path.relative_to(out).as_posix(): path.read_bytes()
+        for path in out.rglob("INDEX.md")
+    }
+
+    api.work(tmp_path, "1-1", out)
+
+    after = {
+        path.relative_to(out).as_posix(): path.read_bytes()
+        for path in out.rglob("INDEX.md")
+    }
+    assert after == before
+
+
+def test_switching_views_removes_indexes_for_old_directories(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, version=1, contains=["2-1"], layer="intent", name="intent/1-1")
+    write(nodes, 2, version=1, layer="claims", name="claims/2-1")
+    write(nodes, 1, version=2, contains=["2-2"], layer="intent", name="intent/1-2")
+    write(nodes, 2, version=2, layer="evidence", name="evidence/2-2")
+
+    api.work(tmp_path, "1-1")
+    out = (tmp_path / "bd_work").resolve()
+    assert (out / "claims" / "INDEX.md").is_file()
+
+    api.work(tmp_path, "1-2")
+
+    assert not (out / "claims").exists()
+    assert (out / "evidence" / "INDEX.md").is_file()
+    assert api.work(tmp_path, "1-2", status=True).ok

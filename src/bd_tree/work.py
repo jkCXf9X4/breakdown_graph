@@ -11,8 +11,8 @@ different view replaces its contents, so a single area always shows exactly one
 view.  The API's ``out`` parameter is a programmatic override for tests and
 embedders; the CLI exposes only the one area.
 
-Three regular files are generated: ``INDEX.md`` and ``REFS.md`` (navigation) and
-``AGENTS.md`` (instructions for a human or agent browsing the tree).
+An ``INDEX.md`` is generated in every directory, plus ``REFS.md`` (navigation)
+and ``AGENTS.md`` (instructions for a human or agent browsing the tree).
 """
 
 from __future__ import annotations
@@ -24,7 +24,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .errors import BreakdownError, ExportError
-from .exporter import _build_paths, _index_text, _prepare_out
+from .exporter import (
+    _build_paths,
+    _directory_indexes,
+    _prepare_out,
+    _write_indexes,
+)
 from .frontmatter import FrontMatterError, parse_document
 from .fsutil import atomic_write, store_lock
 from .loader import load, load_view
@@ -232,6 +237,11 @@ def _classify(dest: Path, source: Path) -> str:
     return STATUS_MISSING
 
 
+def _generated_file(rel: str) -> bool:
+    """``INDEX.md`` is generated in every directory; the rest only at the root."""
+    return rel in GENERATED_SET or Path(rel).name == "INDEX.md"
+
+
 def _strays(out: Path, expected: set[str]) -> list[WorkEntry]:
     if not out.is_dir():
         return []
@@ -240,7 +250,7 @@ def _strays(out: Path, expected: set[str]) -> list[WorkEntry]:
         if path.is_symlink() or not path.is_file():
             continue
         rel = path.relative_to(out).as_posix()
-        if rel in expected or rel in GENERATED_SET:
+        if rel in expected or _generated_file(rel):
             continue
         found.append(WorkEntry(rel, None, STATUS_STRAY))
     return found
@@ -329,7 +339,7 @@ def _node_link_strays(
         if not path.is_symlink():
             continue
         rel = path.relative_to(out).as_posix()
-        if rel in known or rel in GENERATED_SET:
+        if rel in known or _generated_file(rel):
             continue
         try:
             target = path.resolve()
@@ -367,23 +377,6 @@ def _inspect(view: View, out: Path, path_template: str | None) -> list[WorkEntry
     entries.extend(_strays(out, set(paths.values())))
     entries.extend(_node_link_strays(view, out, set(paths.values())))
     return entries
-
-
-def _index_file(
-    view: View,
-    paths: dict[str, str],
-    title_field: str,
-    summary_field: str,
-    label: str,
-) -> str:
-    return _index_text(
-        view,
-        paths,
-        title_field,
-        summary_field,
-        banner=BANNER.format(ref=label),
-        label=label,
-    )
 
 
 def _refs_text(
@@ -530,12 +523,16 @@ def _build(
         dest.parent.mkdir(parents=True, exist_ok=True)
         _link(dest, node.path)
 
-    index_path = out / "INDEX.md"
-    index_path.write_text(
-        _index_file(view, paths, title_field, summary_field, label),
-        encoding="utf-8",
-        newline="",
+    indexes = _directory_indexes(
+        view,
+        paths,
+        title_field,
+        summary_field,
+        banner=BANNER.format(ref=label),
+        label=label,
     )
+    files.extend(_write_indexes(out, indexes))
+    _prune_empty_dirs(out)
     refs_path = out / "REFS.md"
     refs_path.write_text(
         _refs_text(view, paths, title_field, label), encoding="utf-8", newline=""
@@ -544,7 +541,7 @@ def _build(
     agents_path.write_text(
         _agents_text(view, label, git, depth), encoding="utf-8", newline=""
     )
-    files.extend((index_path, refs_path, agents_path))
+    files.extend((refs_path, agents_path))
 
     return WorkResult(
         out=out,

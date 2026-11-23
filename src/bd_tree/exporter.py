@@ -241,7 +241,10 @@ def _build_paths(
             path = _default_path(node, prefixes.get(ref, ""))
         else:
             path = render_path(node, template)
-        if path in reserved:
+        # Reserved names are refused in every directory, not only the root: a
+        # node may never resolve to a nested generated file such as
+        # ``<dir>/INDEX.md``.
+        if path.rsplit("/", 1)[-1] in reserved:
             raise ExportError(f"node {ref} path collides with generated '{path}'")
         previous = used.get(path)
         if previous is not None:
@@ -313,6 +316,116 @@ def _index_text(
     return "\n".join(lines)
 
 
+def _preorder_refs(view: View) -> list[str]:
+    """View refs in containment pre-order, matching :func:`_index_text`."""
+    order: list[str] = []
+    emitted: set[str] = set()
+
+    def walk(ref: str) -> None:
+        if ref in emitted or ref not in view.nodes:
+            return
+        emitted.add(ref)
+        order.append(ref)
+        for child in view.store.effective_contains(ref):
+            walk(child)
+
+    walk(view.ref)
+    for ref in sorted(view.nodes, key=lambda r: (view.nodes[r].id, view.nodes[r].version)):
+        if ref not in emitted:
+            walk(ref)
+    return order
+
+
+def _directory_indexes(
+    view: View,
+    paths: dict[str, str],
+    title_field: str,
+    summary_field: str,
+    *,
+    banner: str | None = None,
+    label: str | None = None,
+) -> dict[str, str]:
+    """Generated index text for the output root and every node directory.
+
+    The keys are output-relative directory POSIX paths (``""`` is the root).
+    Each non-root directory lists its direct node files in view pre-order, then
+    its immediate subdirectories in first-appearance order.  Every ancestor of
+    a node directory is included, so a multi-segment section never leaves a
+    bare prefix folder unindexed.
+    """
+    indexes = {
+        "": _index_text(
+            view,
+            paths,
+            title_field,
+            summary_field,
+            banner=banner,
+            label=label,
+        )
+    }
+    banner_text = banner if banner is not None else BANNER.format(name="tree")
+    directories: set[str] = {""}
+    subdirectories: dict[str, list[str]] = {}
+    direct: dict[str, list[str]] = {}
+
+    def parent(directory: str) -> str:
+        return directory.rsplit("/", 1)[0] if "/" in directory else ""
+
+    for ref in _preorder_refs(view):
+        path = paths.get(ref)
+        if path is None:
+            continue
+        directory = parent(path)
+        direct.setdefault(directory, []).append(ref)
+        chain: list[str] = []
+        current = directory
+        while current:
+            chain.append(current)
+            current = parent(current)
+        for current in reversed(chain):
+            if current in directories:
+                continue
+            directories.add(current)
+            subdirectories.setdefault(parent(current), []).append(
+                current.rsplit("/", 1)[-1]
+            )
+
+    for directory in sorted(directories):
+        if directory == "":
+            continue
+        lines = [banner_text, "", f"# {directory}/", ""]
+        for ref in direct.get(directory, []):
+            node = view.nodes[ref]
+            title = _display(node, title_field, node.ref)
+            summary = _display(node, summary_field, "")
+            suffix = f" — {summary}" if summary else ""
+            filename = paths[ref].rsplit("/", 1)[-1]
+            lines.append(f"- [{title}]({filename}){suffix}")
+        for name in subdirectories.get(directory, []):
+            lines.append(f"- [{name}]({name}/INDEX.md)")
+        lines.append("")
+        indexes[directory] = "\n".join(lines)
+    return indexes
+
+
+def _write_indexes(out: Path, indexes: dict[str, str]) -> list[Path]:
+    """Write every directory index and drop indexes no longer in the view."""
+    files: list[Path] = []
+    keep: set[Path] = set()
+    for directory in sorted(indexes):
+        path = out / directory / "INDEX.md" if directory else out / "INDEX.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(indexes[directory], encoding="utf-8", newline="")
+        keep.add(path)
+        files.append(path)
+    for stale in sorted(out.rglob("INDEX.md")):
+        if stale in keep:
+            continue
+        if stale.is_symlink() or stale.is_file():
+            stale.unlink()
+    return files
+
+
 @exporter("tree")
 def export_tree(
     view: View,
@@ -324,7 +437,7 @@ def export_tree(
     force: bool = False,
     clean: bool = False,
 ) -> ExportResult:
-    """Write every view node at its templated path plus one INDEX.md."""
+    """Write every view node at its templated path plus one INDEX.md per folder."""
     out = Path(out)
     _prepare_out(out, force=force, clean=clean)
     refs = sorted(view.nodes, key=lambda r: (view.nodes[r].id, view.nodes[r].version))
@@ -334,13 +447,10 @@ def export_tree(
     files: list[Path] = []
     for ref in refs:
         files.append(_write_node(out, view.nodes[ref], paths[ref]))
-    index_path = out / "INDEX.md"
-    index_path.write_text(
-        _index_text(view, paths, title_field, summary_field),
-        encoding="utf-8",
-        newline="",
+    indexes = _directory_indexes(
+        view, paths, title_field, summary_field, banner=None, label=None
     )
-    files.append(index_path)
+    files.extend(_write_indexes(out, indexes))
     return ExportResult("tree", out, len(refs), files)
 
 

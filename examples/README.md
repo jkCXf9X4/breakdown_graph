@@ -16,48 +16,57 @@ second work area.
 Every node file is `<id>-<version>.md`; this store ships one version per id.
 `ROOT` names `20-1`, the only containment root.
 
-## A header-free, chained tree
+## A fan-out header tree
 
-`20-1` has no grouping nodes: every node states a claim, and `contains` is a
-single chain from Intent to Evolution. Layer order is the chain; layer identity
-is a root-relative `section`:
+`20-1` is the only containment root and the view's front page. It fans out into
+three header nodes, one per layer, in pipeline order. A header is not a claim: it
+is the folder that places its layer's claims in context. Its body says what the
+folder answers; it never lists the children, because placement and sequence come
+from the view — `contains` order plus the generated `INDEX.md` in every folder —
+not from hand-maintained text.
 
-| Layer | Nodes | `section` |
-| --- | --- | --- |
-| Intent | `21-1` carrier, `22-1` leaf | `/00-intent` |
-| Product | `23-1` carrier, `24-1` leaf | `/01-product` |
-| Architecture | `25-1` carrier, `26-1` leaf | `/02-architecture` |
-| Implementation | `27-1` carrier, `28-1` leaf | `/03-implementation` |
-| Verification | `29-1` carrier, `30-1` leaf | `/04-verification` |
-| Operation | `31-1` carrier, `32-1` leaf | `/05-operation` |
-| Evolution | `33-1` carrier, `36-1` stage, `34-1`/`35-1` leaves | `/06-evolution`, `suggested`, `01-placement`/`02-snapshots` |
+| Layer | Header | Claims | `section` |
+| --- | --- | --- | --- |
+| Intent | `37-1` | `21-1` | `/00-intent` |
+| Product | `38-1` | `24-1` | `/01-product` |
+| Evolution | `43-1` | `33-1`, `36-1` stage, `34-1`/`35-1` leaves | `/02-evolution`, `suggested`, `01-placement`/`02-snapshots` |
 
 ```text
-20-1 -> 21-1 -> 23-1 -> 25-1 -> 27-1 -> 29-1 -> 31-1 -> 33-1 -> 36-1
-        leaf     leaf     leaf     leaf     leaf     leaf     stage   {34-1, 35-1}
+20-1 Product Breakdown
+├── 37-1 Intent
+│   └── 21-1 Credibility belongs to the producing chain
+├── 38-1 Product
+│   └── 24-1 Two axes, containment and links
+└── 43-1 Evolution
+    ├── 33-1 One index per folder
+    └── 36-1 Suggested work
+        ├── 34-1 Per-node placement mode
+        └── 35-1 Snapshot list and prune
 ```
 
-A leading `/` resolves the directory from the output root, so layer carriers and
-their leaves are siblings. A relative section inherits the parent prefix: `36-1`
-opens `06-evolution/suggested/` once, and its leaves declare only `01-placement`
-and `02-snapshots`. Because `36-1` is a real node, the stage is also a view root
-(`bd tree 36-1`) and a link target in its own right, parallel to the layer chain;
-links may target the stage or skip it for a leaf.
+A leading `/` resolves the directory from the output root, so each header opens a
+top-level folder and its claims inherit that prefix. A relative section inherits
+the parent prefix: `36-1` opens `02-evolution/suggested/` under the Evolution
+header, and its leaves declare only `01-placement` and `02-snapshots`, so the
+final path is `02-evolution/suggested/01-placement/…`. Numeric prefixes on
+headers and sub-folders make disk order match view order.
 
-That is both axes in one view: the seven layers are sequential sibling
-directories, Evolution has a nested `suggested/` stage, and that stage is itself
-sequenced with `01-`/`02-` folders. Two sections may share a directory when at
-most one of them opens a subtree; two nodes that both have containment children
-on one directory are refused.
+Because every section node emits its own file inside its directory
+(`src/bd_tree/exporter.py`), no folder is empty; each folder also gets a
+generated `INDEX.md`, so a header body stays context-only. At most one
+child-bearing section may use a directory, so sibling sub-folders need distinct
+names (`01-placement`, `02-snapshots`).
 
-Cross-layer references are links, not second parents: `27-1` links `25-1`
-(`implements`), `29-1` links `25-1` and `30-1` links `27-1` (`verifies`). A node
-reached through two parents would be a `multiple-parents` error.
+Both axes live in one view: the three layers are sequential sibling directories,
+Evolution has a nested `suggested/` stage, and that stage is itself sequenced with
+`01-`/`02-` folders. Because `36-1` is a real node, the stage is also a view root
+(`bd tree 36-1`) and a link target in its own right, parallel to its parent
+header.
 
 ## Placement
 
-The layer carriers are root-relative, so they stay as sibling directories; the
-Evolution stage node and its leaves are relative and nest two levels:
+The headers are root-relative, so they stay as sibling directories; the Evolution
+stage node and its leaves are relative and nest two levels beneath their header:
 
 ```sh
 bd work 20-1
@@ -65,44 +74,43 @@ bd work 20-1
 
 ```text
 bd_work/
-├── 00-root/product-breakdown-header-free.md
-├── 00-intent/credibility-of-the-chain.md
-├── 00-intent/no-layer-schema.md
-├── 01-product/claims-are-closure-data.md
-├── 01-product/two-axes.md
-├── 02-architecture/contains-is-ordered.md
-├── 02-architecture/links-is-a-dag.md
-├── 03-implementation/bd-check-validates.md
-├── 03-implementation/bd-tree-renders.md
-├── 04-verification/exit-code-tests.md
-├── 04-verification/multiple-parents-rejected.md
-├── 05-operation/exports-are-disposable.md
-├── 05-operation/run-check-and-stale.md
-├── 06-evolution/per-folder-index.md
-└── 06-evolution/suggested/
-    ├── suggested-work.md
-    ├── 01-placement/section-flat-idea.md
-    └── 02-snapshots/snapshot-list-and-prune.md
+├── 00-root/product-breakdown.md
+├── 00-intent/
+│   ├── intent.md
+│   └── credibility-of-the-chain.md
+├── 01-product/
+│   ├── product.md
+│   └── two-axes.md
+└── 02-evolution/
+    ├── evolution.md
+    ├── per-folder-index.md
+    └── suggested/
+        ├── suggested-work.md
+        ├── 01-placement/section-flat-idea.md
+        └── 02-snapshots/snapshot-list-and-prune.md
 ```
 
 `--path-template` still overrides the whole layout when a different route is
-wanted. `INDEX.md` indents by the chain while the folders follow the section
-layout — the same gap as the per-folder-index item (`33-1`, `34-1` here;
-`59-1` in `docs/breakdown`).
+wanted. Every folder gets its own generated `INDEX.md`: a folder lists the node
+files placed directly in it, then its immediate subfolders, both in view order.
+The root `INDEX.md` still indents by the containment tree while the folders
+follow the section layout. This closes the per-folder-index item (`33-1`, `34-1`
+here; `59-1` in `docs/breakdown`).
 
 ## Try it
 
 ```sh
 cd examples
 bd root                         # 20-1  (ROOT)
-bd tree                         # the chain, two levels
-bd tree 20-1 --depth 0          # the whole chain
+bd tree                         # root, headers, and claims
+bd tree 20-1 --depth 0          # the whole fan-out
 bd find links --limit 3
-bd path 30-1                    # ancestor chain to a leaf
+bd path 34-1                    # ancestor path to the deepest leaf
+bd tree 37-1                    # one layer as its own parallel view
 bd tree 36-1                    # the stage as its own parallel view
-bd work 20-1                    # layer folders plus the nested stage
+bd work 20-1                    # header folders plus the nested stage
 bd current                      # <project>/bd_work (view 20-1)
-bd edit 22-1                    # path inside the active view
+bd edit 21-1                    # path inside the active view
 ```
 
 These commands assume the package is installed (`pip install .` from the clone).

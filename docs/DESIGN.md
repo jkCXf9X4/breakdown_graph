@@ -253,13 +253,14 @@ bd_work/claims/thesis-claim.md -> ../../.bd_tree/nodes/49-1.md
 ```
 
 - Each node `.md` is a relative symlink to its node file; editing the link edits
-  the store, with no copy and no sync. `INDEX.md`, `AGENTS.md`, and `REFS.md` are
-  regular generated files. All views share one store, so an edit is visible in
-  every view that includes the node.
+  the store, with no copy and no sync. `INDEX.md` in every directory, `AGENTS.md`,
+  and `REFS.md` are regular generated files. All views share one store, so an
+  edit is visible in every view that includes the node.
 - `bd work REF` writes the single `<project>/bd_work`. A different ref replaces
-  the content of that area: stale links are removed, and `INDEX.md`, `REFS.md`,
-  and `AGENTS.md` are rewritten for the new view. With no REF, `bd work` uses the
-  default view. Never keep two writable work folders side by side.
+  the content of that area: stale links are removed, and the `INDEX.md` files
+  plus `REFS.md` and `AGENTS.md` are rewritten for the new view. With no REF,
+  `bd work` uses the default view. Never keep two writable work folders side by
+  side.
 - The view is still the full containment closure of one ref; the work area may
   materialize only the first `N` descendant levels of it. `bd work REF+N` (the
   same display suffix as `bd show`/`bd tree`) or `bd work REF --depth N` prunes
@@ -267,8 +268,8 @@ bd_work/claims/thesis-claim.md -> ../../.bd_tree/nodes/49-1.md
   alone and `--depth` overrides a suffix. Containment alone decides the
   materialized prefix; placement is the one deliberate exception, where a
   `section` node opens a directory for its descendants.
-  The generated `REFS.md`, `INDEX.md`, and `AGENTS.md` carry `REF+N`, so
-  `bd current`, `--status`, `--writeback`, and `bd edit` recover the
+  The generated `REFS.md`, the `INDEX.md` files, and `AGENTS.md` carry `REF+N`,
+  so `bd current`, `--status`, `--writeback`, and `bd edit` recover the
   materialized depth; `bd edit` rejects a ref outside that prefix. A rebuild
   with a different depth, including a plain `bd work REF`, replaces the area and
   removes links that are no longer materialized.
@@ -301,10 +302,13 @@ bd_work/claims/thesis-claim.md -> ../../.bd_tree/nodes/49-1.md
 - Switching with detached (edited but unsynced) files is refused: they would be
   lost. Run `bd work --writeback` first to keep them, or `--clean` to discard
   them.
-- Generated files: `INDEX.md`, `REFS.md` (path ↔ ref), and `AGENTS.md`. Inside
-  a git checkout, `AGENTS.md` also records branch, short commit, worktree, so
-  the folder identifies its solution boundary. Detection is best-effort: outside
-  git the fields are omitted and the layout is unchanged.
+- Generated files: an `INDEX.md` in every directory (its direct node files,
+  then its immediate subdirectories; the root keeps the full containment tree),
+  `REFS.md` (path ↔ ref), and `AGENTS.md`. Inside a git checkout, `AGENTS.md`
+  also records branch, short commit, worktree, so the folder identifies its
+  solution boundary. Detection is best-effort: outside git the fields are omitted
+  and the layout is unchanged. The generated file names are reserved in every
+  directory, so a node can never resolve to one.
 
 ### One work area at a time
 
@@ -322,7 +326,8 @@ scales; the context is not, and one work area is the interface that keeps them
 apart.
 
 Read-only projections remain: `bd export tree REF --out DIR` (the single tree
-projection, for review or publishing), `bd export context` (fresh nodes only,
+projection, with one `INDEX.md` per folder for review or publishing),
+`bd export context` (fresh nodes only,
 plus `STALE.md`, for an agent that must not write), and `bd export dot`
 (Graphviz). They are disposable snapshots, not a second work area; an agent
 session reads exactly one of them. A snapshot may be made many times because it
@@ -440,7 +445,8 @@ These are enforced or assumed:
    warn unless the target is another containment root.
 7. Arbitrary front matter is preserved on export.
 8. Work trees contain node `.md` symlinks plus regular generated files.
-9. Generated files (`INDEX.md`, `AGENTS.md`, `REFS.md`) are never hand-edited.
+9. Generated files (`INDEX.md` in every directory, `AGENTS.md`, `REFS.md`) are
+   never hand-edited.
 10. No generated artifact is committed.
 11. A view never crosses a branch, and neither does a version: a version is a
     node-local file in one branch; a solution is a git branch and worktree;
