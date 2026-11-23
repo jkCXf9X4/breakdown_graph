@@ -16,6 +16,13 @@ from .frontmatter import (
     rewrite_contains,
     rewrite_links,
 )
+from .fsutil import atomic_copy, atomic_write, publish_new, store_lock
+from .graph import (
+    layer_reaches,
+    relative_store,
+    require_layer,
+    require_layer_value,
+)
 from .loader import (
     ROOT_FILE,
     STORE_DIR,
@@ -29,7 +36,6 @@ from .loader import (
     ref_of,
     resolve_store_root,
 )
-from .fsutil import atomic_copy, atomic_write, publish_new, store_lock
 from .model import DiffEntry, Node, Store
 from .navigate import resolve_ref
 
@@ -50,7 +56,7 @@ def _existing(store: Store, ref: str, role: str) -> Node:
 
 
 def _reaches(store: Store, start: str, target: str) -> bool:
-    """Whether ``target`` is reachable from ``start`` through declared contains."""
+    """Whether ``target`` is reachable from ``start`` through the topology."""
     seen: set[str] = set()
     stack = [start]
     while stack:
@@ -60,8 +66,41 @@ def _reaches(store: Store, start: str, target: str) -> bool:
         if current in seen:
             continue
         seen.add(current)
-        stack.extend(store.effective_contains(current))
+        stack.extend(store.children(current))
     return False
+
+
+def _stage_value(node: Node) -> int | None:
+    """The node's integer ``stage``, or ``None`` when missing/invalid."""
+    value = node.meta.get("stage")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _order_value(node: Node) -> int:
+    """The node's integer ``order``; a missing or invalid value is ``0``."""
+    value = node.meta.get("order", 0)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return value
+
+
+def _link_sort_key(item: Any) -> tuple[int, int, int, str]:
+    target = _link_target(item)
+    if target is None:
+        return (1, 0, 0, "")
+    node_id, version = parse_ref(target)
+    return (0, node_id, version, "")
+
+
+def _insert_sorted_link(links: list[Any], edge: Any) -> list[Any]:
+    """Insert ``edge`` so the list stays ordered by target ref (merge-friendly)."""
+    key = _link_sort_key(edge)
+    for index, item in enumerate(links):
+        if _link_sort_key(item) > key:
+            return links[:index] + [edge] + links[index:]
+    return links + [edge]
 
 
 def _raw_links(document) -> list[Any]:
@@ -127,8 +166,14 @@ def _serialized(func):
     return wrapper
 
 
-def init_store(root: str | Path = ".") -> Path:
-    """Create the canonical project with a hidden store and return its root."""
+def init_store(root: str | Path = ".", *, graph: bool = False) -> Path:
+    """Create the canonical project with a hidden store and return its root.
+
+    The default store is containment (``contains: []``).  ``graph=True`` writes
+    a root with ``layer: root``, no ``stage``, no ``contains`` and no links,
+    which the topology detection reads as a relative-band graph store ready
+    for ``bd new --parent --layer``.
+    """
     project = Path(root).resolve()
     hidden = project / STORE_DIR / "nodes"
     legacy = project / "nodes"
@@ -139,8 +184,12 @@ def init_store(root: str | Path = ".") -> Path:
             )
     hidden.mkdir(parents=True, exist_ok=True)
     target = node_path(project / STORE_DIR, 1, 1)
+    if graph:
+        meta: dict[str, Any] = {"id": 1, "title": "Root", "layer": "root"}
+    else:
+        meta = {"id": 1, "title": "Root", "contains": []}
     target.write_text(
-        render_document({"id": 1, "title": "Root", "contains": []}, _ROOT_BODY),
+        render_document(meta, _ROOT_BODY),
         encoding="utf-8",
         newline="",
     )
@@ -225,7 +274,34 @@ def clone(
         taken.add(target_version)
         mapping[old_ref] = target_ref
 
-    if subtree:
+    if subtree and store.model == "graph":
+        # Rewire every cloned edge whose target was cloned too, leaving edges
+        # that leave the subtree pointing at the original nodes.
+        for old_ref, new_ref in mapping.items():
+            target = node_path(root, *parse_ref(new_ref))
+            document = parse_document(target.read_text(encoding="utf-8"))
+            links = _raw_links(document)
+            changed = False
+            new_links: list[Any] = []
+            for item in links:
+                mapped = _link_target(item)
+                if mapped in mapping:
+                    replacement = mapping[mapped]
+                    item = (
+                        {**item, "to": replacement}
+                        if isinstance(item, dict)
+                        else replacement
+                    )
+                    changed = True
+                new_links.append(item)
+            if changed:
+                atomic_write(
+                    target,
+                    document.with_raw_fm(
+                        rewrite_links(document.raw_fm, new_links)
+                    ),
+                )
+    elif subtree:
         for old_ref, new_ref in mapping.items():
             old_node = store.nodes[old_ref]
             new_children = [mapping.get(child, child) for child in old_node.contains]
@@ -261,6 +337,37 @@ def replace(
     _existing(store, new_ref, "new ref")
     if old_ref == new_ref:
         raise BreakdownError(f"refusing to replace {old_ref} with itself")
+
+    if store.model == "graph":
+        repointed: list[str] = []
+        for node in store.nodes.values():
+            document = parse_document(node.path.read_text(encoding="utf-8"))
+            links = _raw_links(document)
+            changed = False
+            new_links: list[Any] = []
+            for item in links:
+                if _link_target(item) == old_ref:
+                    item = (
+                        {**item, "to": new_ref}
+                        if isinstance(item, dict)
+                        else new_ref
+                    )
+                    changed = True
+                new_links.append(item)
+            if changed:
+                atomic_write(
+                    node.path,
+                    document.with_raw_fm(rewrite_links(document.raw_fm, new_links)),
+                )
+                repointed.append(node.ref)
+        was_root = store.root_ref == old_ref
+        if was_root:
+            set_root(root, new_ref)
+        if not repointed and not was_root:
+            raise BreakdownError(
+                f"{old_ref} has no inbound links; wire {new_ref} with bd link"
+            )
+        return old_ref, "ROOT" if was_root else "links", new_ref
 
     view = load_view(store)
     parents = [
@@ -385,12 +492,22 @@ NEW_NODE_DEFAULTS: dict[str, Any] = {"title": "", "summary": ""}
 def new_node(
     root: str | Path,
     *,
-    parent: str | int,
+    parent: str | int | None = None,
     fields: dict[str, Any] | None = None,
     body: str = "",
     links: list[dict[str, Any]] | None = None,
+    stage: int | None = None,
+    layer: str | None = None,
+    order: int | None = None,
+    link_type: str = "breaks_down",
 ) -> Path:
-    """Create the next global id at version 1 and append it to ``parent``.
+    """Create the next global id at version 1 and wire it to ``parent``.
+
+    Containment appends the new ref to the parent's ``contains`` list.  A graph
+    store instead appends a typed edge to the parent's ``links``.  An absolute
+    graph (some node declares ``stage``) sets an integer ``stage`` (parent
+    stage + 1, else 0); a relative graph (no ``stage`` anywhere) requires a
+    non-empty ``layer`` and derives the band from it.  Both set ``order`` (0).
 
     The whole id-pick/parent-rewrite/publish sequence holds the store lock, so
     concurrent writers get distinct ids and neither loses a sibling.  Both
@@ -401,8 +518,16 @@ def new_node(
     if "id" in fields:
         raise BreakdownError("'id' is assigned by bd new and cannot be given")
     store = load(root)
-    parent_ref = resolve_ref(store, parent)
-    parent_node = _existing(store, parent_ref, "parent")
+    graph = store.model == "graph"
+
+    if parent is None:
+        if not graph:
+            raise BreakdownError("a containment node needs a parent")
+        parent_ref: str | None = None
+        parent_node: Node | None = None
+    else:
+        parent_ref = resolve_ref(store, parent)
+        parent_node = _existing(store, parent_ref, "parent")
 
     node_id = max((node.id for node in store.nodes.values()), default=0) + 1
     meta: dict[str, Any] = {"id": node_id}
@@ -410,11 +535,98 @@ def new_node(
     meta.update(fields)
     if links:
         meta["links"] = links
+
+    if graph and relative_store(store):
+        if stage is not None or "stage" in fields:
+            raise BreakdownError("stores without stage use --layer")
+        if not isinstance(layer, str) or not layer.strip():
+            raise BreakdownError("a layer-band graph needs a non-empty --layer")
+        parsed_layer = require_layer_value(layer)
+        meta["layer"] = parsed_layer.raw
+        if order is not None:
+            if isinstance(order, bool) or not isinstance(order, int):
+                raise BreakdownError(f"invalid order {order!r}")
+            meta["order"] = order
+        elif "order" not in meta:
+            meta["order"] = 0
+        if not isinstance(meta.get("order"), int) or isinstance(
+            meta.get("order"), bool
+        ):
+            raise BreakdownError(
+                f"invalid order {meta.get('order')!r} (expected an integer)"
+            )
+        if parent_node is not None:
+            if not isinstance(link_type, str) or not link_type.strip():
+                raise BreakdownError("link type must be a non-empty string")
+            parent_layer = require_layer(parent_node)
+            new_ref = f"{node_id}-1"
+            if parent_layer.band == parsed_layer.band:
+                if _order_value(parent_node) >= meta["order"]:
+                    raise BreakdownError(
+                        f"edge {parent_ref} -> {new_ref} is not forward within "
+                        f"layer '{parent_layer.band}': order "
+                        f"{_order_value(parent_node)} >= {meta['order']}"
+                    )
+            elif layer_reaches(store, parsed_layer.band, parent_layer.band):
+                raise BreakdownError(
+                    f"edge {parent_ref} -> {new_ref} ({link_type}) would create "
+                    f"a layer cycle through '{parent_layer.band}' and "
+                    f"'{parsed_layer.band}'"
+                )
+    elif graph:
+        if layer is not None:
+            meta["layer"] = layer
+        if stage is not None:
+            if isinstance(stage, bool) or not isinstance(stage, int):
+                raise BreakdownError(f"invalid stage {stage!r}")
+            meta["stage"] = stage
+        elif "stage" not in meta:
+            parent_stage = (
+                _stage_value(parent_node) if parent_node is not None else None
+            )
+            meta["stage"] = parent_stage + 1 if parent_stage is not None else 0
+        if not isinstance(meta.get("stage"), int) or isinstance(
+            meta.get("stage"), bool
+        ):
+            raise BreakdownError(
+                f"invalid stage {meta.get('stage')!r} (expected an integer)"
+            )
+        if order is not None:
+            if isinstance(order, bool) or not isinstance(order, int):
+                raise BreakdownError(f"invalid order {order!r}")
+            meta["order"] = order
+        elif "order" not in meta:
+            meta["order"] = 0
+        if not isinstance(meta.get("order"), int) or isinstance(
+            meta.get("order"), bool
+        ):
+            raise BreakdownError(
+                f"invalid order {meta.get('order')!r} (expected an integer)"
+            )
+        if parent_node is not None and (
+            not isinstance(link_type, str) or not link_type.strip()
+        ):
+            raise BreakdownError("link type must be a non-empty string")
+
     target = node_path(root, node_id, 1)
     if target.exists():
         raise BreakdownError(f"node {node_id}-1 already exists at {target}")
 
     new_ref = ref_of(node_id, 1)
+    if graph:
+        if parent_node is not None:
+            document = parse_document(parent_node.path.read_text(encoding="utf-8"))
+            raw = _insert_sorted_link(
+                _raw_links(document), {"to": new_ref, "type": link_type}
+            )
+            atomic_write(
+                parent_node.path,
+                document.with_raw_fm(rewrite_links(document.raw_fm, raw)),
+            )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        publish_new(target, render_document(meta, body))
+        return target
+
     siblings = store.effective_contains(parent_ref)
     document = parse_document(parent_node.path.read_text(encoding="utf-8"))
     rewritten = rewrite_contains(document.raw_fm, siblings + [new_ref])
@@ -457,6 +669,8 @@ def contain(
     """Add ``child`` to ``parent``'s containment list, optionally positioned."""
     root = Path(root).resolve()
     store = load(root)
+    if store.model == "graph":
+        raise BreakdownError("graph stores use edges: bd link / bd unlink")
     parent_ref = resolve_ref(store, parent)
     child_ref = resolve_ref(store, child)
     parent_node = _existing(store, parent_ref, "parent")
@@ -497,6 +711,8 @@ def uncontain(root: str | Path, parent: str | int, child: str | int) -> Path:
     """Remove ``child`` from ``parent``'s containment list; never delete it."""
     root = Path(root).resolve()
     store = load(root)
+    if store.model == "graph":
+        raise BreakdownError("graph stores use edges: bd link / bd unlink")
     parent_ref = resolve_ref(store, parent)
     child_ref = resolve_ref(store, child)
     parent_node = _existing(store, parent_ref, "parent")
@@ -531,6 +747,34 @@ def link(
     target_ref = resolve_ref(store, target)
     source_node = _existing(store, source_ref, "source")
     target_node = _existing(store, target_ref, "target")
+    if store.model == "graph" and relative_store(store):
+        source_layer = require_layer(source_node)
+        target_layer = require_layer(target_node)
+        if source_layer.band == target_layer.band:
+            if _order_value(source_node) >= _order_value(target_node):
+                raise BreakdownError(
+                    f"edge {source_ref} -> {target_ref} ({link_type}) is not "
+                    f"forward within layer '{source_layer.band}': order "
+                    f"{_order_value(source_node)} >= {_order_value(target_node)}"
+                )
+        elif layer_reaches(store, target_layer.band, source_layer.band):
+            raise BreakdownError(
+                f"edge {source_ref} -> {target_ref} ({link_type}) would create "
+                f"a layer cycle through '{source_layer.band}' and "
+                f"'{target_layer.band}'"
+            )
+    elif store.model == "graph":
+        source_stage = _stage_value(source_node)
+        target_stage = _stage_value(target_node)
+        if (
+            source_stage is not None
+            and target_stage is not None
+            and source_stage >= target_stage
+        ):
+            raise BreakdownError(
+                f"edge {source_ref} -> {target_ref} ({link_type}) is not "
+                f"strictly forward: stage {source_stage} >= {target_stage}"
+            )
 
     document = parse_document(source_node.path.read_text(encoding="utf-8"))
     links = _raw_links(document)
@@ -555,7 +799,12 @@ def link(
         and declared_type.strip()
         and declared_type == link_type
     )
-    links.append(target_ref if bare else edge)
+    item = target_ref if bare else edge
+    links = (
+        _insert_sorted_link(links, item)
+        if store.model == "graph"
+        else links + [item]
+    )
     rewritten = rewrite_links(document.raw_fm, links)
     atomic_write(source_node.path, document.with_raw_fm(rewritten))
     return source_node.path

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bd_tree import api
 from bd_tree.api import check, init_store
 from bd_tree.cli import main
 from bd_tree.frontmatter import parse_document
@@ -110,3 +111,30 @@ def test_init_root_has_no_placement_fields_and_fresh_store_checks_clean(tmp_path
     assert result.ok
     assert result.issues == []
     assert result.nodes_scanned == 1
+
+
+def test_init_graph_cli_creates_a_staged_root_end_to_end(tmp_path, capsys):
+    project = tmp_path / "graph"
+    assert main(["init", "--graph", str(project)]) == 0
+    meta = parse_document(
+        (project / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")
+    ).meta
+    assert meta == {"id": 1, "title": "Root", "layer": "root"}
+    assert api.load(project).model == "graph"
+
+    assert main(["graph", "--root", str(project)]) == 0
+    assert "layer 0 — root" in capsys.readouterr().out
+    assert main(["audit", "--root", str(project)]) == 0
+    assert "0 errors, 0 warnings" in capsys.readouterr().out
+    result = check(project)
+    assert result.ok
+    assert result.nodes_scanned == 1
+
+    assert main(
+        ["new", "--parent", "1-1", "--layer", "next", "--field", "title=X", "--root", str(project)]
+    ) == 0
+    links = parse_document(
+        (project / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")
+    ).meta["links"]
+    assert links == [{"to": "2-1", "type": "breaks_down"}]
+    assert check(project).ok

@@ -606,12 +606,61 @@ def require_full_ref(text: str, role: str) -> str:
     raise BreakdownError(f"invalid ref '{text}' in {role}")
 
 
-def load_view(root: str | Path | Store, ref: str | None = None) -> View:
-    """Walk declared ``contains`` from ``ref`` and return the closure.
+def _load_graph_view(store: Store, canonical: str) -> View:
+    """Forward closure over ``Store.children``: links, not containment.
 
-    ``ref`` defaults to the store root.  Walking a bare ref raises
-    :class:`BreakdownError` naming the offending entry: a view can never pick a
-    version for the caller.
+    A node reached through several parents is included once, so cycles close
+    instead of raising; ``bd check`` reports them.  Edges keep every authored
+    link whose source and target are both in the closure.
+    """
+    included: dict[str, Node] = {}
+    seen: set[str] = set()
+    queue = [canonical]
+    while queue:
+        current = queue.pop(0)
+        if current in seen:
+            continue
+        node = store.nodes.get(current)
+        if node is None:
+            continue
+        seen.add(current)
+        included[current] = node
+        queue.extend(
+            child for child in store.children(current) if child not in seen
+        )
+
+    edges: list[Edge] = []
+    for node in included.values():
+        for link in node.links:
+            if link.to in included:
+                edges.append(
+                    Edge(
+                        node.ref,
+                        link.to,
+                        link.type,
+                        link.pinned,
+                        "link",
+                        link.propagating,
+                    )
+                )
+    return View(
+        store=store,
+        ref=canonical,
+        nodes=included,
+        edges=edges,
+        issues=list(store.issues),
+    )
+
+
+def load_view(root: str | Path | Store, ref: str | None = None) -> View:
+    """Return the selected topology closure rooted at ``ref``.
+
+    ``ref`` defaults to the store's default anchor.  A containment store walks
+    declared ``contains`` and reports tree-shape errors; a graph store walks
+    forward ``links`` with a seen-set and reports only the store's parse issues.
+
+    Walking a bare ref raises :class:`BreakdownError` naming the offending
+    entry: a view can never pick a version for the caller.
     """
     store = root if isinstance(root, Store) else load(root)
     issues: list[Issue] = []
@@ -645,6 +694,9 @@ def load_view(root: str | Path | Store, ref: str | None = None) -> View:
             )
         )
         return View(store=store, ref=canonical, nodes={}, edges=[], issues=issues)
+
+    if store.model == "graph":
+        return _load_graph_view(store, canonical)
 
     included: dict[str, Node] = {}
     parents: dict[str, str] = {}

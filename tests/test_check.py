@@ -257,14 +257,20 @@ def test_link_from_an_unreachable_node_rescues_nothing(write, tmp_path):
 
 
 def test_dangling_link_still_errors(write, tmp_path):
-    write(tmp_path / "nodes", 1, links=[{"to": "99", "type": "supports"}])
+    # Explicit containment: this test is about link validation, not graph topology.
+    write(
+        tmp_path / "nodes",
+        1,
+        contains=[],
+        links=[{"to": "99", "type": "supports"}],
+    )
     result = check(tmp_path)
     assert any(issue.code == "dangling-link" for issue in result.errors)
 
 
 def test_scalar_link_to_a_target_without_type_is_invalid(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, links=["10"])
+    write(nodes, 1, contains=[], links=["10"])
     write(nodes, 10)
     result = check(tmp_path)
     assert any(
@@ -275,7 +281,8 @@ def test_scalar_link_to_a_target_without_type_is_invalid(write, tmp_path):
 
 
 def test_scalar_link_to_a_missing_node_still_dangles(write, tmp_path):
-    write(tmp_path / "nodes", 1, links=["99"])
+    # Explicit containment: assert the containment dangling-link rule.
+    write(tmp_path / "nodes", 1, contains=[], links=["99"])
     result = check(tmp_path)
     assert any(issue.code == "dangling-link" for issue in result.errors)
     assert not any(issue.code == "invalid-link" for issue in result.errors)
@@ -293,7 +300,8 @@ def test_bare_ref_in_contains_is_an_error_and_blocks_the_view(write, tmp_path):
 
 def test_bare_ref_in_links_is_an_error_and_blocks_the_view(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, links=["2"], raw_refs=True)
+    # Explicit containment: the view walk must reject a bare link ref.
+    write(nodes, 1, contains=[], links=["2"], raw_refs=True)
     write(nodes, 2)
     result = check(tmp_path)
     assert any(issue.code == "bare-ref" for issue in result.errors)

@@ -70,7 +70,7 @@ def parse_ref_depth(text: str, override: int | None = None) -> RefDepth:
 
 
 def default_root(store: Store) -> str:
-    """Declared ``ROOT``, else the lowest node by ``(id, version)``."""
+    """Declared ``ROOT``, else the lowest topology root, else the lowest node."""
     ref = store.root_ref
     if ref is None:
         raise NavigationError("store has no nodes")
@@ -114,13 +114,41 @@ def get_node(store: Store, ref: str) -> Node:
 
 
 def view_roots(store: Store) -> list[Node]:
-    """Refs that no node lists in ``contains`` (containment roots), sorted."""
-    return store.containment_roots()
+    """Topology roots: graph sources or containment roots, sorted."""
+    return store.topology_roots()
 
 
 def ancestor_chain(store: Store, ref: str, root: str | None = None) -> list[str]:
-    """Refs from the store root down to ``ref``."""
+    """Refs from a topology root down to ``ref``.
+
+    Graph mode follows ``Store.parents``.  When a node has several parents the
+    first by ``(stage, id, version)`` is chosen, so the chain is deterministic
+    but one of several possible paths; the ambiguity is intentional and
+    reported by ``bd check`` rather than hidden.  Containment follows
+    ``effective_contains`` from ``root`` (default: the store anchor).
+    """
     target = get_node(store, ref).ref
+
+    if store.model == "graph":
+        chain = [target]
+        seen: set[str] = {target}
+        current = target
+        while True:
+            parents = [
+                parent
+                for parent in store.parents(current)
+                if parent in store.nodes
+            ]
+            if not parents or parents[0] in seen:
+                break
+            seen.add(parents[0])
+            chain.append(parents[0])
+            current = parents[0]
+        chain.reverse()
+        if root is not None and root in chain:
+            return chain[chain.index(root) :]
+        return chain
+
     start = root or default_root(store)
     path: list[str] = []
     seen: set[str] = set()
@@ -154,7 +182,11 @@ def _breadcrumb(store: Store, ref: str) -> str:
 def walk_containment(
     store: Store, ref: str, depth: int | None
 ) -> Iterator[tuple[Node, int]]:
-    """Pre-order ``(node, level)`` pairs, bounded by ``depth`` (None = unlimited)."""
+    """Pre-order ``(node, level)`` pairs over ``Store.children``.
+
+    Containment walks the declared order; graph mode follows link hops.  The
+    seen-set breaks cycles, and ``depth`` (None = unlimited) bounds the walk.
+    """
     seen: set[str] = set()
 
     def walk(current: str, level: int) -> Iterator[tuple[Node, int]]:
@@ -167,7 +199,7 @@ def walk_containment(
         yield node, level
         if depth is not None and level >= depth:
             return
-        for child in store.effective_contains(current):
+        for child in store.children(current):
             yield from walk(child, level + 1)
 
     yield from walk(ref, 0)
@@ -212,8 +244,47 @@ def _display_body(node: Node, max_chars: int) -> str:
     return body
 
 
+def _graph_link_footer(store: Store, printed: Iterable[str]) -> str:
+    """Authored out-edges and derived in-edges for every printed node."""
+    rows: list[str] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for ref in printed:
+        node = store.nodes.get(ref)
+        if node is None:
+            continue
+        for link in node.links:
+            key = ("out", ref, link.to, link.type)
+            if key in seen:
+                continue
+            seen.add(key)
+            target = store.nodes.get(link.to)
+            title = target.title if target is not None else "(missing)"
+            rows.append(f"- {ref} -> {link.to}  {title}  ({link.type})")
+        for parent in store.parents(ref):
+            parent_node = store.nodes.get(parent)
+            if parent_node is None:
+                continue
+            for link in parent_node.links:
+                if link.to != ref:
+                    continue
+                key = ("in", parent, ref, link.type)
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append(
+                    f"- {ref} <- {parent}  {parent_node.title}  "
+                    f"({link.type})  [derived]"
+                )
+    if not rows:
+        return ""
+    return "links:\n" + "\n".join(rows)
+
+
 def _link_footer(store: Store, ref: str, printed: Iterable[str]) -> str:
-    """Links from printed nodes that leave the view (one level, no recursion)."""
+    """Link footer: graph edges for printed nodes, else edges leaving the view."""
+    printed = list(printed)
+    if store.model == "graph":
+        return _graph_link_footer(store, printed)
     inside = set(load_view(store, ref).nodes)
     seen: set[tuple[str, str, str]] = set()
     rows: list[tuple[str, str, str, Node]] = []
@@ -299,7 +370,26 @@ def render_tree(
     fields: Iterable[str] | None = None,
     links: bool = False,
 ) -> str:
+    """Render a topology outline.
+
+    Containment keeps the declared containment tree and honours ``depth``
+    (default two levels).  A graph store renders the whole reachable stage
+    layout through ``graph.render_graph``; ``depth`` bounds containment only,
+    because the stage bands are the graph's presentation.
+    """
     root = get_node(store, ref)
+    if store.model == "graph":
+        from .graph import build_graph, graph_view, render_graph
+
+        graph = build_graph(store)
+        refs = graph_view(graph, root.ref)
+        blocks = [render_graph(graph, refs)]
+        if links:
+            footer = _link_footer(store, root.ref, refs)
+            if footer:
+                blocks.append(footer)
+        return "\n\n".join(blocks)
+
     lines = [f"{root.ref} {root.title}{_outline_suffix(root, fields, summary)}"]
     seen: set[str] = {root.ref}
 
@@ -335,6 +425,23 @@ def render_tree(
     return "\n".join(lines)
 
 
+def _cell(node: Node, column: str, max_chars: int) -> str:
+    if column == "ref":
+        value = node.ref
+    elif column == "title":
+        value = node.title
+    elif column == "summary":
+        value = node.summary
+    elif column == "body":
+        value = node.body.strip()
+    else:
+        value = format_value(node.meta.get(column, ""))
+    value = " ".join(value.splitlines())
+    if max_chars > 0 and len(value) > max_chars:
+        value = value[: max(0, max_chars - 3)].rstrip() + "..."
+    return value
+
+
 def render_ls(
     store: Store,
     ref: str,
@@ -345,27 +452,26 @@ def render_ls(
 ) -> str:
     cols = columns or ["ref", "title", "summary"]
     get_node(store, ref)
+    if store.model == "graph":
+        from .graph import band_prefix, build_graph, graph_layout, graph_view
+
+        graph = build_graph(store)
+        prefix = band_prefix(graph)
+        lines = ["  ".join(cols)]
+        for band in graph_layout(graph, graph_view(graph, ref)):
+            lines.append(f"{prefix} {band.stage} — {band.label}")
+            for band_ref in band.refs:
+                node = store.nodes[band_ref]
+                lines.append(
+                    "  ".join(_cell(node, column, max_chars) for column in cols)
+                )
+        return "\n".join(lines)
     walk_depth = None if depth == 0 else depth
     lines = ["  ".join(cols)]
     for node, level in walk_containment(store, ref, walk_depth):
         if level == 0:
             continue
-        cells: list[str] = []
-        for column in cols:
-            if column == "ref":
-                value = node.ref
-            elif column == "title":
-                value = node.title
-            elif column == "summary":
-                value = node.summary
-            elif column == "body":
-                value = node.body.strip()
-            else:
-                value = format_value(node.meta.get(column, ""))
-            value = " ".join(value.splitlines())
-            if max_chars > 0 and len(value) > max_chars:
-                value = value[: max(0, max_chars - 3)].rstrip() + "..."
-            cells.append(value)
+        cells = [_cell(node, column, max_chars) for column in cols]
         lines.append("  " * (level - 1) + "  ".join(cells))
     return "\n".join(lines)
 

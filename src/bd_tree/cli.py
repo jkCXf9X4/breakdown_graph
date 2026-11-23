@@ -25,6 +25,7 @@ from .graph import (
     render_graph,
     render_in,
     render_out,
+    render_svg,
     resolve_graph_ref,
 )
 from .loader import (
@@ -127,7 +128,7 @@ def _display_opts(args: argparse.Namespace) -> dict[str, object]:
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
-    root = api.init_store(args.dir)
+    root = api.init_store(args.dir, graph=args.graph)
     print(f"store initialized at {root}")
     print("next:")
     print(f"  cd {root}")
@@ -156,7 +157,7 @@ def _cmd_views(args: argparse.Namespace) -> int:
     store = api.load(_find_root(args.root))
     roots = view_roots(store)
     if not roots:
-        raise BreakdownError("store has no containment roots")
+        raise BreakdownError("store has no topology roots")
     width = max(len(node.ref) for node in roots)
     for node in roots:
         marker = " *" if node.ref == store.root_ref else ""
@@ -185,7 +186,12 @@ def _cmd_work(args: argparse.Namespace) -> int:
         # Malformed ref/depth syntax is a usage error (exit 2), not a miss.
         raise BreakdownError(str(exc)) from exc
     if parsed is not None:
-        ref, depth = resolve_ref(store, parsed.ref), parsed.depth
+        if store.model == "graph":
+            # A graph anchor resolves against the whole link graph, not only
+            # the default closure; api.work dispatches that resolution.
+            ref, depth = parsed.ref, parsed.depth
+        else:
+            ref, depth = resolve_ref(store, parsed.ref), parsed.depth
     result = api.work(
         root,
         ref,
@@ -280,6 +286,13 @@ def _cmd_export(args: argparse.Namespace) -> int:
     elif args.view_name == "graph":
         opts.update(force=args.force, clean=args.clean)
     elif args.view_name == "dot":
+        opts.update(
+            color_by=args.color_by,
+            shape_by=args.shape_by,
+            render=args.render,
+            render_out=args.render_out,
+        )
+    elif args.view_name == "svg":
         opts.update(color_by=args.color_by, shape_by=args.shape_by)
     result = api.export_view(
         args.view_name, _find_root(args.root), view, Path(args.out), **opts
@@ -316,7 +329,17 @@ def _cmd_graph(args: argparse.Namespace) -> int:
         types=args.type,
         stages=stages,
     )
-    print(render_dot(graph, refs) if args.dot else render_graph(graph, refs))
+    if args.svg:
+        text, kind = render_svg(graph, refs), "svg"
+    elif args.dot:
+        text, kind = render_dot(graph, refs), "dot"
+    else:
+        text, kind = render_graph(graph, refs), "text"
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8", newline="")
+        print(f"{kind} -> {args.out}")
+    else:
+        print(text)
     return 0
 
 
@@ -484,6 +507,10 @@ def _cmd_new(args: argparse.Namespace) -> int:
         parent=args.parent,
         fields=_parse_fields(args.field),
         body=args.body or "",
+        stage=args.stage,
+        layer=args.layer,
+        order=args.order,
+        link_type=args.type,
     )
     print(f"created {path.relative_to(root)}")
     return 0
@@ -638,7 +665,8 @@ def _cmd_path(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bd",
-        description="Numeric markdown information graph with containment views. "
+        description="A numeric markdown graph with two topologies: a containment "
+        "tree or a forward link graph, auto-detected per store. "
         "Front-matter fields are arbitrary; only id, legacy, contains and links "
         "have built-in meaning.",
         epilog="Start with `bd work`: it builds a writable symlink tree over the "
@@ -653,16 +681,28 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     init = sub.add_parser(
-        "init", help="create a store with one root node in an empty directory"
+        "init",
+        help="create a store with one root node in an empty directory",
+        description="Create a hidden store. The default is a containment root "
+        "with contains: []; --graph writes a layer-band root with layer: root, "
+        "no stage, no contains and no links (add edges with bd new --parent "
+        "--layer / bd link).",
     )
     init.add_argument("dir", nargs="?", default=".", help="store directory (default: .)")
+    init.add_argument(
+        "--graph",
+        action="store_true",
+        help="create a relative-band graph root (layer: root) instead of a "
+        "containment root",
+    )
     init.set_defaults(func=_cmd_init)
 
     work = sub.add_parser(
         "work",
         help="primary interface: writable symlink tree over the store",
         description="Build the single writable work area for one view. "
-        "A different REF replaces its contents.",
+        "A different REF replaces its contents. A containment view materializes "
+        "section directories; a graph view materializes stage bands.",
     )
     _add_root(work)
     work.add_argument(
@@ -670,14 +710,14 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default=None,
         help="view root ref, optionally with +DEPTH (default: ROOT file, "
-        "else lowest node)",
+        "else lowest topology root); in a graph store this is a link anchor",
     )
     work.add_argument(
         "--depth",
         type=int,
         default=None,
-        help="descendant levels to materialize (default: full closure; "
-        "0: root only)",
+        help="topology levels to materialize: containment descendant levels, "
+        "or graph link hops (default: full closure; 0: root only)",
     )
     _add_display(work)
     work.add_argument("--force", action="store_true", help="overwrite detached files")
@@ -706,7 +746,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     current.set_defaults(func=_cmd_current)
 
-    views = sub.add_parser("views", help="list containment roots")
+    views = sub.add_parser("views", help="list topology roots")
     _add_root(views)
     views.set_defaults(func=_cmd_views)
 
@@ -763,8 +803,9 @@ def build_parser() -> argparse.ArgumentParser:
     export_sub = export.add_subparsers(dest="view_name", required=True)
     for name, help_text in (
         ("context", "fresh nodes only, plus STALE.md and AGENTS.md"),
-        ("dot", "Graphviz dot graph"),
-        ("graph", "staged forward-graph snapshot with stage indexes"),
+        ("dot", "Graphviz dot graph, optionally rendered"),
+        ("graph", "staged forward-graph snapshot with stage indexes (graph stores only)"),
+        ("svg", "rendered Graphviz SVG of one view"),
         ("tree", "read-only copy of one view"),
     ):
         child = export_sub.add_parser(name, help=help_text)
@@ -799,6 +840,20 @@ def build_parser() -> argparse.ArgumentParser:
                 "--force", action="store_true", help="write into a non-empty dir"
             )
         else:
+            if name == "dot":
+                child.add_argument(
+                    "--render",
+                    action="append",
+                    choices=("svg", "png", "pdf"),
+                    metavar="FMT",
+                    default=None,
+                    help="also render FORMAT (repeatable; default: none)",
+                )
+                child.add_argument(
+                    "--render-out",
+                    default=None,
+                    help="path for the single rendered file",
+                )
             child.add_argument(
                 "--color-by",
                 default=None,
@@ -814,7 +869,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     graph = sub.add_parser(
         "graph",
-        help="render the staged forward graph (prototype beside containment)",
+        help="render the banded forward graph, stage or layer (graph stores only)",
     )
     _add_root(graph)
     graph.add_argument(
@@ -827,7 +882,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--depth", type=int, default=None, help="edge hops to follow (default: all)"
     )
     graph.add_argument(
-        "--stage", default=None, metavar="A:B", help="inclusive stage range"
+        "--stage",
+        default=None,
+        metavar="A:B",
+        help="inclusive band range (stage ordinal or top-level layer ordinal)",
     )
     graph.add_argument(
         "--type",
@@ -836,29 +894,44 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="T",
         help="only follow this link type (repeatable)",
     )
-    graph.add_argument("--dot", action="store_true", help="emit Graphviz DOT")
+    render = graph.add_mutually_exclusive_group()
+    render.add_argument("--dot", action="store_true", help="emit Graphviz DOT")
+    render.add_argument(
+        "--svg", action="store_true", help="render SVG with Graphviz"
+    )
+    graph.add_argument(
+        "--out", default=None, metavar="PATH", help="write the render to PATH"
+    )
     graph.set_defaults(func=_cmd_graph)
 
-    out = sub.add_parser("out", help="list a node's authored out-edges")
+    out = sub.add_parser(
+        "out", help="list a node's authored out-edges (graph stores only)"
+    )
     _add_root(out)
     out.add_argument("ref")
     out.set_defaults(func=_cmd_out)
 
     incoming = sub.add_parser(
-        "in", help="list a node's computed in-edges (derived)"
+        "in", help="list a node's computed in-edges, marked derived (graph stores only)"
     )
     _add_root(incoming)
     incoming.add_argument("ref")
     incoming.set_defaults(func=_cmd_in)
 
-    audit = sub.add_parser("audit", help="validate graph-mode stages and edges")
+    audit = sub.add_parser(
+        "audit",
+        help="validate the bands (stage or layer) and edges of a graph store "
+        "(graph only)",
+    )
     _add_root(audit)
     audit.add_argument(
         "ref", nargs="?", default=None, help="anchor ref (default: store root)"
     )
     audit.set_defaults(func=_cmd_audit)
 
-    check = sub.add_parser("check", help="validate the store and its views")
+    check = sub.add_parser(
+        "check", help="validate the store and its views; dispatches on topology"
+    )
     _add_root(check)
     check.add_argument(
         "--view",
@@ -899,7 +972,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     clone = sub.add_parser(
         "clone",
-        help="copy a node, or its containment subtree, to new versions",
+        help="copy a node or its subtree",
     )
     _add_root(clone)
     clone.add_argument("ref", help="source ref or bare selector")
@@ -909,14 +982,13 @@ def build_parser() -> argparse.ArgumentParser:
     clone.add_argument(
         "--subtree",
         action="store_true",
-        help="clone every containment descendant and rewire the copies to "
-        "each other",
+        help="clone every descendant and rewire the copies to each other",
     )
     clone.set_defaults(func=_cmd_clone)
 
     replace = sub.add_parser(
         "replace",
-        help="swap one contained ref for another, preserving its position",
+        help="repoint one ref to another",
     )
     _add_root(replace)
     replace.add_argument("old", help="ref currently in the default view")
@@ -944,7 +1016,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     migrate.set_defaults(func=_cmd_migrate)
 
-    diff = sub.add_parser("diff", help="compare two containment views id by id")
+    diff = sub.add_parser("diff", help="compare two views id by id")
     _add_root(diff)
     diff.add_argument("left")
     diff.add_argument("right")
@@ -963,10 +1035,23 @@ def build_parser() -> argparse.ArgumentParser:
     reconcile.set_defaults(func=_cmd_reconcile)
 
     new = sub.add_parser(
-        "new", help="create the next global id under a parent (fields are arbitrary)"
+        "new",
+        help="create the next global id under a parent "
+        "(containment: appends contains; graph: stage or layer, --order/--type, "
+        "and a link)",
+        description="Containment: append the new ref to the parent's contains. "
+        "Absolute graph (a node declares stage): set stage/order. Relative "
+        "graph (no stage anywhere): --layer is required and order places the "
+        "node inside its band. Both append a typed edge. The mode is detected "
+        "from the store.",
     )
     _add_root(new)
-    new.add_argument("--parent", required=True, help="parent ref (e.g. 1-1 or 5)")
+    new.add_argument(
+        "--parent",
+        default=None,
+        help="parent ref (e.g. 1-1 or 5); required for a containment store, "
+        "optional for a graph store (a new root)",
+    )
     new.add_argument(
         "--field",
         action="append",
@@ -975,9 +1060,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="arbitrary front-matter field (repeatable)",
     )
     new.add_argument("--body", default="", help="markdown body after the front matter")
+    new.add_argument(
+        "--stage",
+        type=int,
+        default=None,
+        help="absolute graph only: integer stage (default: parent stage + 1, "
+        "else 0); a store without stage rejects it in favour of --layer",
+    )
+    new.add_argument(
+        "--layer",
+        default=None,
+        help="relative graph only: layer path BAND/SUBPATH (required when no "
+        "node declares stage; the band is the first segment and bare layer "
+        "names may nest by the shortest-path rule)",
+    )
+    new.add_argument(
+        "--order",
+        type=int,
+        default=None,
+        help="graph only: integer order within the band (default: 0)",
+    )
+    new.add_argument(
+        "--type",
+        default="breaks_down",
+        help="graph only: edge type from --parent (default: breaks_down)",
+    )
     new.set_defaults(func=_cmd_new)
 
-    contain = sub.add_parser("contain", help="add a child to a parent's tree")
+    contain = sub.add_parser(
+        "contain",
+        help="add a child to a parent's tree (containment stores only)",
+        description="Containment stores add the child to the parent's contains. "
+        "Graph stores use edges: bd link / bd unlink.",
+    )
     _add_root(contain)
     contain.add_argument("parent", metavar="PARENT")
     contain.add_argument("child", metavar="CHILD")
@@ -990,13 +1105,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contain.set_defaults(func=_cmd_contain)
 
-    uncontain = sub.add_parser("uncontain", help="remove a child from a parent's tree")
+    uncontain = sub.add_parser(
+        "uncontain",
+        help="remove a child from a parent's tree (containment stores only)",
+        description="Containment stores remove the child from contains. "
+        "Graph stores use edges: bd link / bd unlink.",
+    )
     _add_root(uncontain)
     uncontain.add_argument("parent", metavar="PARENT")
     uncontain.add_argument("child", metavar="CHILD")
     uncontain.set_defaults(func=_cmd_uncontain)
 
-    link = sub.add_parser("link", help="append a typed link edge")
+    link = sub.add_parser(
+        "link",
+        help="append a typed link edge",
+        description="Append a typed edge. In a graph store the target must "
+        "exist and be in a strictly later stage; edges stay sorted by target.",
+    )
     _add_root(link)
     link.add_argument("source", metavar="FROM")
     link.add_argument("target", metavar="TO")
@@ -1038,13 +1163,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="header fields to print (default: all non-reserved fields)",
     )
     show.add_argument(
-        "--links", action="store_true", help="list links that leave the view"
+        "--links",
+        action="store_true",
+        help="list links (graph: authored out and derived in; "
+        "containment: edges leaving the view)",
     )
     show.set_defaults(func=_cmd_show)
 
     tree = sub.add_parser(
         "tree",
-        help="print the containment outline, or a column table with --columns",
+        help="print the topology outline, or a column table with --columns",
     )
     _add_root(tree)
     tree.add_argument(
@@ -1061,7 +1189,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--fields", default=None, metavar="F,F", help="append selected field values"
     )
     tree.add_argument(
-        "--links", action="store_true", help="list links that leave the view"
+        "--links",
+        action="store_true",
+        help="list links (graph: authored out and derived in; "
+        "containment: edges leaving the view)",
     )
     tree.add_argument(
         "--columns",

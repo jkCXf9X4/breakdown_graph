@@ -13,7 +13,7 @@ def test_check_exit_status(write, tmp_path):
 
 
 def test_export_tree_writes_view_output_shape(write, tmp_path):
-    write(tmp_path / "nodes", 1, title="Root", layer="intent", section="intent")
+    write(tmp_path / "nodes", 1, title="Root", contains=[], layer="intent", section="intent")
     out = tmp_path / "out"
     assert (
         main(["export", "tree", "1", "--root", str(tmp_path), "--out", str(out), "--clean"])
@@ -367,3 +367,27 @@ def test_edit_prints_a_nested_section_path(write, tmp_path, capsys):
     assert main(["edit", "2-1", "--root", str(tmp_path)]) == 0
     expected = tmp_path / "bd_work" / "06-evolution" / "claims" / "idea.md"
     assert capsys.readouterr().out == f"{expected}\n"
+
+
+def test_help_texts_are_topology_neutral(capsys):
+    commands = [
+        ["--help"],
+        ["views", "--help"],
+        ["graph", "--help"],
+        ["diff", "--help"],
+        ["clone", "--help"],
+        ["replace", "--help"],
+        ["new", "--help"],
+        ["audit", "--help"],
+        ["out", "--help"],
+        ["in", "--help"],
+        ["check", "--help"],
+        ["tree", "--help"],
+    ]
+    for argv in commands:
+        with pytest.raises(SystemExit) as excinfo:
+            main(argv)
+        assert excinfo.value.code == 0
+        out = capsys.readouterr().out
+        assert "prototype" not in out
+        assert "containment views" not in out

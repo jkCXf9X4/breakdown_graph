@@ -148,12 +148,25 @@ class WorkResult:
 
 def _resolve_view(root: str | Path, ref: str | int | None) -> View:
     store = load(root)
-    if ref is None:
-        target = store.root_ref
-        if target is None:
-            raise BreakdownError("store has no nodes")
+    if store.model == "graph":
+        # A graph store's view is the forward link closure; a bare id selects
+        # its highest existing version, exactly as `bd graph` does.
+        from .graph import build_graph, default_anchor, resolve_graph_ref
+
+        graph = build_graph(store)
+        if ref is None:
+            target = default_anchor(graph)
+            if target is None:
+                raise BreakdownError("store has no nodes")
+        else:
+            target = resolve_graph_ref(graph, ref)
     else:
-        target = resolve_ref(store, ref)
+        if ref is None:
+            target = store.root_ref
+            if target is None:
+                raise BreakdownError("store has no nodes")
+        else:
+            target = resolve_ref(store, ref)
     view = load_view(store, target)
     errors = [issue for issue in view.issues if issue.level == "error"]
     if errors:
@@ -174,10 +187,11 @@ def _depth_label(ref: str, depth: int | None) -> str:
 
 
 def _depth_view(view: View, depth: int | None) -> View:
-    """Return ``view`` filtered to nodes within ``depth`` levels of its root.
+    """Return ``view`` filtered to nodes within ``depth`` topology hops.
 
-    ``view`` is already the containment closure, so this is a prefix of that
-    closure along ``effective_contains``.  ``None`` keeps the full closure.
+    ``view`` is already the dispatched closure, so this is a prefix of that
+    closure along ``Store.children``: containment prefix for a tree, link hops
+    for a graph.  ``None`` keeps the full closure.
     """
     if depth is None:
         return view
@@ -191,7 +205,7 @@ def _depth_view(view: View, depth: int | None) -> View:
         kept.add(ref)
         if level >= depth:
             return
-        for child in view.store.effective_contains(ref):
+        for child in view.store.children(ref):
             walk(child, level + 1)
 
     walk(view.ref, 0)

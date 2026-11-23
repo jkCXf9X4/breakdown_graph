@@ -9,6 +9,7 @@ here.
 from __future__ import annotations
 
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -230,14 +231,24 @@ def _build_paths(
 ) -> dict[str, str]:
     paths: dict[str, str] = {}
     used: dict[str, str] = {}
-    if template is None:
+    refs = list(refs)
+    graph_paths: dict[str, str] | None = None
+    if template is None and view.model == "graph":
+        # Imported lazily: graph.py imports this module's banner and helpers.
+        from .graph import build_graph, layout_paths
+
+        graph_paths = layout_paths(build_graph(view.store), refs)
+        prefixes: dict[str, str] = {}
+    elif template is None:
         prefixes, _ = _section_layout(view)
         _check_section_dirs(view, prefixes)
     else:
         prefixes = {}
     for ref in refs:
         node = view.nodes[ref]
-        if template is None:
+        if graph_paths is not None:
+            path = graph_paths[ref]
+        elif template is None:
             path = _default_path(node, prefixes.get(ref, ""))
         else:
             path = render_path(node, template)
@@ -303,7 +314,7 @@ def _index_text(
         indent = "  " * depth
         suffix = f" — {summary}" if summary else ""
         lines.append(f"{indent}- [{title}]({paths[ref]}){suffix}")
-        for child in view.store.effective_contains(ref):
+        for child in view.store.children(ref):
             walk(child, depth + 1)
 
     walk(view.ref, 0)
@@ -326,7 +337,7 @@ def _preorder_refs(view: View) -> list[str]:
             return
         emitted.add(ref)
         order.append(ref)
-        for child in view.store.effective_contains(ref):
+        for child in view.store.children(ref):
             walk(child)
 
     walk(view.ref)
@@ -569,22 +580,7 @@ def _value_map(
     return {value: index for index, value in enumerate(sorted(values))}
 
 
-@exporter("dot")
-def export_dot(
-    view: View,
-    out: Path,
-    *,
-    color_by: str | None = None,
-    shape_by: str | None = None,
-    force: bool = False,
-    clean: bool = False,
-) -> ExportResult:
-    """Write a Graphviz graph with field-driven colours and shapes."""
-    out = Path(out)
-    if out.exists() and out.is_dir():
-        raise ExportError(f"output '{out}' is a directory")
-    out.parent.mkdir(parents=True, exist_ok=True)
-
+def _dot_text(view: View, color_by: str | None, shape_by: str | None) -> str:
     nodes = list(view.nodes.values())
     if color_by is None and any(node.meta.get("layer") not in (None, "") for node in nodes):
         color_by = "layer"
@@ -642,5 +638,84 @@ def export_dot(
         )
     lines.append("}")
     lines.append("")
-    out.write_text("\n".join(lines), encoding="utf-8", newline="")
-    return ExportResult("dot", out, len(nodes), [out])
+    return "\n".join(lines)
+
+
+def _run_dot(dot_text: str, fmt: str) -> bytes:
+    dot_path = shutil.which("dot")
+    if dot_path is None:
+        raise ExportError(
+            f"Graphviz 'dot' not found; install Graphviz to render {fmt}"
+        )
+    try:
+        completed = subprocess.run(
+            [dot_path, f"-T{fmt}"],
+            input=dot_text.encode("utf-8"),
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise ExportError(f"failed to run Graphviz 'dot': {exc}") from exc
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", "replace").strip()
+        raise ExportError(
+            f"Graphviz 'dot' failed (exit {completed.returncode}): "
+            f"{detail or 'no diagnostic'}"
+        )
+    return completed.stdout
+
+
+@exporter("dot")
+def export_dot(
+    view: View,
+    out: Path,
+    *,
+    color_by: str | None = None,
+    shape_by: str | None = None,
+    render: list[str] | None = None,
+    render_out: str | None = None,
+    force: bool = False,
+    clean: bool = False,
+) -> ExportResult:
+    """Write a Graphviz graph, optionally rendering it with Graphviz."""
+    out = Path(out)
+    if out.exists() and out.is_dir():
+        raise ExportError(f"output '{out}' is a directory")
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    text = _dot_text(view, color_by, shape_by)
+    out.write_text(text, encoding="utf-8", newline="")
+    files = [out]
+
+    formats = list(render or [])
+    if render_out is not None and len(formats) != 1:
+        raise ExportError("--render-out requires exactly one --render format")
+    for fmt in formats:
+        destination = (
+            Path(render_out) if render_out is not None else out.with_suffix(f".{fmt}")
+        )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(_run_dot(text, fmt))
+        files.append(destination)
+    return ExportResult("dot", out, len(view.nodes), files)
+
+
+@exporter("svg")
+def export_svg(
+    view: View,
+    out: Path,
+    *,
+    color_by: str | None = None,
+    shape_by: str | None = None,
+    force: bool = False,
+    clean: bool = False,
+) -> ExportResult:
+    """Render one view to SVG with Graphviz."""
+    out = Path(out)
+    if out.exists() and out.is_dir():
+        raise ExportError(f"output '{out}' is a directory")
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    text = _dot_text(view, color_by, shape_by)
+    out.write_bytes(_run_dot(text, "svg"))
+    return ExportResult("svg", out, len(view.nodes), [out])

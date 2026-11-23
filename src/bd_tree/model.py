@@ -164,12 +164,51 @@ class Issue:
         return f"{prefix}: {self.message}"
 
 
+def _stage_key(node: Node) -> tuple[int, int, int, int]:
+    """Deterministic graph order: ``(stage, id, version)`` when a stage exists.
+
+    Nodes without an integer ``stage`` (a relative layer-only store, or a
+    half-built absolute one) sort after staged nodes by ``(id, version)`` so
+    the key is total and deterministic.
+    """
+    value = node.meta.get("stage")
+    if isinstance(value, int) and not isinstance(value, bool):
+        return (0, value, node.id, node.version)
+    return (1, 0, node.id, node.version)
+
+
 @dataclass
 class Store:
     root: Path
     nodes: dict[str, Node]  # ref -> node, every file
     issues: list[Issue]
     declared_root: str | None = None  # ref read from the store's ROOT file
+
+    @property
+    def model(self) -> str:
+        """Topology family of this store: ``"graph"`` or ``"containment"``.
+
+        A graph store is one where no node declares a ``contains`` key and at
+        least one node has a non-empty ``links`` list, declares ``stage``, or
+        declares a non-empty ``layer``.  The ``stage`` and ``layer`` clauses
+        let a fresh graph store exist before it has any edge.  Everything else
+        — an empty store, a legacy store with none of those keys, or any store
+        with a containment list — is containment.  The choice is per store,
+        never per node.
+        """
+        if any("contains" in node.meta for node in self.nodes.values()):
+            return "containment"
+
+        def layered(node: Node) -> bool:
+            value = node.meta.get("layer")
+            return isinstance(value, str) and bool(value.strip())
+
+        if any(
+            node.links or "stage" in node.meta or layered(node)
+            for node in self.nodes.values()
+        ):
+            return "graph"
+        return "containment"
 
     @property
     def project_root(self) -> Path:
@@ -184,9 +223,11 @@ class Store:
 
     @property
     def root_ref(self) -> str | None:
-        """The store's root: declared ``ROOT``, else the lowest node.
+        """The store's default anchor.
 
-        "Lowest" is by ``(id, version)``.  A declared root is returned even when
+        Declared ``ROOT`` wins.  Otherwise a graph store picks its lowest
+        topology root by ``(stage, id, version)``; a containment store picks the
+        lowest node by ``(id, version)``.  A declared root is returned even when
         its file is missing, so the breakage is reported instead of silently
         falling back.
         """
@@ -194,9 +235,63 @@ class Store:
             return self.declared_root
         if not self.nodes:
             return None
+        if self.model == "graph":
+            roots = self.topology_roots()
+            return roots[0].ref if roots else None
         return min(
             self.nodes.values(), key=lambda node: (node.id, node.version)
         ).ref
+
+    def children(self, ref: str) -> list[str]:
+        """Topology children of ``ref``, in authored order.
+
+        Graph: the node's ``links`` targets (full refs only) as written.
+        Containment: ``effective_contains(ref)``.
+        """
+        if self.model == "graph":
+            from .loader import is_full_ref
+
+            node = self.nodes.get(ref)
+            if node is None:
+                return []
+            return [link.to for link in node.links if is_full_ref(link.to)]
+        return self.effective_contains(ref)
+
+    def parents(self, ref: str) -> list[str]:
+        """Topology parents of ``ref``.
+
+        Graph: refs whose ``links`` target ``ref``, sorted by
+        ``(stage, id, version)`` when stages exist.  Containment: nodes that
+        list ``ref`` in ``effective_contains``, in reverse containment order.
+        """
+        if self.model == "graph":
+            found = [
+                node
+                for node in self.nodes.values()
+                if any(link.to == ref for link in node.links)
+            ]
+            return [node.ref for node in sorted(found, key=_stage_key)]
+        found = [
+            node
+            for node in self.nodes.values()
+            if ref in self.effective_contains(node.ref)
+        ]
+        return [node.ref for node in reversed(found)]
+
+    def topology_roots(self) -> list[Node]:
+        """Refs no other node reaches through the store's topology.
+
+        Graph: nodes with no parents, sorted by ``(stage, id, version)``.
+        Containment: ``containment_roots()``.
+        """
+        if self.model == "graph":
+            roots = [
+                node
+                for node in self.nodes.values()
+                if not self.parents(node.ref)
+            ]
+            return sorted(roots, key=_stage_key)
+        return self.containment_roots()
 
     def versions(self, node_id: int) -> list[Node]:
         """Every existing version of ``node_id``, ascending by version."""
@@ -272,6 +367,11 @@ class View:
     @property
     def root_ref(self) -> str:
         return self.ref
+
+    @property
+    def model(self) -> str:
+        """Topology family inherited from the store: graph or containment."""
+        return self.store.model
 
     def current_ref(self, node_id: int) -> str | None:
         """The ref of logical ``node_id`` inside this view, else ``None``.

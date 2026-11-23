@@ -74,7 +74,7 @@ def _sort_key(node: Node) -> tuple[int, int]:
 
 
 def default_root_ref(store: Store) -> str:
-    """Declared ``ROOT``, else the lowest ``(id, version)``; ``1-1`` when empty."""
+    """Declared ``ROOT``, else the lowest topology root; ``1-1`` when empty."""
     return store.root_ref or "1-1"
 
 
@@ -329,6 +329,53 @@ def check(
             )
 
     issues: list[Issue] = list(store.issues)
+
+    if store.model == "graph":
+        from .graph import audit as graph_audit
+        from .graph import build_graph
+
+        selected = canonical_root
+        if view is not None:
+            selected, problem = _resolve(view)
+            if selected is None:
+                if problem is not None:
+                    issues.append(problem)
+                issues = _dedupe(issues)
+                issues.sort(
+                    key=lambda i: (i.level != "error", i.node or "", i.code, i.message)
+                )
+                return CheckResult(root_path, str(view), 0, issues)
+
+        if selected not in store.nodes:
+            issues.append(
+                Issue(
+                    "error",
+                    "root-ref-missing",
+                    f"root ref '{selected}' does not exist",
+                    node=selected,
+                )
+            )
+            resolved = View(
+                store=store, ref=str(selected), nodes={}, edges=[], issues=[]
+            )
+        else:
+            graph = build_graph(store)
+            issues.extend(graph_audit(graph, selected))
+            resolved = load_view(store, selected)
+            issues.extend(resolved.issues)
+            _check_freshness(resolved, issues)
+            _check_sizes(
+                resolved,
+                issues,
+                SIZE_LINES if max_lines is None else max_lines,
+                SIZE_CHARS if max_chars is None else max_chars,
+            )
+        _check_required(store, list(require), issues)
+
+        issues = _dedupe(issues)
+        issues.sort(key=lambda i: (i.level != "error", i.node or "", i.code, i.message))
+        return CheckResult(root_path, resolved.ref, len(resolved.nodes), issues)
+
     _check_targets_and_cycles(store, issues)
     _check_reachability(store, canonical_root, issues)
     _check_view_trees(store, issues)

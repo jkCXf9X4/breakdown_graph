@@ -144,9 +144,9 @@ __all__ = [
 ]
 
 
-def init_store(root: str | Path = ".") -> Path:
+def init_store(root: str | Path = ".", *, graph: bool = False) -> Path:
     """Create ``.bd_tree/nodes/1-1.md`` in an empty project and return its root."""
-    return _init_store(root)
+    return _init_store(root, graph=graph)
 
 
 def load(root: str | Path) -> Store:
@@ -155,8 +155,9 @@ def load(root: str | Path) -> Store:
 
 
 def load_view(root: str | Path | Store, ref: str | int | None = None) -> View:
-    """Containment closure rooted at ``ref`` (default: the store root).
+    """Selected topology closure rooted at ``ref`` (default: the store anchor).
 
+    Containment follows ``contains``; a graph store follows forward ``links``.
     ``ref`` may be a bare selector; it is resolved through the default view.
     """
     store = root if isinstance(root, Store) else _load(root)
@@ -165,7 +166,7 @@ def load_view(root: str | Path | Store, ref: str | int | None = None) -> View:
 
 
 def default_root(root: Store | str | Path) -> str:
-    """Declared ``ROOT``, else the lowest node by ``(id, version)``."""
+    """Declared ``ROOT``, else the lowest topology root, else the lowest node."""
     store = root if isinstance(root, Store) else _load(root)
     return _default_root(store)
 
@@ -301,10 +302,14 @@ def diff(root: str | Path, left: str | int, right: str | int) -> list[DiffEntry]
 def new_node(
     root: str | Path,
     *,
-    parent: str | int,
+    parent: str | int | None = None,
     fields: dict[str, Any] | None = None,
     body: str = "",
     links: list[dict[str, Any]] | None = None,
+    stage: int | None = None,
+    layer: str | None = None,
+    order: int | None = None,
+    link_type: str = "breaks_down",
 ) -> Path:
     """Create the next global id at version 1 under ``parent``."""
     return _new_node(
@@ -313,6 +318,10 @@ def new_node(
         fields=fields,
         body=body,
         links=links,
+        stage=stage,
+        layer=layer,
+        order=order,
+        link_type=link_type,
     )
 
 
