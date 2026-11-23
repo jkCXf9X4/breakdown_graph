@@ -309,6 +309,32 @@ def _display(node: Node, field: str, fallback: str) -> str:
     return str(value)
 
 
+def _nodes_pointer(nodes_link: str) -> str:
+    """A link from a generated index to the store's real node folder."""
+    return (
+        f"_Real node files: [nodes/]({nodes_link}/) — open, copy, or delete the "
+        "store files there._"
+    )
+
+
+def _node_entry(
+    node: Node,
+    label: str,
+    target: str,
+    *,
+    indent: str = "",
+    summary: str = "",
+    nodes_link: str | None = None,
+) -> str:
+    """One index entry: the view link, then a direct link to the real file."""
+    line = f"{indent}- [{label}]({target})"
+    if nodes_link is not None:
+        line += f" — [real file]({nodes_link}/{node.path.name})"
+    if summary:
+        line += f" — {summary}"
+    return line
+
+
 def _index_text(
     view: View,
     paths: dict[str, str],
@@ -317,13 +343,21 @@ def _index_text(
     *,
     banner: str | None = None,
     label: str | None = None,
+    nodes_link: str | None = None,
 ) -> str:
-    lines = [
-        banner if banner is not None else BANNER.format(name="tree"),
-        "",
-        f"# View {view.ref if label is None else label}",
-        "",
-    ]
+    lines: list[str] = []
+    if nodes_link is not None:
+        lines.extend(["---", f"nodes: {nodes_link}", "---", ""])
+    lines.extend(
+        [
+            banner if banner is not None else BANNER.format(name="tree"),
+            "",
+            f"# View {view.ref if label is None else label}",
+            "",
+        ]
+    )
+    if nodes_link is not None:
+        lines.extend([_nodes_pointer(nodes_link), ""])
     emitted: set[str] = set()
 
     def walk(ref: str, depth: int) -> None:
@@ -333,9 +367,16 @@ def _index_text(
         node = view.nodes[ref]
         title = _display(node, title_field, node.ref)
         summary = _display(node, summary_field, "")
-        indent = "  " * depth
-        suffix = f" — {summary}" if summary else ""
-        lines.append(f"{indent}- [{title}]({paths[ref]}){suffix}")
+        lines.append(
+            _node_entry(
+                node,
+                title,
+                paths[ref],
+                indent="  " * depth,
+                summary=summary,
+                nodes_link=nodes_link,
+            )
+        )
         for child in view.store.children(ref):
             walk(child, depth + 1)
 
@@ -377,6 +418,7 @@ def _directory_indexes(
     *,
     banner: str | None = None,
     label: str | None = None,
+    nodes_link: str | None = None,
 ) -> dict[str, str]:
     """Generated index text for the output root and every node directory.
 
@@ -384,7 +426,9 @@ def _directory_indexes(
     Each non-root directory lists its direct node files in view pre-order, then
     its immediate subdirectories in first-appearance order.  Every ancestor of
     a node directory is included, so a multi-segment section never leaves a
-    bare prefix folder unindexed.
+    bare prefix folder unindexed.  ``nodes_link``, when given, is the path from
+    the output root to the store's ``nodes/`` folder; each index carries it in
+    front matter and as a clickable link back to the real files.
     """
     indexes = {
         "": _index_text(
@@ -394,6 +438,7 @@ def _directory_indexes(
             summary_field,
             banner=banner,
             label=label,
+            nodes_link=nodes_link,
         )
     }
     banner_text = banner if banner is not None else BANNER.format(name="tree")
@@ -426,14 +471,29 @@ def _directory_indexes(
     for directory in sorted(directories):
         if directory == "":
             continue
-        lines = [banner_text, "", f"# {directory}/", ""]
+        link = None
+        if nodes_link is not None:
+            link = "../" * len(directory.split("/")) + nodes_link
+        lines: list[str] = []
+        if link is not None:
+            lines.extend(["---", f"nodes: {link}", "---", ""])
+        lines.extend([banner_text, "", f"# {directory}/", ""])
+        if link is not None:
+            lines.extend([_nodes_pointer(link), ""])
         for ref in direct.get(directory, []):
             node = view.nodes[ref]
             title = _display(node, title_field, node.ref)
             summary = _display(node, summary_field, "")
-            suffix = f" — {summary}" if summary else ""
             filename = paths[ref].rsplit("/", 1)[-1]
-            lines.append(f"- [{title}]({filename}){suffix}")
+            lines.append(
+                _node_entry(
+                    node,
+                    title,
+                    filename,
+                    summary=summary,
+                    nodes_link=link,
+                )
+            )
         for name in subdirectories.get(directory, []):
             lines.append(f"- [{name}]({name}/INDEX.md)")
         lines.append("")

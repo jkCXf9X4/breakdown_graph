@@ -418,6 +418,8 @@ def _agents_text(
     label: str,
     git: GitContext | None = None,
     depth: int | None = None,
+    *,
+    nodes_link: str | None = None,
 ) -> str:
     ref = label
     lines = [
@@ -429,20 +431,31 @@ def _agents_text(
             "- Every `.md` file here is a symlink to its node under `nodes/`; "
             "editing it edits the store directly."
         ),
-        (
-            "- This is the single writable work area. `bd work REF` replaces "
-            "its contents when the view changes."
-        ),
-        (
-            "- Create nodes with `bd new` and branch a node with `bd clone`, "
-            "never by adding files here."
-        ),
-        "- `INDEX.md`, `AGENTS.md` and `REFS.md` are generated; do not edit them.",
-        (
-            f"- `bd work {ref} --status` and `bd work {ref} --writeback` are the "
-            "repair path if an editor replaces a symlink with a regular file."
-        ),
     ]
+    if nodes_link is not None:
+        lines.append(
+            f"- The real node files are in [nodes/]({nodes_link}/); each "
+            "`INDEX.md` entry also links straight to its real file. Deleting a "
+            "link here removes only the symlink, so copy or delete in the node "
+            "folder."
+        )
+    lines.extend(
+        [
+            (
+                "- This is the single writable work area. `bd work REF` replaces "
+                "its contents when the view changes."
+            ),
+            (
+                "- Create nodes with `bd new` and branch a node with `bd clone`, "
+                "never by adding files here."
+            ),
+            "- `INDEX.md`, `AGENTS.md` and `REFS.md` are generated; do not edit them.",
+            (
+                f"- `bd work {ref} --status` and `bd work {ref} --writeback` are the "
+                "repair path if an editor replaces a symlink with a regular file."
+            ),
+        ]
+    )
     if depth is not None:
         lines.append(
             f"- This area materializes only the first {depth} descendant levels "
@@ -537,6 +550,7 @@ def _build(
         dest.parent.mkdir(parents=True, exist_ok=True)
         _link(dest, node.path)
 
+    nodes_link = Path(os.path.relpath(view.root / "nodes", out)).as_posix()
     indexes = _directory_indexes(
         view,
         paths,
@@ -544,6 +558,7 @@ def _build(
         summary_field,
         banner=BANNER.format(ref=label),
         label=label,
+        nodes_link=nodes_link,
     )
     files.extend(_write_indexes(out, indexes))
     _prune_empty_dirs(out)
@@ -553,7 +568,15 @@ def _build(
     )
     agents_path = out / "AGENTS.md"
     agents_path.write_text(
-        _agents_text(view, label, git, depth), encoding="utf-8", newline=""
+        _agents_text(
+            view,
+            label,
+            git,
+            depth,
+            nodes_link=nodes_link,
+        ),
+        encoding="utf-8",
+        newline="",
     )
     files.extend((refs_path, agents_path))
 

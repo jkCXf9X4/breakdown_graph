@@ -169,7 +169,9 @@ bd edit REF
   is the full `id-version` (`.bd_tree/nodes/<ref>.md` in a project layout).
   `INDEX.md` in every directory, `AGENTS.md`, and `REFS.md` are regular
   generated files, never symlinks. Those three names are reserved in every
-  directory.
+  directory. Each `INDEX.md` carries a `nodes:` front-matter path to the real
+  node folder, each node entry links straight to its real file, and a
+  `[nodes/](…)` link opens the folder for copying or deleting store files.
 - `bd current` is read-only: it prints `<project>/bd_work (view <ref>)`;
   `--path` prints only the path, `--view` only the ref. It errors if no work
   area exists.

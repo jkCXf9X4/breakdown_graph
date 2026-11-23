@@ -370,7 +370,11 @@ bd_work/00-claims/thesis-claim.md -> ../../.bd_tree/nodes/49-1.md
   them.
 - Generated files: an `INDEX.md` in every directory (its direct node files,
   then its immediate subdirectories; the root keeps the topology outline),
-  `REFS.md` (path ↔ ref), and `AGENTS.md`. Inside a git checkout, `AGENTS.md`
+  `REFS.md` (path ↔ ref), and `AGENTS.md`. Each `INDEX.md` carries a `nodes:`
+  front-matter path to the store's real `nodes/` folder; every node entry also
+  links straight to its real file, and the index links the folder, so the
+  reader can open, copy, or delete the actual files instead of the symlinks.
+  Inside a git checkout, `AGENTS.md`
   also records branch, short commit, worktree, so the folder identifies its
   solution boundary. Detection is best-effort: outside git the fields are omitted
   and the layout is unchanged. The generated file names are reserved in every

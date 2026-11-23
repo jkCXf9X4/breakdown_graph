@@ -44,6 +44,27 @@ def test_work_links_every_node_and_writes_generated_files(write, tmp_path):
     assert "`claims/2-1.md` | 2-1 |" in refs
 
 
+def test_work_indexes_link_the_real_node_folder(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1-1", out)
+
+    index = (out / "INDEX.md").read_text(encoding="utf-8")
+    assert index.startswith("---\nnodes: ../nodes\n---\n")
+    assert "[nodes/](../nodes/)" in index
+    assert "[real file](../nodes/1-1.md)" in index
+    assert (out / "../nodes").resolve() == (tmp_path / "nodes").resolve()
+
+    claims = (out / "claims" / "INDEX.md").read_text(encoding="utf-8")
+    assert claims.startswith("---\nnodes: ../../nodes\n---\n")
+    assert "[nodes/](../../nodes/)" in claims
+    assert "[real file](../../nodes/2-1.md)" in claims
+    assert (out / "claims" / "../../nodes").resolve() == (tmp_path / "nodes").resolve()
+
+    agents = (out / "AGENTS.md").read_text(encoding="utf-8")
+    assert "[nodes/](../nodes/)" in agents
+
+
 def test_work_cli_builds_the_same_tree(write, tmp_path, capsys):
     _tree(write, tmp_path)
     out = tmp_path / "bd_work"

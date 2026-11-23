@@ -186,10 +186,13 @@ band instead of getting its own prefix. In absolute mode the label is the
 dominant `layer` in that stage, and `<NN>` is the stage.
 
 Only the node `.md` files are symlinks; `INDEX.md`, `AGENTS.md`, and `REFS.md`
-are regular generated files. `bd edit REF` prints the ref's absolute path
-inside the active view and errors if the ref is not there. `bd current` is
-read-only; `--path` prints only the path and `--view` only the ref, and it
-errors if no area exists.
+are regular generated files. Each `INDEX.md` carries a `nodes:` front-matter
+path to the store's real node folder, each node entry links straight to its
+real file (`— [real file](…)`), and a `[nodes/](…)` link opens the folder to
+copy or delete. `bd edit REF`
+prints the ref's absolute path inside the active view and errors if the ref is
+not there. `bd current` is read-only; `--path` prints only the path and `--view`
+only the ref, and it errors if no area exists.
 
 `--status` reports `ok`, `missing`, `wrong-target`, `detached`, `stray`, or
 `stale-ref`. If an editor replaces a symlink with a regular file:

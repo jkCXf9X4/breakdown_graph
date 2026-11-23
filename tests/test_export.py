@@ -15,6 +15,8 @@ def test_tree_view_writes_nodes_and_one_index_per_folder(write, tmp_path):
     assert result.nodes == 2
     assert len(result.files) == 4
     index = (out / "INDEX.md").read_text(encoding="utf-8")
+    assert not index.startswith("---")
+    assert "real file" not in index
     assert "GENERATED FILE" in index
     assert "[Root intent](1-1-root-intent.md)" in index
     assert "[Thesis](00-claims/2-1.md)" in index
