@@ -219,23 +219,92 @@ def test_example_work_places_grouped_nodes_and_edit_resolves(tmp_path):
     assert {entry.status for entry in status.entries} == {"ok"}
 
 
-def test_example_tree_and_graph_export_agree_on_grouped_file_set(tmp_path):
+def test_example_graph_export_uses_the_grouped_file_set(tmp_path):
     root = _example_store(tmp_path)
-    tree = tmp_path / "tree"
     graph = tmp_path / "graph"
-    api.export_view("tree", root, "1-1", tree)
     api.export_view("graph", root, "1-1", graph)
 
-    tree_files = _relative_files(tree)
-    assert tree_files == _relative_files(graph)
-    assert GROUPED_PATHS <= tree_files
+    graph_files = _relative_files(graph)
+    assert GROUPED_PATHS <= graph_files
     assert {
         "02-claims/structural/INDEX.md",
         "02-claims/verification/INDEX.md",
         "03-verification/fan-in/INDEX.md",
         "03-verification/fan-in2/INDEX.md",
-    } <= tree_files
+    } <= graph_files
 
-    stage = (tree / "02-claims" / "INDEX.md").read_text(encoding="utf-8")
+    stage = (graph / "02-claims" / "INDEX.md").read_text(encoding="utf-8")
     assert "structural/INDEX.md" in stage
     assert "verification/INDEX.md" in stage
+
+
+DOCS_BREAKDOWN = Path(__file__).resolve().parents[1] / "docs" / "breakdown"
+SECTION_BANDS = {
+    "2-1": "intent",
+    "3-1": "product",
+    "4-1": "architecture",
+    "5-1": "implementation",
+    "6-1": "verification",
+    "7-1": "operation",
+    "8-1": "evolution",
+    "10-1": "decisions",
+    "11-1": "suggested",
+}
+
+
+def test_converted_breakdown_store_checks_clean_with_band_order(tmp_path):
+    shutil.copytree(DOCS_BREAKDOWN / ".bd_tree", tmp_path / ".bd_tree")
+    api.migrate(
+        tmp_path,
+        symmetric_types=["realizes", "implements", "verifies", "operates", "changes"],
+        inverse_types={
+            "realizes": "realized_by",
+            "implements": "implemented_by",
+            "verifies": "verified_by",
+            "operates": "operated_by",
+            "changes": "changed_by",
+        },
+        band_order=True,
+    )
+
+    result = api.check(tmp_path)
+    assert result.ok
+    assert not result.warnings
+
+    store = api.load(tmp_path)
+    assert len(store.nodes) == 59
+    root = store.nodes[store.root_ref]
+    assert root.meta["band_order"][:3] == ["root", "intent", "product"]
+    assert root.meta["band_layout"] == "flat"
+    signature = {
+        link.type
+        for node in store.nodes.values()
+        for link in node.links
+        if link.symmetric
+    }
+    assert signature == {
+        "realizes",
+        "implements",
+        "verifies",
+        "operates",
+        "changes",
+    }
+
+
+def test_migrated_breakdown_store_is_a_clean_graph(tmp_path):
+    shutil.copytree(DOCS_BREAKDOWN / ".bd_tree", tmp_path / ".bd_tree")
+    api.migrate(tmp_path)
+
+    store = api.load(tmp_path)
+    assert store.model == "graph"
+    assert store.root_ref == "1-1"
+    assert len(store.nodes) == 59
+    assert all("contains" not in node.meta for node in store.nodes.values())
+
+    graph = build_graph(tmp_path)
+    assert graph.roots == ["1-1"]
+    assert set(graph_view(graph, "1-1")) == set(store.nodes)
+    assert {
+        ref: graph.store.nodes[ref].meta["band"] for ref in SECTION_BANDS
+    } == SECTION_BANDS
+    assert api.check(tmp_path).ok

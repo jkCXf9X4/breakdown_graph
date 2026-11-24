@@ -14,8 +14,8 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 def _graph_store(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2"], title="Root intent")
-    write(nodes, 2, links=[{"to": "1", "type": "supports"}], title="Child claim")
+    write(nodes, 1, links=[{"to": "2", "type": "supports"}], title="Root intent")
+    write(nodes, 2, title="Child claim")
     return tmp_path
 
 

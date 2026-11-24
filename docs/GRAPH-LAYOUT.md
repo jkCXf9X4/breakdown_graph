@@ -1,14 +1,14 @@
 # Graph band layout
 
 This document is the reference for how a graph store turns `band` values, an
-optional `subpath`, and forward `links` into directories. It covers the exact algorithm, the tie-breaks,
+optional `subpath`, and forward *structural* `links` into directories. It covers the exact algorithm, the tie-breaks,
 the diagnostics, the commands that consume the projection, and the tests that
 pin it.
 
-[`DESIGN.md`](DESIGN.md) owns the model, [`GRAPH.md`](GRAPH.md) owns the
-topology and command dispatch, and the containment placement rules live in
-[`DESIGN.md`](DESIGN.md) and [`CHEATSHEET.md`](CHEATSHEET.md). This document owns
-one question: **given a graph view, which folder does each node land in?**
+[`DESIGN.md`](DESIGN.md) owns the model and [`GRAPH.md`](GRAPH.md) owns the
+topology and commands. This document owns one question: **given a graph view,
+which folder does each node land in?** Bands are the only layout; `section` and
+`group` place nothing.
 
 ## 1. Data versus projection
 
@@ -17,7 +17,9 @@ data matter:
 
 - `band`: the band name, plus an optional `subpath` such as `structural`;
   `layer: band/subpath` is the older single-string shorthand.
-- `links`: forward parent-to-child edges carrying full target refs.
+- `links`: forward parent-to-child structural edges carrying full target refs.
+  A symmetric link (`symmetric: true`) is a master whose opposite is derived;
+  it adds no band edge and orders no band.
 
 Nothing else is stored. There is no layout file, no ordinal field, no state
 file, and no cached plan. Band ordinals, inferred nesting, and folders are
@@ -36,7 +38,7 @@ choose bands or folders. `group` is ordinary metadata and never places a node
 | subpath | The optional placement folder below the band folder. |
 | layer | The older shorthand `layer: band/subpath`, normalized to band plus subpath. |
 | layer path | A parsed band plus optional subpath. |
-| band graph | The directed graph whose nodes are bands and whose edges come from links crossing bands. |
+| band graph | The directed graph whose nodes are bands and whose edges come from structural links crossing bands. |
 | top-level band | A band that gets its own `NN-<slug>` root folder. |
 | nested band | A band placed below a top-level band folder by inference. |
 | effective folder | The full directory a node's file uses. |
@@ -48,10 +50,8 @@ folder (band folder plus optional `subpath`).
 
 ## 3. Detection and modes
 
-Containment is a separate topology and never uses this layout.
-
-For a graph store, `relative_store` (`src/bd_tree/graph.py:315`) checks whether
-**any** node declares `stage`.
+`relative_store` (`src/bd_tree/graph.py:315`) checks whether **any** node
+declares `stage`.
 
 - **Absolute mode**: at least one node has `stage`. Bands are the integer
   stages. `band`/`layer` is only a label source. `group` is inert. See §6.12.
@@ -69,7 +69,7 @@ listed in §8.1. The steps are:
 
 ### 4.1 Parse and validate bands
 
-For each node, `layer_path` (`:219`) normalizes either form:
+For each node, `layer_path` (`:216`) normalizes either form:
 
 ```text
 band = "claims"
@@ -90,18 +90,19 @@ is non-empty, with no backslash and no empty, `.`, `..`, reserved generated
 
 ### 4.2 Build the band graph
 
-`_band_edges` (`:366`) scans every authored link. When source and target are
-both valid and their bands differ, add `band(source) -> band(target)`. Links
-inside one band add no edge, even when they cross subpaths. A link to a missing
+`_band_edges` (`:402`) scans every authored *structural* link. When source and
+target are both valid and their bands differ, add `band(source) ->
+band(target)`. Links inside one band add no edge, even when they cross subpaths.
+A symmetric link contributes no band edge. A link to a missing
 node, or one with an invalid band, adds no edge.
 
-Cycles in this graph are reported by `_layer_cycles` (`:430`) as
+Cycles in this graph are reported by `_layer_cycles` (`:484`) as
 `graph-layer-cycle`; strong components of size greater than one are sorted.
 
 ### 4.3 Choose top-level bands
 
-`_top_level_bands` (`:527`) works per weakly connected component of the band
-graph (`_band_components`, `:482`):
+`_top_level_bands` (`:581`) works per weakly connected component of the band
+graph (`_band_components`, `:536`):
 
 1. Compute indegree and outdegree inside the component.
 2. If the component has no edge, every band in it is top-level, kind `2`
@@ -110,7 +111,7 @@ graph (`_band_components`, `:482`):
    (outdegree `0`), every band is top-level, kind `1` ("cycle-only"),
    distance `0`.
 4. Otherwise, let `from_roots` be the unweighted multi-source BFS distance from
-   all roots (`_distances`, `:509`), and let `to_sinks` be the same distance to
+   all roots (`_distances`, `:563`), and let `to_sinks` be the same distance to
    all sinks over reversed edges.
 5. Let `L = min(from_roots[sink])` over sinks: the shortest root-to-sink
    distance in the component.
@@ -119,6 +120,8 @@ graph (`_band_components`, `:482`):
    acyclic connected component, `1` for a cycle-only component, and `2` for an
    isolated component; distance is `from_roots`; the final tie-break is the
    band name in lexicographic order. The rank position is the ordinal `NN`.
+   `band_order` does not change this ranking; it only breaks ties in the
+   topological order (§4.5) and orders flat top-level folders.
 
 This is the **shortest-path rule**. A band that lies only on a longer detour is
 not top-level; a band that lies on at least one shortest root-to-sink path is.
@@ -131,7 +134,8 @@ top-level.
 
 **Flat bands.** Set `band_layout: flat` on the store's `ROOT` node to skip the
 shortest-path rule. Every band then becomes top-level, ordered by `_layer_order`
-(`:408`); explicit `subpath` values still nest below their band folder. This is
+(`:446`); explicit `subpath` values still nest below their band folder. A ROOT
+`band_order` list composes: the flat top-level folders are ordered by the hint. This is
 a per-store projection convention, not a change to link semantics.
 
 ### 4.4 Build top-level folders
@@ -148,8 +152,9 @@ least two digits.
 
 ### 4.5 Nest the remaining bands
 
-`_layer_order` (`:408`) produces a deterministic topological order, lexicographic
-on ready bands; bands left out by a cycle are appended sorted by name.
+`_layer_order` (`:446`) produces a deterministic topological order, lexicographic
+on ready bands unless the ROOT `band_order` hint reranks them; bands left out by
+a cycle are appended sorted by name.
 
 Then, in that order, for each band not already placed:
 
@@ -173,7 +178,7 @@ changes band inference and does not force the band to be nested.
 
 The file stem is unchanged by layout: explicit `name`, else
 `<ref>-<title-slug>`, else `<ref>`, with `.md` appended. `layout_paths`
-(`:1485`) joins folder and stem and rejects collisions or a file/directory path
+(`:1561`) joins folder and stem and rejects collisions or a file/directory path
 conflict.
 
 ### 4.7 Ordinals and `--stage`
@@ -184,7 +189,7 @@ ordinal, inclusive; the anchor is always included.
 
 ### 4.8 Ordering inside a band and folder
 
-`graph_layout` (`:948`) groups refs by band and sorts by effective folder, then
+`graph_layout` (`:1010`) groups refs by band and sorts by effective folder, then
 `(order, id, version)`. Inside one folder the effective sort is
 `(order, id, version)`.
 
@@ -210,6 +215,7 @@ for the audit errors. The audit still reports `graph-layer-missing` or
 | `graph-layer-invalid` | error | invalid `band`, `subpath`, or `layer` (type, empty, bad segment, backslash, `.md`, reserved name), a `subpath` without `band`, or both forms at once | node goes to `unlayered` for rendering |
 | `graph-layer-cycle` | error | strong component of the band graph with more than one band | deterministic cycle fallback; audit fails |
 | `graph-order-back-edge` | error | same-band link has `order(source) >= order(target)` | audit fails; layout still renders |
+| `invalid-band-order` | error | the ROOT `band_order` value is not a YAML list | hint ignored; layout still renders |
 | `graph-group-ignored` | warning | graph node declares `group` | none; `group` never places a node |
 
 Absolute mode, for contrast: `graph-stage-missing` and `graph-stage-invalid`
@@ -436,16 +442,15 @@ Every command that needs a path builds the same plan. None reads a layout file.
 
 | Command | What it consumes |
 | --- | --- |
-| `bd tree REF` | `graph_layout`: band headings, nested folder headings, then refs. `--depth` does not bound graph bands. |
-| `bd graph [REF]` | `graph_view` then the band/folder layout; `--stage A:B` filters on the top-level ordinal. |
+| `bd graph [REF]` | `graph_view` then the band/folder layout; the text renderer. `--depth` bounds link hops, not bands. |
+| `bd graph [REF] --stage A:B` | Filters on the top-level ordinal. |
 | `bd graph --dot` | One cluster per effective band folder; label `layer N — band[/subpath]`. |
 | `bd graph --svg --out PATH` | Same DOT fed to Graphviz `dot`. |
 | `bd work REF` | `layout_paths`: symlink tree at `<project>/bd_work/`. |
 | `bd work REF --status` | Reads the existing symlink tree; no layout change. |
 | `bd current [--path\|--view]` | Reports the area and its view; does not rebuild. |
 | `bd edit REF` | Path of the ref in the active view. |
-| `bd export tree REF --out DIR` | Regular-file copy of `layout_paths`. |
-| `bd export graph --view REF --out DIR` | Same folders plus per-folder `INDEX.md` with provenance. |
+| `bd export graph --view REF --out DIR` | Regular-file copy of `layout_paths`, plus per-folder `INDEX.md`. |
 | `bd export dot --view REF --out FILE` | Flat DOT, no band clusters, labels from the same plan. |
 | `bd export svg --view REF --out FILE` | Rendered flat DOT. |
 
@@ -455,23 +460,25 @@ Every command that needs a path builds the same plan. None reads a layout file.
 
 | Piece | Location |
 | --- | --- |
-| `LayerPath` | `src/bd_tree/graph.py:108` |
-| `parse_layer`, `require_layer`, `layer_path` | `:141`, `:295`, `:219` |
-| `relative_store` | `:315` |
-| `BandPlan` | `:348` |
-| `_band_edges` | `:366` |
-| `layer_reaches` | `:387` |
-| `_layer_order` | `:408` |
-| `_layer_cycles` | `:430` |
-| `_band_components` | `:482` |
-| `_distances` | `:509` |
-| `_top_level_bands` | `:527` |
-| `_relative_plan` | `:598` |
-| `_absolute_plan` | `:720` |
-| `build_graph` | `:769` |
-| `graph_layout` | `:948` |
-| `layout_paths` | `:1485` |
-| `audit` | `:1313` |
+| `LayerPath` | `src/bd_tree/graph.py:105` |
+| `parse_layer`, `require_layer`, `layer_path` | `:138`, `:292`, `:216` |
+| `relative_store` | `:312` |
+| `flat_bands` | `:317` |
+| `band_order_hint` | `:382` |
+| `BandPlan` | `:364` |
+| `_band_edges` | `:402` |
+| `layer_reaches` | `:425` |
+| `_layer_order` | `:446` |
+| `_layer_cycles` | `:484` |
+| `_band_components` | `:536` |
+| `_distances` | `:563` |
+| `_top_level_bands` | `:581` |
+| `_relative_plan` | `:652` |
+| `_absolute_plan` | `:780` |
+| `build_graph` | `:829` |
+| `graph_layout` | `:1010` |
+| `layout_paths` | `:1561` |
+| `audit` | `:1387` |
 
 ### 8.2 Invariants to preserve
 
@@ -481,8 +488,8 @@ Every command that needs a path builds the same plan. None reads a layout file.
   tie-breaks.
 - Projection only: no node file is rewritten, no state file appears, and
   `bd work` does not become a second source of truth.
-- Full-ref edges: band edges are derived from authored full-ref links; no bare
-  id is written to data.
+- Full-ref edges: band edges are derived from authored full-ref *structural*
+  links; no bare id is written to data, and symmetric links add none.
 - One bug class per seam: inference in `_relative_plan`, rendering in
   `graph_layout`/`layout_paths`, diagnostics in `audit`.
 
@@ -504,8 +511,7 @@ Every command that needs a path builds the same plan. None reads a layout file.
 
 - Absolute mode: integer `stage` bands, forward edges, `band`/`layer` only as a label,
   `group` inert.
-- Containment mode: `section`/`name`/`title` placement; this document does not
-  apply.
+- Bands are the only layout: `section` and `group` never place a node.
 - Full-ref data edges and sorted `links`.
 - The reserved generated names in a layer path.
 

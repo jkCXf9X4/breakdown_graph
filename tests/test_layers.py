@@ -138,7 +138,7 @@ def test_link_refuses_a_same_layer_order_back_edge(write, tmp_path):
 
 
 def test_new_requires_layer_and_rejects_stage(tmp_path):
-    api.init_store(tmp_path, graph=True)
+    api.init_store(tmp_path)
 
     with pytest.raises(BreakdownError, match="needs a non-empty --band"):
         api.new_node(tmp_path, parent="1-1", fields={"title": "No band"})
@@ -168,7 +168,7 @@ def test_new_validates_the_parent_edge_in_relative_mode(write, tmp_path):
 
 
 def test_init_graph_writes_a_band_root_and_audits_clean(tmp_path):
-    api.init_store(tmp_path, graph=True)
+    api.init_store(tmp_path)
     meta = parse_document(
         (tmp_path / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")
     ).meta
@@ -240,7 +240,7 @@ def test_band_only_store_is_detected_as_a_graph(write, tmp_path):
 
 
 def test_new_accepts_band_and_subpath(tmp_path):
-    api.init_store(tmp_path, graph=True)
+    api.init_store(tmp_path)
     created = api.new_node(
         tmp_path,
         parent="1-1",
@@ -264,14 +264,12 @@ def check_ok(root):
     return check(root).ok
 
 
-def test_relative_tree_and_graph_label_bands_as_layers(write, tmp_path, monkeypatch, capsys):
+def test_relative_graph_labels_bands_as_layers(write, tmp_path, monkeypatch, capsys):
     nodes = tmp_path / "nodes"
     write(nodes, 1, layer="intent", links=[{"to": "2", "type": "breaks_down"}])
     write(nodes, 2, layer="build")
     monkeypatch.chdir(tmp_path)
 
-    assert main(["tree", "1-1"]) == 0
-    assert "layer 0 — intent" in capsys.readouterr().out
     assert main(["graph"]) == 0
     assert "layer 1 — build" in capsys.readouterr().out
 
@@ -285,13 +283,8 @@ def test_relative_and_absolute_exports_share_simple_band_paths(write, tmp_path):
         write(nodes, 2, layer="build", links=[{"to": "3", "type": "supports"}], **({} if stages is None else {"stage": stages["build"]}))
         write(nodes, 3, layer="verify", **({} if stages is None else {"stage": stages["verify"]}))
 
-    rel_tree, abs_tree = tmp_path / "rel_tree", tmp_path / "abs_tree"
     rel_graph, abs_graph = tmp_path / "rel_graph", tmp_path / "abs_graph"
-    for root, out in ((relative, rel_tree), (absolute, abs_tree)):
-        api.export_view("tree", root, "1-1", out)
     for root, out in ((relative, rel_graph), (absolute, abs_graph)):
         api.export_view("graph", root, "1-1", out)
 
-    assert _relative_files(rel_tree) == _relative_files(abs_tree)
     assert _relative_files(rel_graph) == _relative_files(abs_graph)
-    assert _relative_files(rel_tree) == _relative_files(rel_graph)

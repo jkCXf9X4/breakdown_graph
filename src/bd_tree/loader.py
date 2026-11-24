@@ -1,13 +1,15 @@
-"""Load the flat numeric node store and resolve containment views.
+"""Load the flat numeric node store and resolve a view as a link closure.
 
 Every node lives at ``nodes/<id>-<version>.md``.  The filename is the only
 identity and the only version marker; there is no bare ``<id>.md`` file and no
 privileged "main" version.  All versions of one logical id are peers.
 
-Data refs (``contains``, ``links`` and the ``ROOT`` file) must be fully
+Edges are declared ``links`` and nothing else.  A view is the forward closure
+over those links, rooted at one ref; a node reached through several parents
+appears once.  Data refs (``links`` and the ``ROOT`` file) must be fully
 qualified ``<id>-<version>`` refs.  A bare id in data is recorded as a
-``bare-ref`` issue and is retained in the parsed list, so walking that view
-fails loudly instead of silently guessing a version.
+``bare-ref`` issue.  A leftover ``contains`` key is inert metadata here; the
+checker reports it as ``contains-removed``.
 """
 
 from __future__ import annotations
@@ -334,6 +336,41 @@ def _parse_links(
                 root=root,
             )
             propagates = False
+        symmetric = item.get("symmetric", False)
+        if not isinstance(symmetric, bool):
+            _issue(
+                issues,
+                "error",
+                "invalid-symmetric",
+                f"'symmetric' on {target} must be a boolean",
+                path=path,
+                root=root,
+            )
+            symmetric = False
+        inverse = item.get("inverse")
+        if inverse is not None:
+            if not isinstance(inverse, str) or not inverse.strip():
+                _issue(
+                    issues,
+                    "error",
+                    "inverse-without-symmetric",
+                    f"'inverse' on {target} must be a non-empty string",
+                    path=path,
+                    root=root,
+                )
+                inverse = None
+            elif not symmetric:
+                _issue(
+                    issues,
+                    "error",
+                    "inverse-without-symmetric",
+                    f"'inverse' on {target} requires 'symmetric: true'",
+                    path=path,
+                    root=root,
+                )
+                inverse = None
+            else:
+                inverse = inverse.strip()
         pinned = item.get("pinned")
         if pinned is not None and not isinstance(pinned, str):
             _issue(
@@ -351,54 +388,13 @@ def _parse_links(
                 type=ltype,
                 pinned=pinned,
                 propagates=propagates,
+                symmetric=symmetric,
+                inverse=inverse,
                 raw=dict(item),
             )
         )
         raws.append(dict(item))
     return links, raws
-
-
-def _parse_contains(
-    meta: dict[str, Any], issues: list[Issue], path: Path, root: Path
-) -> list[str]:
-    if "contains" not in meta or meta.get("contains") is None:
-        return []
-    raw = meta.get("contains")
-    if not isinstance(raw, list):
-        _issue(
-            issues,
-            "error",
-            "invalid-contains",
-            "'contains' must be a list",
-            path=path,
-            root=root,
-        )
-        return []
-    refs: list[str] = []
-    for index, item in enumerate(raw):
-        kind, target = _classify_data_ref(item)
-        if kind == "invalid":
-            _issue(
-                issues,
-                "error",
-                "invalid-ref",
-                f"contains[{index}] has invalid ref {item!r}",
-                path=path,
-                root=root,
-            )
-            continue
-        if kind == "bare":
-            _issue(
-                issues,
-                "error",
-                "bare-ref",
-                f"contains[{index}] '{target}' is a bare id; use a full "
-                "<id>-<version> ref",
-                path=path,
-                root=root,
-            )
-        refs.append(str(target))
-    return refs
 
 
 @dataclass
@@ -448,13 +444,11 @@ def _parse_node(
                 root=root,
             )
     links, raw_links = _parse_links(meta, issues, path, root)
-    contains = _parse_contains(meta, issues, path, root)
     legacy = meta.get("legacy")
     return Node(
         id=parsed_id,
         version=parsed_version,
         ref=ref,
-        contains=contains,
         legacy=str(legacy) if isinstance(legacy, str) else None,
         links=links,
         body=doc.body,
@@ -607,7 +601,7 @@ def require_full_ref(text: str, role: str) -> str:
 
 
 def _load_graph_view(store: Store, canonical: str) -> View:
-    """Forward closure over ``Store.children``: links, not containment.
+    """Forward closure over ``Store.children`` — the only view walk.
 
     A node reached through several parents is included once, so cycles close
     instead of raising; ``bd check`` reports them.  Edges keep every authored
@@ -635,12 +629,13 @@ def _load_graph_view(store: Store, canonical: str) -> View:
             if link.to in included:
                 edges.append(
                     Edge(
-                        node.ref,
-                        link.to,
-                        link.type,
-                        link.pinned,
-                        "link",
-                        link.propagating,
+                        source=node.ref,
+                        target=link.to,
+                        type=link.type,
+                        pinned=link.pinned,
+                        origin="link",
+                        propagates=link.propagating,
+                        symmetric=link.symmetric,
                     )
                 )
     return View(
@@ -653,14 +648,13 @@ def _load_graph_view(store: Store, canonical: str) -> View:
 
 
 def load_view(root: str | Path | Store, ref: str | None = None) -> View:
-    """Return the selected topology closure rooted at ``ref``.
+    """Return the link closure rooted at ``ref``.
 
-    ``ref`` defaults to the store's default anchor.  A containment store walks
-    declared ``contains`` and reports tree-shape errors; a graph store walks
-    forward ``links`` with a seen-set and reports only the store's parse issues.
-
-    Walking a bare ref raises :class:`BreakdownError` naming the offending
-    entry: a view can never pick a version for the caller.
+    ``ref`` defaults to the store's default anchor.  The walk is the forward
+    closure over ``links`` with a seen-set: multiple parents are legal and a
+    node appears once.  Bare data refs are already reported by ``scan``; a bare
+    *view root* raises :class:`BreakdownError` because a view can never pick a
+    version for the caller.
     """
     store = root if isinstance(root, Store) else load(root)
     issues: list[Issue] = []
@@ -695,115 +689,4 @@ def load_view(root: str | Path | Store, ref: str | None = None) -> View:
         )
         return View(store=store, ref=canonical, nodes={}, edges=[], issues=issues)
 
-    if store.model == "graph":
-        return _load_graph_view(store, canonical)
-
-    included: dict[str, Node] = {}
-    parents: dict[str, str] = {}
-    path: list[str] = []
-
-    def walk(current: str, parent: str | None) -> None:
-        if not is_full_ref(current):
-            raise BreakdownError(
-                f"bare ref '{current}' in contains of '{parent or canonical}'; "
-                "data refs must be full <id>-<version> refs"
-            )
-        if current in path:
-            cycle = path[path.index(current) :] + [current]
-            issues.append(
-                Issue(
-                    "error",
-                    "containment-cycle",
-                    "containment cycle: " + " -> ".join(cycle),
-                    node=current,
-                )
-            )
-            return
-        if current in included:
-            previous = parents.get(current)
-            if parent is not None and previous != parent:
-                issues.append(
-                    Issue(
-                        "error",
-                        "multiple-parents",
-                        f"node '{current}' is reached through two parents in view "
-                        f"{canonical}: '{previous}', '{parent}'",
-                        node=current,
-                    )
-                )
-            return
-        node = store.nodes.get(current)
-        if node is None:
-            issues.append(
-                Issue(
-                    "error",
-                    "missing-target",
-                    f"contains target '{current}' does not exist",
-                    node=path[-1] if path else None,
-                )
-            )
-            return
-        included[current] = node
-        parents[current] = parent or ""
-        path.append(current)
-        for child in store.effective_contains(current):
-            walk(child, current)
-        path.pop()
-
-    walk(canonical, None)
-
-    listed = {
-        child
-        for node in store.nodes.values()
-        for child in store.effective_contains(node.ref)
-    }
-    containment_roots = {
-        node.ref for node in store.nodes.values() if node.ref not in listed
-    }
-
-    edges: list[Edge] = []
-    for node in included.values():
-        for link in node.links:
-            if not is_full_ref(link.to):
-                raise BreakdownError(
-                    f"bare ref '{link.to}' in links of '{node.ref}'; data refs "
-                    "must be full <id>-<version> refs"
-                )
-            if link.to in included:
-                edges.append(
-                    Edge(
-                        node.ref,
-                        link.to,
-                        link.type,
-                        link.pinned,
-                        "link",
-                        link.propagating,
-                    )
-                )
-            elif link.to in store.nodes:
-                if link.to in containment_roots:
-                    continue
-                issues.append(
-                    Issue(
-                        "warning",
-                        "external-link",
-                        f"link to '{link.to}' ({link.type}) outside view {canonical}",
-                        node=node.ref,
-                    )
-                )
-            else:
-                issues.append(
-                    Issue(
-                        "error",
-                        "dangling-link",
-                        f"link to missing node '{link.to}' ({link.type})",
-                        node=node.ref,
-                    )
-                )
-    return View(
-        store=store,
-        ref=canonical,
-        nodes=included,
-        edges=edges,
-        issues=issues,
-    )
+    return _load_graph_view(store, canonical)

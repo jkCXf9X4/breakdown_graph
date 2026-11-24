@@ -1,4 +1,4 @@
-"""bd_tree: numeric markdown nodes, containment views, freshness."""
+"""bd_tree: numeric markdown nodes, typed links, link-closure views, freshness."""
 
 from .api import *  # noqa: F401,F403
 from .api import __all__ as _api_all

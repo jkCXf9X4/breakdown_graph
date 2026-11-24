@@ -46,7 +46,7 @@ def _store(write, repo: Path) -> None:
 
 def _hidden_store(write, repo: Path) -> None:
     nodes = repo / ".bd_tree" / "nodes"
-    write(nodes, 1, contains=["2"])
+    write(nodes, 1, links=[{"to": "2", "type": "breaks_down"}])
     write(nodes, 2)
     (repo / ".bd_tree" / "ROOT").write_text("2-1\n", encoding="utf-8")
 

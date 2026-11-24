@@ -9,7 +9,7 @@ EXPECTED = (
     "---\n"
     "id: 1\n"
     "title: Root\n"
-    "contains: []\n"
+    "band: root\n"
     "---\n"
     "# Root\n"
     "\n"
@@ -85,37 +85,37 @@ def test_init_prints_next_steps(tmp_path, capsys):
         "next:\n"
         f"  cd {root}\n"
         '  bd new --parent 1-1 --field title="First claim" --band claims\n'
-        "  bd tree 1-1\n"
+        "  bd graph 1-1\n"
         "  bd work 1-1\n"
     ) in out
 
 
-def test_tree_shows_root_after_init(tmp_path, capsys):
+def test_graph_shows_root_after_init(tmp_path, capsys):
     assert main(["init", str(tmp_path)]) == 0
     capsys.readouterr()
-    assert main(["tree", "1-1", "--root", str(tmp_path)]) == 0
+    assert main(["graph", "1-1", "--root", str(tmp_path)]) == 0
     assert "Root" in capsys.readouterr().out
     assert parse_document(
         (tmp_path / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")
-    ).meta == {"id": 1, "title": "Root", "contains": []}
+    ).meta == {"id": 1, "title": "Root", "band": "root"}
 
 
-def test_init_root_has_no_placement_fields_and_fresh_store_checks_clean(tmp_path):
+def test_init_root_has_band_root_and_fresh_store_checks_clean(tmp_path):
     project = tmp_path / "store"
     init_store(project)
     meta = parse_document(
         (project / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")
     ).meta
-    assert meta == {"id": 1, "title": "Root", "contains": []}
+    assert meta == {"id": 1, "title": "Root", "band": "root"}
     result = check(project)
     assert result.ok
     assert result.issues == []
     assert result.nodes_scanned == 1
 
 
-def test_init_graph_cli_creates_a_staged_root_end_to_end(tmp_path, capsys):
+def test_init_default_relative_band_graph_end_to_end(tmp_path, capsys):
     project = tmp_path / "graph"
-    assert main(["init", "--graph", str(project)]) == 0
+    assert main(["init", str(project)]) == 0
     meta = parse_document(
         (project / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")
     ).meta

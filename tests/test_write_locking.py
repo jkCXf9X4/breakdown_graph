@@ -5,7 +5,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from bd_tree import ops
-from bd_tree.api import contain, link, load, new_node
+from bd_tree.api import link, load, new_node
 from bd_tree.fsutil import lock_path
 
 
@@ -24,7 +24,7 @@ def slow_loader(monkeypatch, delay: float = 0.05) -> None:
 def test_parallel_new_takes_distinct_ids_and_keeps_every_child(
     write, tmp_path, monkeypatch
 ):
-    write(tmp_path / "nodes", 1, contains=[])
+    write(tmp_path / "nodes", 1, band="root", order=0)
     slow_loader(monkeypatch, delay=0.15)
 
     workers = 8
@@ -32,7 +32,12 @@ def test_parallel_new_takes_distinct_ids_and_keeps_every_child(
 
     def create(index: int):
         ready.wait()
-        return new_node(tmp_path, parent="1", fields={"title": f"w{index}"})
+        return new_node(
+            tmp_path,
+            parent="1",
+            fields={"title": f"w{index}"},
+            band="children",
+        )
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(create, index) for index in range(workers)]
@@ -43,7 +48,7 @@ def test_parallel_new_takes_distinct_ids_and_keeps_every_child(
     ]
     store = load(tmp_path)
     assert len(store.nodes) == workers + 1
-    assert store.effective_contains("1-1") == [
+    assert store.children("1-1") == [
         f"{node_id}-1" for node_id in range(2, workers + 2)
     ]
     assert sorted(
@@ -56,35 +61,11 @@ def test_store_lock_lives_outside_the_store(tmp_path):
     assert not any(tmp_path.glob("*.lock"))
 
 
-def test_parallel_contain_keeps_every_child(write, tmp_path, monkeypatch):
-    nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=[])
-    for node_id in range(2, 10):
-        write(nodes, node_id)
-    slow_loader(monkeypatch)
-
-    workers = 8
-    ready = threading.Barrier(workers)
-
-    def attach(index: int):
-        ready.wait()
-        return contain(tmp_path, "1", f"{index + 2}-1")
-
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(attach, index) for index in range(workers)]
-        for future in futures:
-            future.result()
-
-    assert set(load(tmp_path).effective_contains("1-1")) == {
-        f"{node_id}-1" for node_id in range(2, 10)
-    }
-
-
 def test_parallel_link_keeps_every_edge(write, tmp_path, monkeypatch):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=[])
+    write(nodes, 1, band="root", order=0)
     for node_id in range(2, 10):
-        write(nodes, node_id)
+        write(nodes, node_id, band="children", order=node_id - 2)
     slow_loader(monkeypatch)
 
     workers = 8
@@ -101,4 +82,3 @@ def test_parallel_link_keeps_every_edge(write, tmp_path, monkeypatch):
 
     edges = {edge.to for edge in load(tmp_path).nodes["1-1"].links}
     assert edges == {f"{node_id}-1" for node_id in range(2, 10)}
-

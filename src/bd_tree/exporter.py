@@ -1,14 +1,13 @@
-"""Export containment views.  Registry via ``@exporter``.
+"""Export link-closure views.  Registry via ``@exporter``.
 
 Everything display-related comes from front-matter fields chosen on the command
-line: paths from a template, titles and summaries from configurable keys, dot
-colours and shapes from arbitrary fields.  No layer or link-type names live
-here.
+line: paths from the band layout or a template, titles and summaries from
+configurable keys, dot colours and shapes from arbitrary fields.  No layer or
+link-type names live here.
 """
 
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -18,7 +17,7 @@ from .checker import path_problem
 from .errors import ExportError
 from .freshness import stale_edge_list
 from .frontmatter import render_document
-from .model import ExportResult, Node, StaleEdge, View, slugify
+from .model import ExportResult, Node, StaleEdge, View
 
 Exporter = Callable[..., ExportResult]
 EXPORTERS: dict[str, Exporter] = {}
@@ -111,7 +110,6 @@ def _template_fields(node: Node) -> dict[str, str]:
             "version": str(node.version),
             "name": _placement_name(node),
             "slug": _placement_name(node),
-            "section": node.section or "",
         }
     )
     return fields
@@ -138,114 +136,6 @@ def render_path(node: Node, template: str) -> str:
     return _validated_path(node, path)
 
 
-def _with_prefix(prefix: str, path: str) -> str:
-    return f"{prefix}/{path}" if prefix else path
-
-
-_ORDINAL = re.compile(r"^\d+-")
-
-
-def _numbered_section(
-    parent: str, section: str, siblings: dict[str, dict[str, int]]
-) -> str:
-    """Number a section's first segment; inner segments stay explicit subpaths.
-
-    The ordinal is the section base's first-encounter position among the distinct
-    sibling directories under ``parent`` in containment traversal order, at least
-    two digits.  A leading authored ordinal is stripped first, and sections that
-    strip to the same base share one numbered directory.
-    """
-    segments = section.split("/")
-    base = _ORDINAL.sub("", segments[0], count=1) or "section"
-    under = siblings.setdefault(parent, {})
-    if base not in under:
-        under[base] = len(under)
-    first = f"{under[base]:02d}-{base}"
-    return _with_prefix(parent, "/".join([first, *segments[1:]]))
-
-
-def _section_layout(view: View) -> tuple[dict[str, str], dict[str, str]]:
-    """Directory holding each reachable ref's own file, and its containment parent.
-
-    Mirrors :func:`bd_tree.loader.load_view`: walk declared ``contains`` from the
-    view root, restricted to the refs in ``view.nodes``.  A non-section node sits
-    in its parent's directory.  A section node opens a numbered directory for its
-    descendants and its own file sits there; relative sections stack under the
-    parent directory, while a leading ``/`` numbers from the output root.  A ref
-    unreachable from the root gets no directory.
-    """
-    directories: dict[str, str] = {}
-    parents: dict[str, str] = {}
-    siblings: dict[str, dict[str, int]] = {}
-    seen: set[str] = set()
-
-    def walk(ref: str, directory: str, parent: str) -> None:
-        if ref in seen or ref not in view.nodes:
-            return
-        seen.add(ref)
-        node = view.nodes[ref]
-        if node.section:
-            base = "" if node.section_rooted else directory
-            directory = _numbered_section(base, node.section, siblings)
-        directories[ref] = directory
-        parents[ref] = parent
-        for child in view.store.effective_contains(ref):
-            walk(child, directory, ref)
-
-    walk(view.ref, "", "")
-    return directories, parents
-
-
-def _check_section_dirs(view: View, directories: dict[str, str]) -> None:
-    """Refuse two sections that would merge their descendant subtrees.
-
-    Sharing a directory is intentional when at most one node opens a subtree
-    there (a carrier beside its layer's leaves, or several leaves in one stage).
-    Two nodes that both have containment children would silently merge those
-    children, so that case is refused.
-    """
-    used: dict[str, tuple[str, bool]] = {}
-    for ref in sorted(
-        view.nodes, key=lambda r: (view.nodes[r].id, view.nodes[r].version)
-    ):
-        node = view.nodes[ref]
-        section = node.section
-        if not section or ref not in directories:
-            continue
-        directory = directories[ref]
-        has_children = any(
-            child in view.nodes for child in view.store.effective_contains(ref)
-        )
-        previous = used.get(directory)
-        if previous is None:
-            used[directory] = (ref, has_children)
-            continue
-        if has_children and previous[1]:
-            raise ExportError(
-                f"sections {previous[0]} and {ref} both use directory '{directory}'"
-            )
-        used[directory] = (previous[0], previous[1] or has_children)
-
-
-def _default_path(node: Node, directory: str = "") -> str:
-    """Place the node's file in the directory that holds it.
-
-    A section node's stem is its placement name; the directory already carries
-    its numbered section.  Every other node sits in its inherited directory and
-    uses its ``name``, else ``<ref>-<title-slug>``, else its ref.  ``folder`` is
-    ordinary front matter and never affects placement.
-    """
-    if node.section:
-        stem = _placement_name(node)
-    elif node.name:
-        stem = node.name
-    else:
-        slug = slugify(node.title)
-        # ``Node.title`` falls back to the ref, so an equal slug is not a title.
-        stem = f"{node.ref}-{slug}" if slug and slug != node.ref else node.ref
-    return _validated_path(node, _with_prefix(directory, f"{stem}.md"))
-
-
 def _build_paths(
     view: View,
     template: str | None,
@@ -257,21 +147,15 @@ def _build_paths(
     used: dict[str, str] = {}
     refs = list(refs)
     graph_paths: dict[str, str] | None = None
-    directories: dict[str, str] = {}
-    if template is None and view.model == "graph":
+    if template is None:
         # Imported lazily: graph.py imports this module's banner and helpers.
         from .graph import build_graph, layout_paths
 
         graph_paths = layout_paths(build_graph(view.store), refs)
-    elif template is None:
-        directories, _ = _section_layout(view)
-        _check_section_dirs(view, directories)
     for ref in refs:
         node = view.nodes[ref]
         if graph_paths is not None:
             path = graph_paths[ref]
-        elif template is None:
-            path = _default_path(node, directories.get(ref, ""))
         else:
             path = render_path(node, template)
         # Reserved names are refused in every directory, not only the root: a
@@ -357,7 +241,7 @@ def _graph_index_text(
         lines.extend(["---", f"nodes: {nodes_link}", "---", ""])
     lines.extend(
         [
-            banner if banner is not None else BANNER.format(name="tree"),
+            banner if banner is not None else BANNER.format(name="graph"),
             "",
             f"# View {view.ref if label is None else label}",
             "",
@@ -377,63 +261,8 @@ def _graph_index_text(
     return "\n".join(lines)
 
 
-def _index_text(
-    view: View,
-    paths: dict[str, str],
-    title_field: str,
-    summary_field: str,
-    *,
-    banner: str | None = None,
-    label: str | None = None,
-    nodes_link: str | None = None,
-) -> str:
-    lines: list[str] = []
-    if nodes_link is not None:
-        lines.extend(["---", f"nodes: {nodes_link}", "---", ""])
-    lines.extend(
-        [
-            banner if banner is not None else BANNER.format(name="tree"),
-            "",
-            f"# View {view.ref if label is None else label}",
-            "",
-        ]
-    )
-    if nodes_link is not None:
-        lines.extend([_nodes_pointer(nodes_link), ""])
-    emitted: set[str] = set()
-
-    def walk(ref: str, depth: int) -> None:
-        if ref in emitted or ref not in view.nodes:
-            return
-        emitted.add(ref)
-        node = view.nodes[ref]
-        title = _display(node, title_field, node.ref)
-        summary = _display(node, summary_field, "")
-        lines.append(
-            _node_entry(
-                node,
-                title,
-                paths[ref],
-                indent="  " * depth,
-                summary=summary,
-                nodes_link=nodes_link,
-            )
-        )
-        for child in view.store.children(ref):
-            walk(child, depth + 1)
-
-    walk(view.ref, 0)
-    for ref in sorted(view.nodes, key=lambda r: (view.nodes[r].id, view.nodes[r].version)):
-        if ref not in emitted:
-            walk(ref, 0)
-    if not view.nodes:
-        lines.append("_No nodes in this view._")
-    lines.append("")
-    return "\n".join(lines)
-
-
 def _preorder_refs(view: View) -> list[str]:
-    """View refs in containment pre-order, matching :func:`_index_text`."""
+    """View refs in link pre-order from the anchor, then unreached refs."""
     order: list[str] = []
     emitted: set[str] = set()
 
@@ -465,33 +294,20 @@ def _directory_indexes(
     """Generated index text for the output root and every node directory.
 
     The keys are output-relative directory POSIX paths (``""`` is the root).
-    Each non-root directory lists its direct node files in view pre-order, then
-    its immediate subdirectories in first-appearance order.  Every ancestor of
-    a node directory is included, so a multi-segment section never leaves a
-    bare prefix folder unindexed.  ``nodes_link``, when given, is the path from
-    the output root to the store's ``nodes/`` folder; each index carries it in
-    front matter and as a clickable link back to the real files.
+    Its immediate subdirectories are listed in first-appearance order.  Every
+    ancestor of a node directory is included, so a multi-segment band path never
+    leaves a bare prefix folder unindexed.  ``nodes_link``, when given, is the
+    path from the output root to the store's ``nodes/`` folder; each index
+    carries it in front matter and as a clickable link back to the real files.
     """
-    root_index = (
-        _graph_index_text(
-            view,
-            banner=banner,
-            label=label,
-            nodes_link=nodes_link,
-        )
-        if view.model == "graph"
-        else _index_text(
-            view,
-            paths,
-            title_field,
-            summary_field,
-            banner=banner,
-            label=label,
-            nodes_link=nodes_link,
-        )
+    root_index = _graph_index_text(
+        view,
+        banner=banner,
+        label=label,
+        nodes_link=nodes_link,
     )
     indexes = {"": root_index}
-    banner_text = banner if banner is not None else BANNER.format(name="tree")
+    banner_text = banner if banner is not None else BANNER.format(name="graph")
     directories: set[str] = {""}
     subdirectories: dict[str, list[str]] = {}
     direct: dict[str, list[str]] = {}
@@ -567,34 +383,6 @@ def _write_indexes(out: Path, indexes: dict[str, str]) -> list[Path]:
         if stale.is_symlink() or stale.is_file():
             stale.unlink()
     return files
-
-
-@exporter("tree")
-def export_tree(
-    view: View,
-    out: Path,
-    *,
-    path_template: str | None = None,
-    title_field: str = "title",
-    summary_field: str = "summary",
-    force: bool = False,
-    clean: bool = False,
-) -> ExportResult:
-    """Write every view node at its templated path plus one INDEX.md per folder."""
-    out = Path(out)
-    _prepare_out(out, force=force, clean=clean)
-    refs = sorted(view.nodes, key=lambda r: (view.nodes[r].id, view.nodes[r].version))
-    paths = _build_paths(
-        view, path_template, refs, reserved=frozenset({"INDEX.md"})
-    )
-    files: list[Path] = []
-    for ref in refs:
-        files.append(_write_node(out, view.nodes[ref], paths[ref]))
-    indexes = _directory_indexes(
-        view, paths, title_field, summary_field, banner=None, label=None
-    )
-    files.extend(_write_indexes(out, indexes))
-    return ExportResult("tree", out, len(refs), files)
 
 
 def _stale_section(

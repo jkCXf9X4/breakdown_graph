@@ -1,14 +1,14 @@
-"""In-memory representation of a loaded store and one containment view.
+"""In-memory representation of a loaded store and one link-closure view.
 
 A store is the full index of every node file: ``ref -> Node`` plus the logical
-``id -> versions`` grouping.  A view is the containment closure of one ref: the
-nodes it reaches through declared ``contains`` lists.  The containment chain
-from the view root is the only record of which version is current.
+``id -> versions`` grouping.  There is one topology: edges are declared
+``links``.  A view is the closure of one ref over those out-links; a node
+reached through several parents appears once.
 
-The model is deliberately schema-agnostic: ``id``, ``legacy``, ``contains`` and
-``links`` are structural; ``name``, ``title`` and ``section`` are presentation
-fields exposed as properties.  Every other front-matter key (including
-``folder``) is user metadata and is carried in ``Node.meta`` untouched.
+The model is deliberately schema-agnostic: ``id``, ``legacy`` and ``links`` are
+structural; every other front-matter key (including ``name``, ``title``,
+``section`` and the raw ``contains`` key) is metadata and is carried in
+``Node.meta`` untouched.
 """
 
 from __future__ import annotations
@@ -36,12 +36,19 @@ def slugify(text: str) -> str:
 
 @dataclass
 class Link:
-    """One ``links`` entry.  ``type`` is an arbitrary label, never an enum."""
+    """One ``links`` entry.  ``type`` is an arbitrary label, never an enum.
+
+    A symmetric link is a *master*: exactly one node file authors the relation
+    and the opposite is derived at load time.  ``inverse`` names the derived
+    edge type; when absent the master type is reused.
+    """
 
     to: str
     type: str
     pinned: str | None = None
     propagates: bool = False
+    symmetric: bool = False
+    inverse: str | None = None
     raw: Any = field(default_factory=dict)
 
     @property
@@ -57,7 +64,6 @@ class Node:
     id: int
     version: int
     ref: str
-    contains: list[str]  # declared list; an omitted list is a leaf
     legacy: str | None
     links: list[Link]
     body: str
@@ -96,13 +102,13 @@ class Node:
 
     @property
     def section(self) -> str | None:
-        """Directory this node opens for its containment descendants.
+        """Best-effort read of the ``section`` key, kept for compatibility.
 
-        ``section: true`` uses the node's own placement name; a non-empty string
-        is used verbatim.  A leading ``/`` makes the directory root-relative
-        (resolved from the output root instead of the parent prefix).  Any other
-        value (``false``, ``null``, ``0``, ``""``, a list) means the node is not
-        a section.
+        In the single link topology ``section`` is ordinary front matter with no
+        effect on paths, layout or validation; bands are the only layout.
+        ``section: true`` still resolves to this node's placement name and a
+        leading ``/`` is stripped, but callers must not treat either as
+        structure.
         """
         value = self.meta.get("section")
         if value is True:
@@ -116,7 +122,7 @@ class Node:
 
     @property
     def section_rooted(self) -> bool:
-        """True when ``section`` starts with ``/`` (root-relative)."""
+        """True when the inert ``section`` value starts with ``/``."""
         value = self.meta.get("section")
         return isinstance(value, str) and value.strip().startswith("/")
 
@@ -136,8 +142,9 @@ class Edge:
     target: str
     type: str
     pinned: str | None
-    origin: str  # "link" or "reference"
+    origin: str  # "link" (master), "derived" (opposite) or "reference"
     propagates: bool = False
+    symmetric: bool = False
 
     @property
     def propagating(self) -> bool:
@@ -186,31 +193,14 @@ class Store:
 
     @property
     def model(self) -> str:
-        """Topology family of this store: ``"graph"`` or ``"containment"``.
+        """Topology family of this store: always ``"graph"``.
 
-        A graph store is one where no node declares a ``contains`` key and at
-        least one node has a non-empty ``links`` list, declares ``stage``,
-        declares a non-empty ``layer``, or declares ``band``/``subpath``.  The
-        band clauses let a fresh graph store exist before it has any edge.
-        Everything else — an empty store, a legacy store with none of those
-        keys, or any store with a containment list — is containment.  The
-        choice is per store, never per node.
+        Kept as a property for internal compatibility.  Edges are ``links`` and
+        there is exactly one topology, so any stray ``contains`` key in
+        front matter is inert metadata (``bd check`` reports it as
+        ``contains-removed``).
         """
-        if any("contains" in node.meta for node in self.nodes.values()):
-            return "containment"
-
-        def layered(node: Node) -> bool:
-            value = node.meta.get("layer")
-            if isinstance(value, str) and bool(value.strip()):
-                return True
-            return "band" in node.meta or "subpath" in node.meta
-
-        if any(
-            node.links or "stage" in node.meta or layered(node)
-            for node in self.nodes.values()
-        ):
-            return "graph"
-        return "containment"
+        return "graph"
 
     @property
     def project_root(self) -> Path:
@@ -227,73 +217,79 @@ class Store:
     def root_ref(self) -> str | None:
         """The store's default anchor.
 
-        Declared ``ROOT`` wins.  Otherwise a graph store picks its lowest
-        topology root by ``(stage, id, version)``; a containment store picks the
-        lowest node by ``(id, version)``.  A declared root is returned even when
-        its file is missing, so the breakage is reported instead of silently
-        falling back.
+        Declared ``ROOT`` wins.  Otherwise the lowest topology root by
+        ``(stage, id, version)``.  A declared root is returned even when its file
+        is missing, so the breakage is reported instead of silently falling
+        back.
         """
         if self.declared_root is not None:
             return self.declared_root
         if not self.nodes:
             return None
-        if self.model == "graph":
-            roots = self.topology_roots()
-            return roots[0].ref if roots else None
-        return min(
-            self.nodes.values(), key=lambda node: (node.id, node.version)
-        ).ref
+        roots = self.topology_roots()
+        return roots[0].ref if roots else None
+
+    def structural_links(self, ref: str) -> list[Link]:
+        """Authored non-symmetric links of ``ref`` (the structural subset).
+
+        Only these links expand a view, define ancestry and topology roots, and
+        drive band inference.  A symmetric master is shown but never structural.
+        """
+        node = self.nodes.get(ref)
+        if node is None:
+            return []
+        return [link for link in node.links if not link.symmetric]
+
+    def derived_links(self, ref: str) -> list[Edge]:
+        """Derived opposites targeting ``ref`` from other nodes' symmetric masters.
+
+        For every other node's master ``X --T--> ref`` with ``symmetric``, the
+        opposite ``ref --(inverse or T)--> X`` is returned with
+        ``origin="derived"``.  Derived opposites are never stored or structural.
+        """
+        edges: list[Edge] = []
+        for node in self.nodes.values():
+            if node.ref == ref:
+                continue
+            for link in node.links:
+                if not link.symmetric or link.to != ref:
+                    continue
+                edges.append(
+                    Edge(
+                        source=ref,
+                        target=node.ref,
+                        type=link.inverse or link.type,
+                        pinned=None,
+                        origin="derived",
+                        propagates=False,
+                        symmetric=True,
+                    )
+                )
+        return edges
 
     def children(self, ref: str) -> list[str]:
-        """Topology children of ``ref``, in authored order.
+        """Structural out-link targets of ``ref`` (full refs), authored order."""
+        from .loader import is_full_ref
 
-        Graph: the node's ``links`` targets (full refs only) as written.
-        Containment: ``effective_contains(ref)``.
-        """
-        if self.model == "graph":
-            from .loader import is_full_ref
-
-            node = self.nodes.get(ref)
-            if node is None:
-                return []
-            return [link.to for link in node.links if is_full_ref(link.to)]
-        return self.effective_contains(ref)
+        return [link.to for link in self.structural_links(ref) if is_full_ref(link.to)]
 
     def parents(self, ref: str) -> list[str]:
-        """Topology parents of ``ref``.
-
-        Graph: refs whose ``links`` target ``ref``, sorted by
-        ``(stage, id, version)`` when stages exist.  Containment: nodes that
-        list ``ref`` in ``effective_contains``, in reverse containment order.
-        """
-        if self.model == "graph":
-            found = [
-                node
-                for node in self.nodes.values()
-                if any(link.to == ref for link in node.links)
-            ]
-            return [node.ref for node in sorted(found, key=_stage_key)]
+        """Refs whose structural ``links`` target ``ref``, sorted by stage key."""
         found = [
             node
             for node in self.nodes.values()
-            if ref in self.effective_contains(node.ref)
+            if any(
+                link.to == ref and not link.symmetric for link in node.links
+            )
         ]
-        return [node.ref for node in reversed(found)]
+        return [node.ref for node in sorted(found, key=_stage_key)]
 
     def topology_roots(self) -> list[Node]:
-        """Refs no other node reaches through the store's topology.
-
-        Graph: nodes with no parents, sorted by ``(stage, id, version)``.
-        Containment: ``containment_roots()``.
-        """
-        if self.model == "graph":
-            roots = [
-                node
-                for node in self.nodes.values()
-                if not self.parents(node.ref)
-            ]
-            return sorted(roots, key=_stage_key)
-        return self.containment_roots()
+        """Nodes no other node reaches through structural links, by stage key."""
+        roots = [
+            node for node in self.nodes.values() if not self.parents(node.ref)
+        ]
+        return sorted(roots, key=_stage_key)
 
     def versions(self, node_id: int) -> list[Node]:
         """Every existing version of ``node_id``, ascending by version."""
@@ -302,51 +298,35 @@ class Store:
             key=lambda node: node.version,
         )
 
-    def effective_contains(self, ref: str) -> list[str]:
-        """The node's declared ``contains`` list; an omitted list is a leaf.
+    def node_edges(
+        self,
+        ref: str,
+        *,
+        propagating_only: bool = False,
+        include_derived: bool = False,
+    ) -> list[Edge]:
+        """Authored out-edges of ``ref``; optionally append derived opposites.
 
-        Raises :class:`~.errors.BreakdownError` when the data holds a bare ref:
-        a view walk must never pick a version on the caller's behalf.
+        ``include_derived`` leaves the default behaviour intact and adds the
+        derived opposite edges whose source is ``ref``, marked
+        ``origin="derived"`` and ``symmetric=True``.
         """
-        # Imported here because the loader imports this module.
-        from .errors import BreakdownError
-        from .loader import is_full_ref
-
-        node = self.nodes.get(ref)
-        if node is None:
-            return []
-        for child in node.contains:
-            if not is_full_ref(child):
-                raise BreakdownError(
-                    f"bare ref '{child}' in contains of '{ref}'; data refs "
-                    "must be full <id>-<version> refs"
-                )
-        return list(node.contains)
-
-    def containment_roots(self) -> list[Node]:
-        """Refs that no node lists in ``effective_contains``, sorted."""
-        listed = {
-            child
-            for node in self.nodes.values()
-            for child in self.effective_contains(node.ref)
-        }
-        roots = [node for node in self.nodes.values() if node.ref not in listed]
-        return sorted(roots, key=lambda node: (node.id, node.version))
-
-    def node_edges(self, ref: str, *, propagating_only: bool = False) -> list[Edge]:
         edges = [
             Edge(
-                node.ref,
-                link.to,
-                link.type,
-                link.pinned,
-                "link",
-                link.propagating,
+                source=node.ref,
+                target=link.to,
+                type=link.type,
+                pinned=link.pinned,
+                origin="link",
+                propagates=link.propagating,
+                symmetric=link.symmetric,
             )
             for node in self.nodes.values()
             if node.ref == ref
             for link in node.links
         ]
+        if include_derived:
+            edges.extend(self.derived_links(ref))
         if propagating_only:
             edges = [edge for edge in edges if edge.propagating]
         return edges
@@ -354,7 +334,7 @@ class Store:
 
 @dataclass
 class View:
-    """The containment closure rooted at ``ref``."""
+    """The link closure rooted at ``ref``: out-link targets, seen-set deduped."""
 
     store: Store
     ref: str
@@ -372,15 +352,14 @@ class View:
 
     @property
     def model(self) -> str:
-        """Topology family inherited from the store: graph or containment."""
+        """Topology family inherited from the store; always ``"graph"``."""
         return self.store.model
 
     def current_ref(self, node_id: int) -> str | None:
         """The ref of logical ``node_id`` inside this view, else ``None``.
 
-        A version-only chain selects one version per id.  Two versions of the
-        same id in one view would make "current" ambiguous, so that is an error
-        rather than a silent first-match.
+        A link closure can reach two versions of one id; that makes "current"
+        ambiguous, so it is an error rather than a silent first-match.
         """
         matches = [
             ref for ref, node in self.nodes.items() if node.id == node_id

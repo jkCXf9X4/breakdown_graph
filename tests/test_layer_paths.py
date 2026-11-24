@@ -250,7 +250,7 @@ def test_group_is_ordinary_metadata_and_warns_in_graph_mode(write, tmp_path):
 
 
 def test_link_refuses_band_cycle_and_same_band_order_and_new_accepts_paths(tmp_path):
-    api.init_store(tmp_path, graph=True)
+    api.init_store(tmp_path)
     api.new_node(tmp_path, parent="1-1", layer="alpha", fields={"title": "A"})
     api.new_node(tmp_path, parent="2-1", layer="beta", fields={"title": "B"})
     with pytest.raises(BreakdownError, match="layer cycle"):
@@ -266,7 +266,7 @@ def test_link_refuses_band_cycle_and_same_band_order_and_new_accepts_paths(tmp_p
         api.new_node(tmp_path, parent="1-1", layer="bad//path")
 
 
-def test_materialization_tree_work_and_exports_use_nested_folders(write, tmp_path):
+def test_materialization_work_and_export_use_nested_folders(write, tmp_path):
     root = tmp_path / "store"
     nodes = root / "nodes"
     _fork(nodes, nested=True)
@@ -278,14 +278,11 @@ def test_materialization_tree_work_and_exports_use_nested_folders(write, tmp_pat
         out / "01-breakdown" / "sub-a" / "sub-sub" / "6-1.md"
     )
 
-    tree, graph = tmp_path / "tree", tmp_path / "graph"
-    api.export_view("tree", root, "1-1", tree)
+    graph = tmp_path / "graph"
     api.export_view("graph", root, "1-1", graph)
-    for base in (tree, graph):
-        assert (base / "01-breakdown" / "sub-a" / "sub-sub" / "6-1.md").is_file()
-        assert (base / "01-breakdown" / "sub-a" / "sub-sub" / "INDEX.md").is_file()
+    assert (graph / "01-breakdown" / "sub-a" / "sub-sub" / "6-1.md").is_file()
+    assert (graph / "01-breakdown" / "sub-a" / "sub-sub" / "INDEX.md").is_file()
 
-    assert main(["--root", str(root), "tree", "1-1"]) == 0
     dot_file = tmp_path / "graph.dot"
     assert main(["--root", str(root), "graph", "--dot", "--out", str(dot_file)]) == 0
     dot = dot_file.read_text(encoding="utf-8")

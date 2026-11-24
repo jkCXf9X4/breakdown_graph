@@ -167,45 +167,23 @@ def _link_scalar(value: str | int) -> str:
 
 
 def _link_object(link: dict[str, Any] | str | int) -> str:
+    """Render one link mapping, preserving every key including unknowns.
+
+    ``symmetric`` and ``inverse`` are ordinary link keys here; neither is
+    dropped or rewritten, so a round-trip keeps the authored master relation.
+    """
     if not isinstance(link, dict):
         return _link_scalar(link)
     data: dict[str, Any] = {}
     for key, value in link.items():
-        if value is None and key != "pinned":
-            continue
-        data[key] = str(value) if key == "pinned" else value
+        if key == "pinned" and value is not None:
+            value = str(value)
+        data[key] = value
     return _inline_dump(data)
 
 
 def _format_link(link: dict[str, Any] | str | int) -> str:
     return "  - " + _link_object(link)
-
-
-_CONTAINS_KEY = re.compile(r"^contains\s*:")
-
-
-def rewrite_contains(raw_fm: str, refs: list[str]) -> str:
-    """Replace (or append) the ``contains:`` list, leaving every other line alone."""
-    lines = raw_fm.splitlines()
-    start = next(
-        (i for i, line in enumerate(lines) if _CONTAINS_KEY.match(line)), None
-    )
-    dumped = _inline_dump(list(refs))
-    block = [f"contains: {dumped}"]
-    if start is None:
-        lines.extend(block)
-    else:
-        end = start + 1
-        while end < len(lines):
-            line = lines[end]
-            if line and not line[0].isspace() and not line.startswith("- "):
-                break
-            end += 1
-        lines[start:end] = block
-    rendered = "\n".join(lines)
-    if raw_fm.endswith("\n") or not raw_fm:
-        rendered += "\n"
-    return rendered
 
 
 def rewrite_links(raw_fm: str, links: list[dict[str, Any] | str | int]) -> str:

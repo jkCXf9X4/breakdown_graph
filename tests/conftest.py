@@ -18,9 +18,9 @@ from bd_tree.frontmatter import body_hash, render_document  # noqa: E402
 def _qualify(value: Any, version: int) -> Any:
     """Turn a bare id in test data into the full ref of ``version``.
 
-    Tests write readable data like ``contains=["2"]``; the store only accepts
-    full refs, so the fixture qualifies it to ``"2-1"`` unless a test asks for
-    raw data (``raw_refs=True``) to exercise rejection.
+    Tests write readable data like ``links=[{"to": "2", "type": "x"}]``; the
+    store only accepts full refs, so the fixture qualifies it to ``"2-1"``
+    unless a test asks for raw data (``raw_refs=True``) to exercise rejection.
     """
     if isinstance(value, bool):
         return value
@@ -48,7 +48,6 @@ def write_node(
     node_id: int,
     *,
     version: int = 1,
-    contains: list[str] | None = None,
     links: list[Any] | None = None,
     body: str = "body\n",
     meta: dict[str, Any] | None = None,
@@ -57,9 +56,9 @@ def write_node(
 ) -> Path:
     """Write one node.  Fields are arbitrary; only what you pass is written.
 
-    Bare ids in ``contains``/``links`` are qualified to ``<id>-<version>``
-    because data refs are always full refs; pass ``raw_refs=True`` to write the
-    given text unchanged (for bare-ref validation tests).
+    Bare ids in ``links`` are qualified to ``<id>-<version>`` because data refs
+    are always full refs; pass ``raw_refs=True`` to write the given text
+    unchanged (for bare-ref validation tests).
 
     Convenience: when ``layer`` is given, set ``name`` to ``<ref>`` so path
     assertions stay readable.
@@ -76,12 +75,6 @@ def write_node(
         data.setdefault("name", ref)
     if meta:
         data.update(meta)
-    if contains is not None:
-        data["contains"] = (
-            list(contains)
-            if raw_refs
-            else [_qualify(item, 1) for item in contains]
-        )
     if links is not None:
         data["links"] = (
             list(links)

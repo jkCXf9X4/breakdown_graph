@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "breakdown-tree"
-description = "Flat markdown information graph with containment views and git solutions"
+description = "Flat markdown typed-link topology with git solutions and one work area"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["PyYAML>=6"]
 dynamic = ["version"]
-keywords = ["markdown", "knowledge-graph", "containment", "documentation"]
+keywords = ["markdown", "knowledge-graph", "topology", "documentation"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",

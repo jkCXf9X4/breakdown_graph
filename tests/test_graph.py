@@ -40,14 +40,6 @@ def _example_store(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _file_map(out: Path) -> dict[str, bytes]:
-    return {
-        path.relative_to(out).as_posix(): path.read_bytes()
-        for path in sorted(out.rglob("*"))
-        if path.is_file()
-    }
-
-
 def _codes(graph, anchor=None):
     return [issue.code for issue in audit(graph, anchor)]
 
@@ -142,6 +134,50 @@ def test_layout_tie_break_is_lexicographic(write, tmp_path):
     assert band.label == "alpha"
 
 
+def test_band_order_breaks_ties_and_flat_keeps_folders_top_level(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(
+        nodes,
+        1,
+        band="root",
+        band_layout="flat",
+        band_order=["root", "c", "a", "b"],
+        links=[
+            {"to": "2", "type": "x"},
+            {"to": "3", "type": "x"},
+        ],
+    )
+    write(nodes, 2, band="b")
+    write(nodes, 3, band="a", links=[{"to": "4", "type": "x"}])
+    write(nodes, 4, band="c")
+
+    bands = graph_layout(build_graph(tmp_path), ["1-1", "2-1", "3-1", "4-1"])
+    # The hint puts c before b; the real a -> c edge still puts a before c.
+    assert [band.label for band in bands] == ["root", "a", "c", "b"]
+    assert [band.directory for band in bands] == [
+        "00-root",
+        "01-a",
+        "02-c",
+        "03-b",
+    ]
+    assert all(band.top_level for band in bands)
+
+
+def test_symmetric_link_does_not_order_bands(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(
+        nodes,
+        1,
+        band="root",
+        links=[{"to": "2", "type": "verifies", "symmetric": True}],
+    )
+    write(nodes, 2, band="z")
+    graph = build_graph(tmp_path)
+    assert set(graph.roots) == {"1-1", "2-1"}
+    assert graph.band_folder["z"] == "01-z"
+    assert "/" not in graph.band_folder["z"]
+
+
 def test_layer_subpath_paths_and_headings(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(
@@ -225,14 +261,13 @@ def test_layer_subpath_export_creates_nested_indexes(write, tmp_path):
     assert "← [1-1 Title of 1-1](../../../00-intent/1-1.md) (breaks_down) [derived]" in inner
 
 
-def test_example_graph_and_tree_show_subpath_headings(monkeypatch, capsys):
+def test_example_graph_shows_subpath_headings(monkeypatch, capsys):
     monkeypatch.chdir(EXAMPLES)
-    for argv in (["graph"], ["tree", "1-1"]):
-        assert main(argv) == 0
-        out = capsys.readouterr().out
-        assert "  structural/" in out
-        assert "  verification/" in out
-        assert "  fan-in/" in out
+    assert main(["graph"]) == 0
+    out = capsys.readouterr().out
+    assert "  structural/" in out
+    assert "  verification/" in out
+    assert "  fan-in/" in out
 
 
 def test_out_is_authored_and_sorted_and_in_is_derived(write, tmp_path):
@@ -433,26 +468,6 @@ def test_work_depth_limits_graph_closure_to_link_hops(tmp_path):
     assert api.work(root, status=True).ok
 
 
-def test_export_tree_uses_the_graph_stage_layout_and_indexes(tmp_path):
-    root = _example_store(tmp_path)
-    tree = tmp_path / "tree"
-    graph = tmp_path / "graph"
-
-    api.export_view("tree", root, "1-1", tree)
-    api.export_view("graph", root, "1-1", graph)
-
-    assert set(_file_map(tree)) == set(_file_map(graph))
-    assert sorted(path.name for path in tree.iterdir() if path.is_dir()) == list(
-        STAGE_DIRS
-    )
-    for directory in STAGE_DIRS:
-        assert (tree / directory / "INDEX.md").is_file()
-
-    before = _file_map(tree)
-    api.export_view("tree", root, "1-1", tree, clean=True)
-    assert _file_map(tree) == before
-
-
 def _mutation_graph(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, stage=0, links=[{"to": "3", "type": "breaks_down"}])
@@ -496,16 +511,6 @@ def test_link_on_a_graph_refuses_a_back_edge_and_keeps_targets_sorted(
     ).meta["links"]
     targets = [item.get("to") if isinstance(item, dict) else item for item in links]
     assert targets == ["2-1", "3-1", "4-1"]
-
-
-def test_contain_and_uncontain_refuse_a_graph_store(write, tmp_path):
-    _mutation_graph(write, tmp_path)
-    for call in (
-        lambda: api.contain(tmp_path, "1-1", "2-1"),
-        lambda: api.uncontain(tmp_path, "1-1", "3-1"),
-    ):
-        with pytest.raises(BreakdownError, match="bd link / bd unlink"):
-            call()
 
 
 def test_replace_on_a_graph_repoints_inbound_links_and_root(write, tmp_path):
@@ -555,42 +560,33 @@ def test_delete_on_a_graph_uses_link_reachability(write, tmp_path):
     assert not (tmp_path / "nodes" / "9-1.md").exists()
 
 
-# -- mode guard and graph-only exports ----------------------------------------
+# -- retired containment surface ----------------------------------------------
 
 
-def test_build_graph_refuses_a_containment_store(write, tmp_path):
+def test_check_reports_a_retired_contains_key(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2"])
-    write(nodes, 2)
-    with pytest.raises(BreakdownError, match="this store is containment"):
-        build_graph(tmp_path)
+    write(
+        nodes,
+        1,
+        band="root",
+        contains=["2"],
+        links=[{"to": "2", "type": "breaks_down"}],
+    )
+    write(nodes, 2, band="next")
+    issues = api.check(tmp_path).issues
+    assert [issue.code for issue in issues] == ["contains-removed"]
 
 
-def test_graph_commands_refuse_a_containment_store(
-    write, tmp_path, monkeypatch, capsys
-):
+def test_tree_commands_are_gone(write, tmp_path, monkeypatch):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2"])
-    write(nodes, 2)
+    write(nodes, 1, band="root")
     monkeypatch.chdir(tmp_path)
-    commands = [
-        ["audit"],
-        ["graph"],
-        ["out", "1-1"],
-        ["in", "1-1"],
-        [
-            "export",
-            "graph",
-            "--view",
-            "1-1",
-            "--out",
-            str(tmp_path / "out"),
-        ],
-    ]
-    for argv in commands:
-        assert main(argv) == 2
-        err = capsys.readouterr().err
-        assert "this store is containment; graph commands need links and stages" in err
+    with pytest.raises(SystemExit) as tree:
+        main(["tree", "1-1"])
+    assert tree.value.code == 2
+    with pytest.raises(SystemExit) as export:
+        main(["export", "tree", "--view", "1-1", "--out", str(tmp_path / "out")])
+    assert export.value.code == 2
 
 
 def test_graph_export_context_and_dot(tmp_path):

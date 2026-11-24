@@ -49,7 +49,6 @@ from .navigate import resolve_ref as _resolve_ref
 from .ops import MigrationResult
 from .ops import clear_root as _clear_root
 from .ops import clone as _clone
-from .ops import contain as _contain
 from .ops import delete as _delete
 from .ops import diff as _diff
 from .ops import init_store as _init_store
@@ -58,7 +57,6 @@ from .ops import migrate as _migrate
 from .ops import new_node as _new_node
 from .ops import replace as _replace
 from .ops import set_root as _set_root
-from .ops import uncontain as _uncontain
 from .ops import unlink as _unlink
 from .ops import versions as _versions
 from .solutions import SolutionEntry, SolutionResult
@@ -74,6 +72,7 @@ __all__ = [
     "BreakdownError",
     "CheckResult",
     "DiffEntry",
+    "EXPORT_CHOICES",
     "Edge",
     "ExportError",
     "ExportResult",
@@ -98,7 +97,6 @@ __all__ = [
     "check",
     "clear_root",
     "clone",
-    "contain",
     "current_ref",
     "default_anchor",
     "default_root",
@@ -137,16 +135,15 @@ __all__ = [
     "solution_remove",
     "stage",
     "stale",
-    "uncontain",
     "unlink",
     "versions",
     "work",
 ]
 
 
-def init_store(root: str | Path = ".", *, graph: bool = False) -> Path:
-    """Create ``.bd_tree/nodes/1-1.md`` in an empty project and return its root."""
-    return _init_store(root, graph=graph)
+def init_store(root: str | Path = ".") -> Path:
+    """Create a relative-band graph root in an empty project; return its root."""
+    return _init_store(root)
 
 
 def load(root: str | Path) -> Store:
@@ -155,9 +152,8 @@ def load(root: str | Path) -> Store:
 
 
 def load_view(root: str | Path | Store, ref: str | int | None = None) -> View:
-    """Selected topology closure rooted at ``ref`` (default: the store anchor).
+    """Link closure rooted at ``ref`` (default: the store anchor).
 
-    Containment follows ``contains``; a graph store follows forward ``links``.
     ``ref`` may be a bare selector; it is resolved through the default view.
     """
     store = root if isinstance(root, Store) else _load(root)
@@ -196,7 +192,7 @@ def check(
     max_lines: int | None = None,
     max_chars: int | None = None,
 ) -> CheckResult:
-    """Validate the global tree, every view tree, and the selected view."""
+    """Validate the store, its edges, and the selected view."""
     return _check(
         root,
         view,
@@ -207,15 +203,20 @@ def check(
     )
 
 
+EXPORT_CHOICES = ("context", "dot", "graph", "svg")
+
+
 def export_view(
     name: str, root: str | Path, view: str | int, out: str | Path, **opts: Any
 ) -> ExportResult:
-    """Run a registered exporter (``tree``, ``context`` or ``dot``)."""
+    """Run one exporter: ``context``, ``dot``, ``graph`` or ``svg``."""
+    if name not in EXPORT_CHOICES:
+        raise BreakdownError(
+            f"unknown export '{name}' (available: {', '.join(EXPORT_CHOICES)})"
+        )
     func = EXPORTERS.get(name)
     if func is None:
-        raise BreakdownError(
-            f"unknown export '{name}' (available: {', '.join(sorted(EXPORTERS))})"
-        )
+        raise BreakdownError(f"export '{name}' is not registered")
     if name == "graph":
         graph = build_graph(root)
         anchor = resolve_graph_ref(graph, view)
@@ -258,14 +259,14 @@ def clone(
     *,
     subtree: bool = False,
 ) -> list[tuple[str, str]]:
-    """Copy a node, or its containment subtree, to new versions."""
+    """Copy a node, or its link subtree, to new versions."""
     return _clone(root, ref, version, subtree=subtree)
 
 
 def replace(
     root: str | Path, old: str | int, new: str | int
 ) -> tuple[str, str, str]:
-    """Swap one contained ref for another, preserving its position."""
+    """Repoint every inbound link from ``old`` to ``new``."""
     return _replace(root, old, new)
 
 
@@ -274,9 +275,29 @@ def root_ref(root: str | Path) -> str | None:
     return _load(root).root_ref
 
 
-def migrate(root: str | Path, *, dry_run: bool = False) -> MigrationResult:
-    """Migrate a classic bare-file store in place (or print the plan)."""
-    return _migrate(root, dry_run=dry_run)
+def migrate(
+    root: str | Path,
+    *,
+    dry_run: bool = False,
+    link_type: str = "breaks_down",
+    symmetric_types: list[str] | None = None,
+    inverse_types: dict[str, str] | None = None,
+    band_order: bool = False,
+) -> MigrationResult:
+    """Convert a classic or containment store in place (or print the plan).
+
+    ``symmetric_types`` and ``inverse_types`` mark master links on an existing
+    store; ``band_order`` writes the ROOT band-order hint.  Every flag is
+    idempotent, so re-running the same migration is a no-op.
+    """
+    return _migrate(
+        root,
+        dry_run=dry_run,
+        link_type=link_type,
+        symmetric_types=symmetric_types,
+        inverse_types=inverse_types,
+        band_order=band_order,
+    )
 
 
 def set_root(root: str | Path, ref: str | int) -> Path:
@@ -329,23 +350,6 @@ def new_node(
     )
 
 
-def contain(
-    root: str | Path,
-    parent: str | int,
-    child: str | int,
-    *,
-    before: str | int | None = None,
-    after: str | int | None = None,
-) -> Path:
-    """Add ``child`` to ``parent``'s containment list."""
-    return _contain(root, parent, child, before=before, after=after)
-
-
-def uncontain(root: str | Path, parent: str | int, child: str | int) -> Path:
-    """Remove ``child`` from ``parent``'s containment list."""
-    return _uncontain(root, parent, child)
-
-
 def link(
     root: str | Path,
     source: str | int,
@@ -353,9 +357,23 @@ def link(
     *,
     link_type: str,
     propagates: bool = False,
+    symmetric: bool = False,
+    inverse: str | None = None,
 ) -> Path:
-    """Append a typed link edge, pinning the target when it propagates."""
-    return _link(root, source, target, link_type=link_type, propagates=propagates)
+    """Append a typed link edge, pinning the target when it propagates.
+
+    ``symmetric`` makes the edge the single authored master of a two-way
+    relation; ``inverse`` names the derived opposite's type and requires it.
+    """
+    return _link(
+        root,
+        source,
+        target,
+        link_type=link_type,
+        propagates=propagates,
+        symmetric=symmetric,
+        inverse=inverse,
+    )
 
 
 def unlink(

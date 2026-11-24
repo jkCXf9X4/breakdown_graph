@@ -1,9 +1,9 @@
-"""Structural validation over the full store and its containment views.
+"""Structural validation over the full store and one link-closure view.
 
 Only structure is checked: filename grammar, id/filename agreement, duplicate
-refs, ref syntax in data, containment targets and cycles, per-view tree shape,
-reachability, dangling links and size.  Front-matter fields, link types and
-layers are never validated unless asked for with ``require``.
+refs, ref syntax in data, graph edges and bands, dangling links and size, plus
+the retired ``contains`` key.  Front-matter fields, link types and layers are
+never validated unless asked for with ``require``.
 """
 
 from __future__ import annotations
@@ -12,13 +12,12 @@ from pathlib import Path, PurePosixPath
 
 from .errors import BreakdownError
 from .loader import (
-    is_full_ref,
     load,
     load_view,
     parse_selector,
     ref_of,
 )
-from .model import CheckResult, Issue, Node, Store, View
+from .model import CheckResult, Issue, Link, Store, View
 from .navigate import current_ref
 
 SIZE_LINES = 120
@@ -41,173 +40,106 @@ def path_problem(path: str) -> str | None:
     return None
 
 
-def _cycles(adjacency: dict[str, list[str]]) -> list[list[str]]:
-    color: dict[str, int] = {}
-    stack: list[str] = []
-    found: list[list[str]] = []
-    seen_shapes: set[frozenset[str]] = set()
-
-    def visit(node: str) -> None:
-        color[node] = 1
-        stack.append(node)
-        for target in adjacency.get(node, ()):
-            state = color.get(target, 0)
-            if state == 0:
-                visit(target)
-            elif state == 1:
-                cycle = stack[stack.index(target) :] + [target]
-                shape = frozenset(cycle[:-1])
-                if shape not in seen_shapes:
-                    seen_shapes.add(shape)
-                    found.append(cycle)
-        stack.pop()
-        color[node] = 2
-
-    for node in sorted(adjacency):
-        if color.get(node, 0) == 0:
-            visit(node)
-    return found
-
-
-def _sort_key(node: Node) -> tuple[int, int]:
-    return node.id, node.version
-
-
 def default_root_ref(store: Store) -> str:
     """Declared ``ROOT``, else the lowest topology root; ``1-1`` when empty."""
     return store.root_ref or "1-1"
 
 
-def _check_targets_and_cycles(store: Store, issues: list[Issue]) -> None:
-    adjacency: dict[str, list[str]] = {}
+def _check_contains_removed(store: Store, issues: list[Issue]) -> None:
+    """Report any surviving ``contains`` key; only ``bd migrate`` removes it."""
     for node in store.nodes.values():
-        targets: list[str] = []
-        for child in node.contains:
-            if not is_full_ref(child):
-                # The loader already reported this as bare-ref / invalid-ref.
-                continue
-            if child not in store.nodes:
-                issues.append(
-                    Issue(
-                        "error",
-                        "missing-target",
-                        f"contains target '{child}' does not exist",
-                        node=node.ref,
-                        path=str(node.path.relative_to(store.root)),
-                    )
-                )
-                continue
-            targets.append(child)
-        if targets:
-            adjacency[node.ref] = targets
-
-    for cycle in _cycles(adjacency):
+        if "contains" not in node.meta:
+            continue
         issues.append(
             Issue(
                 "error",
-                "containment-cycle",
-                "containment cycle: " + " -> ".join(cycle),
-                node=cycle[0],
-            )
-        )
-
-
-def _check_reachability(store: Store, root_ref: str, issues: list[Issue]) -> None:
-    """Every logical id connected to the root through containment or a link.
-
-    Reachability is per logical id: once an id appears in the root closure, all
-    of its versions are normal alternatives and none is reported.  An id with no
-    such path is an orphan and is reported as a warning.
-    """
-    if root_ref not in store.nodes:
-        issues.append(
-            Issue(
-                "error",
-                "root-ref-missing",
-                f"root ref '{root_ref}' does not exist",
-                node=root_ref,
-            )
-        )
-        return
-
-    reachable_ids: set[int] = set()
-    seen: set[str] = set()
-    queue = [root_ref]
-    while queue:
-        ref = queue.pop()
-        if not is_full_ref(ref) or ref in seen:
-            continue
-        reached = store.nodes.get(ref)
-        if reached is None:
-            continue
-        seen.add(ref)
-        reachable_ids.add(reached.id)
-        queue.extend(child for child in reached.contains if is_full_ref(child))
-        queue.extend(
-            link.to for link in reached.links if is_full_ref(link.to)
-        )
-
-    for ref in sorted(store.nodes, key=lambda r: _sort_key(store.nodes[r])):
-        node = store.nodes[ref]
-        if node.id in reachable_ids:
-            continue
-        issues.append(
-            Issue(
-                "warning",
-                "unreachable-node",
-                f"node '{ref}' is not reachable from root {root_ref} through "
-                "containment or a link",
-                node=ref,
+                "contains-removed",
+                "node still declares 'contains'; containment is retired, "
+                "run `bd migrate`",
+                node=node.ref,
                 path=str(node.path.relative_to(store.root)),
             )
         )
 
 
-def _check_view_trees(store: Store, issues: list[Issue]) -> None:
-    """Tree shape per view: one parent per node, no cycles, no lost targets."""
-    seen: set[tuple[str, str]] = set()
-    for ref in sorted(store.nodes, key=lambda r: _sort_key(store.nodes[r])):
-        try:
-            resolved = load_view(store, ref)
-        except BreakdownError:
-            # Bare data refs are reported by the store scan; a view cannot walk.
-            continue
-        by_id: dict[int, list[str]] = {}
-        for node_ref, node in resolved.nodes.items():
-            by_id.setdefault(node.id, []).append(node_ref)
-        for node_id, refs in by_id.items():
-            if len(refs) < 2:
+def _check_symmetric_links(store: Store, issues: list[Issue]) -> None:
+    """Validate the one-master rule for symmetric links."""
+    masters: list[tuple[str, Link]] = []
+    pairs: set[tuple[str, str]] = set()
+    for node in sorted(store.nodes.values(), key=lambda item: item.ref):
+        for link in node.links:
+            if not link.symmetric:
                 continue
-            key = ("duplicate-id", ",".join(sorted(refs)))
-            if key in seen:
-                continue
-            seen.add(key)
-            issues.append(
-                Issue(
-                    "error",
-                    "duplicate-id",
-                    f"view {resolved.ref} contains multiple versions of id "
-                    f"{node_id}: " + ", ".join(sorted(refs)),
-                    node=sorted(refs)[0],
+            if link.to == node.ref:
+                issues.append(
+                    Issue(
+                        "error",
+                        "symmetric-self-edge",
+                        f"symmetric link to itself ({link.type})",
+                        node=node.ref,
+                        path=str(node.path.relative_to(store.root)),
+                    )
                 )
+            if link.propagates:
+                issues.append(
+                    Issue(
+                        "error",
+                        "propagates-on-symmetric",
+                        f"symmetric link {node.ref} -> {link.to} ({link.type}) "
+                        "must not declare 'propagates'",
+                        node=node.ref,
+                        path=str(node.path.relative_to(store.root)),
+                    )
+                )
+            masters.append((node.ref, link))
+            if link.to != node.ref:
+                pairs.add((node.ref, link.to))
+    reported: set[tuple[str, str]] = set()
+    for source, link in masters:
+        if link.to == source:
+            continue
+        reverse = (link.to, source)
+        if reverse not in pairs or source <= link.to:
+            continue
+        key = (source, link.to) if source <= link.to else (link.to, source)
+        if key in reported:
+            continue
+        reported.add(key)
+        issues.append(
+            Issue(
+                "error",
+                "duplicate-symmetric-edge",
+                f"both {source} -> {link.to} and {link.to} -> {source} are "
+                "authored symmetric; keep one master",
+                node=key[0],
             )
-        for issue in resolved.issues:
-            if issue.code not in (
-                "multiple-parents",
-                "containment-cycle",
-                "missing-target",
-            ):
-                continue
-            key = (issue.code, issue.node or "")
-            if key in seen:
-                continue
-            seen.add(key)
-            issues.append(issue)
+        )
+
+
+def _check_band_order(store: Store, issues: list[Issue]) -> None:
+    """A ROOT ``band_order`` must be a YAML list; unknown band names are fine."""
+    root = store.root_ref
+    node = store.nodes.get(root) if root is not None else None
+    if node is None or "band_order" not in node.meta:
+        return
+    value = node.meta.get("band_order")
+    if isinstance(value, list):
+        return
+    issues.append(
+        Issue(
+            "error",
+            "invalid-band-order",
+            f"node '{node.ref}' has non-list 'band_order' {value!r}; expected a "
+            "list of band names",
+            node=node.ref,
+            path=str(node.path.relative_to(store.root)),
+        )
+    )
 
 
 def _check_freshness(view: View, issues: list[Issue]) -> None:
     for edge in view.edges:
-        if not edge.propagating:
+        if edge.symmetric or not edge.propagating:
             continue
         target = view.nodes.get(edge.target)
         if target is None:
@@ -329,56 +261,12 @@ def check(
             )
 
     issues: list[Issue] = list(store.issues)
+    _check_contains_removed(store, issues)
+    _check_symmetric_links(store, issues)
+    _check_band_order(store, issues)
 
-    if store.model == "graph":
-        from .graph import audit as graph_audit
-        from .graph import build_graph
-
-        selected = canonical_root
-        if view is not None:
-            selected, problem = _resolve(view)
-            if selected is None:
-                if problem is not None:
-                    issues.append(problem)
-                issues = _dedupe(issues)
-                issues.sort(
-                    key=lambda i: (i.level != "error", i.node or "", i.code, i.message)
-                )
-                return CheckResult(root_path, str(view), 0, issues)
-
-        if selected not in store.nodes:
-            issues.append(
-                Issue(
-                    "error",
-                    "root-ref-missing",
-                    f"root ref '{selected}' does not exist",
-                    node=selected,
-                )
-            )
-            resolved = View(
-                store=store, ref=str(selected), nodes={}, edges=[], issues=[]
-            )
-        else:
-            graph = build_graph(store)
-            issues.extend(graph_audit(graph, selected))
-            resolved = load_view(store, selected)
-            issues.extend(resolved.issues)
-            _check_freshness(resolved, issues)
-            _check_sizes(
-                resolved,
-                issues,
-                SIZE_LINES if max_lines is None else max_lines,
-                SIZE_CHARS if max_chars is None else max_chars,
-            )
-        _check_required(store, list(require), issues)
-
-        issues = _dedupe(issues)
-        issues.sort(key=lambda i: (i.level != "error", i.node or "", i.code, i.message))
-        return CheckResult(root_path, resolved.ref, len(resolved.nodes), issues)
-
-    _check_targets_and_cycles(store, issues)
-    _check_reachability(store, canonical_root, issues)
-    _check_view_trees(store, issues)
+    from .graph import audit as graph_audit
+    from .graph import build_graph
 
     selected = canonical_root
     if view is not None:
@@ -387,22 +275,33 @@ def check(
             if problem is not None:
                 issues.append(problem)
             issues = _dedupe(issues)
-            issues.sort(key=lambda i: (i.level != "error", i.node or "", i.code, i.message))
+            issues.sort(
+                key=lambda i: (i.level != "error", i.node or "", i.code, i.message)
+            )
             return CheckResult(root_path, str(view), 0, issues)
-    try:
-        resolved = load_view(store, selected)
-    except BreakdownError as exc:
-        # Already reported by the store scan; report once more with the ref.
-        issues.append(Issue("error", "bare-ref", str(exc)))
+
+    if selected not in store.nodes:
+        issues.append(
+            Issue(
+                "error",
+                "root-ref-missing",
+                f"root ref '{selected}' does not exist",
+                node=selected,
+            )
+        )
         resolved = View(store=store, ref=str(selected), nodes={}, edges=[], issues=[])
-    issues.extend(resolved.issues)
-    _check_freshness(resolved, issues)
-    _check_sizes(
-        resolved,
-        issues,
-        SIZE_LINES if max_lines is None else max_lines,
-        SIZE_CHARS if max_chars is None else max_chars,
-    )
+    else:
+        graph = build_graph(store)
+        issues.extend(graph_audit(graph, selected))
+        resolved = load_view(store, selected)
+        issues.extend(resolved.issues)
+        _check_freshness(resolved, issues)
+        _check_sizes(
+            resolved,
+            issues,
+            SIZE_LINES if max_lines is None else max_lines,
+            SIZE_CHARS if max_chars is None else max_chars,
+        )
     _check_required(store, list(require), issues)
 
     issues = _dedupe(issues)

@@ -1,8 +1,8 @@
 # Example project
 
 This folder is a complete `bd` project and the default store (`.bd_tree/`,
-`ROOT` `1-1`). The store has twelve nodes and no `contains`: it is a graph
-example, not a containment tree. Every node declares its outgoing edges as full
+`ROOT` `1-1`). The store has twelve nodes and no `contains`: `links` is the one
+child relation. Every node declares its outgoing edges as full
 refs in `links`, and every node carries a `band` plus an optional `subpath`;
 no node declares `stage`, so the store is in relative mode and the band order
 is derived from the cross-band edges. Here the bands are `intent`, `breakdown`,
@@ -29,19 +29,17 @@ claim sub-bands feed it and it fans out to the two check subfolders. A node
 labels itself, so nothing is inherited; `4-1` has two parents and still lives only under
 `02-claims/structural/`, which is the point of the example. Within the
 verification band, `order` 0, 1, 2 positions the core, `fan-in`, and `fan-in2`
-across their different folders. `group` is ordinary metadata and never places a
-node in any topology.
+across their different folders. `group` and `section` are ordinary metadata and
+never place a node.
 
 ```sh
 bd audit                                  # 0 errors, 0 warnings
-bd tree                                   # derived band layout, subpath headings
-bd graph                                  # text render from 1-1, labelled bands
+bd graph                                  # text render from 1-1, band headings
 bd graph --svg --out /tmp/bd-graph.svg    # rendered SVG (needs Graphviz)
 bd out 1-1                                # authored out-edges, sorted
 bd in 4-1                                 # derived in-edges for a two-parent node
 bd work 1-1                               # single work area, derived band layout
 bd edit 4-1                               # path of 4-1 in the active view
-bd export tree 1-1 --out /tmp/bd-tree
 bd export graph --view 1-1 --out /tmp/bd-graph
 ```
 
@@ -49,7 +47,7 @@ The `/tmp` output holds `00-intent/` through `04-operation/`, the subpath
 folders `02-claims/structural/`, `02-claims/verification/`,
 `03-verification/fan-in/`, and `03-verification/fan-in2/`, one `INDEX.md` per
 directory, and a root index; it is a read-only snapshot, never a work area.
-`bd_work/` is ignored by `examples/.gitignore`. `bd tree` labels each band
+`bd_work/` is ignored by `examples/.gitignore`. `bd graph` labels each band
 `layer N — <name>`; the band number is the derived ordinal, not data.
 
 The commands assume the package is installed (`pip install -e '.[test]'` from

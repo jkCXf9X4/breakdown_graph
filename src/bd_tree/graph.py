@@ -1,11 +1,8 @@
 """Graph mode: ``links`` are forward parent -> child edges ordered into bands.
 
-This is a prototype beside containment.  It reads the same flat store but
-ignores ``contains`` completely: a view is the forward closure of one anchor over
-declared ``links``, and no node is placed by a containment tree.
-
-Authored data is the declared out-edge list on each node.  In-edges are always
-computed from those declarations and are reported as derived.
+A view is the forward closure of one anchor over declared ``links``; every edge
+is authored on its source node and in-edges are derived.  There is no other
+topology.
 
 Two band modes exist per store.  If any node declares ``stage``, bands are the
 absolute integer stages and ``order`` is the within-stage tie-break.  If no
@@ -354,6 +351,11 @@ def _edge_key(link: Link) -> tuple[tuple[int, int, int, str], str]:
     return _text_ref_key(link.to), link.type
 
 
+def _structural(link: Link) -> bool:
+    """True for an authored link that defines structure (never symmetric)."""
+    return not link.symmetric
+
+
 # ---------------------------------------------------------------------------
 # Bands: absolute ``stage`` or relative ``layer``
 
@@ -377,16 +379,38 @@ class BandPlan:
     layer: dict[str, str] = field(default_factory=dict)
 
 
+def band_order_hint(store: Store) -> list[str]:
+    """The ROOT node's ``band_order`` list, normalized; ``[]`` when absent.
+
+    Non-list values are reported by the checker and ignored here.  Duplicates
+    and unknown band names are tolerated; the first occurrence wins.
+    """
+    root = store.root_ref
+    node = store.nodes.get(root) if root is not None else None
+    if node is None:
+        return []
+    value = node.meta.get("band_order")
+    if not isinstance(value, list):
+        return []
+    hint: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item.strip() and item.strip() not in hint:
+            hint.append(item.strip())
+    return hint
+
+
 def _band_edges(
     store: Store, extra: tuple[str, str] | None = None
 ) -> dict[str, set[str]]:
-    """Band constraints from links whose endpoints sit in different bands."""
+    """Band constraints from structural links crossing band boundaries."""
     edges: dict[str, set[str]] = defaultdict(set)
     for node in store.nodes.values():
         source = node_layer_path(node)
         if source is None:
             continue
         for link in node.links:
+            if not _structural(link):
+                continue
             target = store.nodes.get(link.to)
             if target is None:
                 continue
@@ -419,25 +443,41 @@ def layer_reaches(
     return False
 
 
-def _layer_order(edges: dict[str, set[str]], layers: list[str]) -> list[str]:
-    """Topological layer order, lexicographic tie-break; cycles are omitted."""
+def _layer_order(
+    edges: dict[str, set[str]],
+    layers: list[str],
+    band_order: Sequence[str] = (),
+) -> list[str]:
+    """Topological layer order; cycles are omitted.
+
+    Ready layers are tie-broken by ``band_order`` (earlier index wins) and then
+    lexicographically.  Real edge constraints always win; bands absent from the
+    hint sort after listed ones.
+    """
+    hint = {name: index for index, name in enumerate(band_order)}
+
+    def rank(layer: str) -> tuple[int, int, str]:
+        if layer in hint:
+            return (0, hint[layer], layer)
+        return (1, 0, layer)
+
     indegree = {layer: 0 for layer in layers}
     for targets in edges.values():
         for target in targets:
             if target in indegree:
                 indegree[target] += 1
-    ready = [layer for layer in layers if indegree[layer] == 0]
+    ready = [(rank(layer), layer) for layer in layers if indegree[layer] == 0]
     heapq.heapify(ready)
     ordered: list[str] = []
     while ready:
-        current = heapq.heappop(ready)
+        _key, current = heapq.heappop(ready)
         ordered.append(current)
         for target in sorted(edges.get(current, ())):
             if target not in indegree:
                 continue
             indegree[target] -= 1
             if indegree[target] == 0:
-                heapq.heappush(ready, target)
+                heapq.heappush(ready, (rank(target), target))
     return ordered
 
 
@@ -620,7 +660,7 @@ def _relative_plan(store: Store) -> BandPlan:
 
     bands = sorted({parsed.band for parsed in layer_paths.values()})
     edges = _band_edges(store)
-    ordered = _layer_order(edges, bands)
+    ordered = _layer_order(edges, bands, band_order_hint(store))
     remaining = sorted(set(bands) - set(ordered))
     for component in _layer_cycles(set(bands), edges):
         issues.append(
@@ -694,6 +734,8 @@ def _relative_plan(store: Store) -> BandPlan:
         if source is None:
             continue
         for link in node.links:
+            if not _structural(link):
+                continue
             target = store.nodes.get(link.to)
             if target is None:
                 continue
@@ -785,17 +827,12 @@ class Graph:
 
 
 def build_graph(root: Store | str | Path) -> Graph:
-    """Build adjacency from ``node.links``; ``contains`` is never consulted.
+    """Build adjacency from authored ``node.links``.
 
     Selects absolute bands when any node declares ``stage``, relative
     ``layer`` bands otherwise, and records the band issues for the audit.
     """
     store = root if isinstance(root, Store) else load(root)
-    if store.model != "graph":
-        raise BreakdownError(
-            "this store is containment; graph commands need links and stages "
-            "(use bd check)"
-        )
     out = {ref: list(node.links) for ref, node in store.nodes.items()}
     inn: dict[str, list[Link]] = {ref: [] for ref in store.nodes}
     for ref in sorted(out, key=lambda r: _ref_key(store.nodes[r])):
@@ -808,7 +845,12 @@ def build_graph(root: Store | str | Path) -> Graph:
                 raw=link.raw,
             )
             inn.setdefault(link.to, []).append(reverse)
-    incoming = {link.to for links in out.values() for link in links}
+    incoming = {
+        link.to
+        for links in out.values()
+        for link in links
+        if _structural(link)
+    }
     roots = sorted(
         (ref for ref in store.nodes if ref not in incoming),
         key=lambda ref: _ref_key(store.nodes[ref]),
@@ -929,6 +971,8 @@ def graph_view(
         if depth is not None and level >= depth:
             continue
         for link in sorted(graph.out.get(current, ()), key=_edge_key):
+            if not _structural(link):
+                continue
             if type_set is not None and link.type not in type_set:
                 continue
             if link.to in graph.store.nodes and link.to not in seen:
@@ -1067,7 +1111,8 @@ def _folder_members(
 
 
 def _link_text(link: Link) -> str:
-    return f"{link.to} ({link.type})"
+    label = f"{link.type}, symmetric" if link.symmetric else link.type
+    return f"{link.to} ({label})"
 
 
 def band_prefix(graph: Graph) -> str:
@@ -1220,7 +1265,7 @@ def render_dot(graph: Graph, refs: Iterable[str]) -> str:
         lines.append("  }")
     edges = sorted(
         {
-            (source, link.to, link.type)
+            (source, link.to, f"{link.type}, symmetric" if link.symmetric else link.type)
             for source in wanted
             for link in graph.out.get(source, ())
             if link.to in wanted
@@ -1265,14 +1310,21 @@ def render_svg(graph: Graph, refs: Iterable[str]) -> str:
 
 
 def render_out(graph: Graph, ref: str | int) -> str:
-    """Authored out-edges only, sorted; no inference and no in-edges."""
+    """Authored master links, then derived symmetric opposites."""
     target = resolve_graph_ref(graph, ref)
     if target not in graph.store.nodes:
         raise BreakdownError(f"unknown ref '{target}'")
     links = sorted(graph.out.get(target, ()), key=_edge_key)
-    if not links:
+    lines = [f"{target} -> {_link_text(link)}" for link in links]
+    derived = sorted(
+        graph.store.derived_links(target), key=lambda edge: _text_ref_key(edge.target)
+    )
+    lines.extend(
+        f"{target} -> {edge.target} ({edge.type})  [derived]" for edge in derived
+    )
+    if not lines:
         return f"{target} -> (no declared out-links)"
-    return "\n".join(f"{target} -> {_link_text(link)}" for link in links)
+    return "\n".join(lines)
 
 
 def render_in(graph: Graph, ref: str | int) -> str:
@@ -1297,7 +1349,11 @@ def render_in(graph: Graph, ref: str | int) -> str:
 def _cycles(graph: Graph) -> list[list[str]]:
     adjacency = {
         ref: sorted(
-            {link.to for link in graph.out.get(ref, ()) if link.to in graph.store.nodes}
+            {
+                link.to
+                for link in graph.out.get(ref, ())
+                if _structural(link) and link.to in graph.store.nodes
+            }
         )
         for ref in graph.store.nodes
     }
@@ -1365,6 +1421,8 @@ def audit(graph: Graph, anchor: str | int | None = None) -> list[Issue]:
                         node=ref,
                     )
                 )
+                continue
+            if not _structural(link):
                 continue
             if graph.relative:
                 continue

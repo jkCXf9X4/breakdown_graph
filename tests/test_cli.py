@@ -6,27 +6,30 @@ from bd_tree.cli import main
 
 
 def test_check_exit_status(write, tmp_path):
-    write(tmp_path / "nodes", 1)
+    write(tmp_path / "nodes", 1, band="root")
     assert main(["check", "--root", str(tmp_path)]) == 0
-    write(tmp_path / "nodes", 2, contains=["3"])
+    write(tmp_path / "nodes", 2, band="claims", links=[{"to": "9", "type": "serves"}])
     assert main(["check", "--root", str(tmp_path)]) == 1
 
 
-def test_export_tree_writes_view_output_shape(write, tmp_path):
-    write(tmp_path / "nodes", 1, title="Root", contains=[], layer="intent", section="intent")
+def test_export_graph_writes_view_output_shape(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, band="root", links=[{"to": "2", "type": "breaks_down"}])
+    write(nodes, 2, band="claims")
     out = tmp_path / "out"
     assert (
-        main(["export", "tree", "1", "--root", str(tmp_path), "--out", str(out), "--clean"])
+        main(["export", "graph", "--view", "1", "--root", str(tmp_path), "--out", str(out), "--clean"])
         == 0
     )
     assert (out / "INDEX.md").is_file()
-    assert (out / "00-intent" / "1-1.md").is_file()
+    assert (out / "00-root" / "1-1.md").is_file()
+    assert (out / "01-claims" / "2-1.md").is_file()
 
 
 def test_versions_and_delete_cli(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, version=1)
-    write(nodes, 1, version=2)
+    write(nodes, 1, version=1, band="root")
+    write(nodes, 1, version=2, band="root")
     assert main(["versions", "1", "--root", str(tmp_path)]) == 0
     assert main(["versions", "1-1", "--root", str(tmp_path)]) == 0
     assert main(["delete", "1-2", "--root", str(tmp_path)]) == 0
@@ -35,8 +38,8 @@ def test_versions_and_delete_cli(write, tmp_path):
 
 def test_clone_and_delete_refusals_cli(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2-1"])
-    write(nodes, 2)
+    write(nodes, 1, band="root", links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2, band="claims")
     assert main(["clone", "2-1", "--root", str(tmp_path)]) == 0
     assert (nodes / "2-2.md").is_file()
 
@@ -49,8 +52,8 @@ def test_clone_and_delete_refusals_cli(write, tmp_path):
 
 def test_clone_cli_prints_source_and_clone(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2-1"])
-    write(nodes, 2)
+    write(nodes, 1, band="root", links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2, band="claims")
 
     assert main(["clone", "1-1", "--root", str(tmp_path)]) == 0
     assert capsys.readouterr().out == "1-1 -> 1-2\n"
@@ -58,10 +61,18 @@ def test_clone_cli_prints_source_and_clone(write, tmp_path, capsys):
 
 def test_clone_subtree_cli_prints_every_pair(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2-1"])
-    write(nodes, 2, contains=["3-1", "4-1"])
-    write(nodes, 3)
-    write(nodes, 4)
+    write(nodes, 1, band="root", links=[{"to": "2-1", "type": "breaks_down"}])
+    write(
+        nodes,
+        2,
+        band="claims",
+        links=[
+            {"to": "3-1", "type": "breaks_down"},
+            {"to": "4-1", "type": "breaks_down"},
+        ],
+    )
+    write(nodes, 3, band="evidence")
+    write(nodes, 4, band="decisions")
 
     assert main(["clone", "2-1", "--subtree", "--root", str(tmp_path)]) == 0
     assert capsys.readouterr().out == (
@@ -71,23 +82,31 @@ def test_clone_subtree_cli_prints_every_pair(write, tmp_path, capsys):
 
 def test_replace_cli_swaps_and_prints_canonical_message(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2", "3"])
-    write(nodes, 2)
-    write(nodes, 3)
+    write(
+        nodes,
+        1,
+        band="root",
+        links=[
+            {"to": "2", "type": "breaks_down"},
+            {"to": "3", "type": "breaks_down"},
+        ],
+    )
+    write(nodes, 2, band="claims")
+    write(nodes, 3, band="evidence")
 
     assert main(["clone", "3-1", "--root", str(tmp_path)]) == 0
     capsys.readouterr()
     assert main(["replace", "3-1", "3-2", "--root", str(tmp_path)]) == 0
-    assert capsys.readouterr().out == "replaced 3-1 with 3-2 in 1-1\n"
+    assert capsys.readouterr().out == "replaced 3-1 with 3-2 in links\n"
 
     from bd_tree.api import load
 
-    assert load(tmp_path).effective_contains("1-1") == ["2-1", "3-2"]
+    assert load(tmp_path).children("1-1") == ["2-1", "3-2"]
 
 
 def test_replace_outside_view_cli_exits_2(write, tmp_path):
-    write(tmp_path / "nodes", 1)
-    write(tmp_path / "nodes", 9)
+    write(tmp_path / "nodes", 1, band="root")
+    write(tmp_path / "nodes", 9, band="lone")
 
     assert main(["clone", "9-1", "--root", str(tmp_path)]) == 0
     assert main(["replace", "9-1", "9-2", "--root", str(tmp_path)]) == 2
@@ -95,8 +114,8 @@ def test_replace_outside_view_cli_exits_2(write, tmp_path):
 
 def test_clone_rejects_replace_flag_cli_exits_2(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2-1"])
-    write(nodes, 2)
+    write(nodes, 1, band="root", links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2, band="claims")
 
     with pytest.raises(SystemExit) as exc:
         main(["clone", "1-1", "--replace", "--root", str(tmp_path)])
@@ -105,13 +124,15 @@ def test_clone_rejects_replace_flag_cli_exits_2(write, tmp_path):
 
 def test_new_with_arbitrary_field_cli(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=[])
+    write(nodes, 1, band="root")
     assert (
         main(
             [
                 "new",
                 "--parent",
                 "1",
+                "--band",
+                "claims",
                 "--root",
                 str(tmp_path),
                 "--field",
@@ -129,15 +150,16 @@ def test_new_with_arbitrary_field_cli(write, tmp_path):
 
     doc = parse_document((nodes / "2-1.md").read_text(encoding="utf-8"))
     assert doc.meta["phase"] == "build"
+    assert doc.meta["band"] == "claims"
     assert "folder" not in doc.meta
     assert doc.body == "hello\n"
-    assert load(tmp_path).effective_contains("1-1") == ["2-1"]
+    assert load(tmp_path).children("1-1") == ["2-1"]
 
 
 def test_new_prefills_title_and_summary_cli(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=[])
-    assert main(["new", "--parent", "1", "--root", str(tmp_path)]) == 0
+    write(nodes, 1, band="root")
+    assert main(["new", "--parent", "1", "--band", "claims", "--root", str(tmp_path)]) == 0
 
     from bd_tree.frontmatter import parse_document
 
@@ -148,8 +170,8 @@ def test_new_prefills_title_and_summary_cli(write, tmp_path):
 
 def test_check_require_flag_and_view_path_template(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2-1"], phase="intent")
-    write(nodes, 2, phase="build")
+    write(nodes, 1, band="root", phase="intent", links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2, band="claims", phase="build")
     assert main(["check", "--root", str(tmp_path), "--require", "phase"]) == 0
     assert main(["check", "--root", str(tmp_path), "--require", "audience"]) == 1
     out = tmp_path / "out"
@@ -157,7 +179,8 @@ def test_check_require_flag_and_view_path_template(write, tmp_path):
         main(
             [
                 "export",
-                "tree",
+                "context",
+                "--view",
                 "1",
                 "--root",
                 str(tmp_path),
@@ -175,8 +198,9 @@ def test_check_require_flag_and_view_path_template(write, tmp_path):
 
 
 def test_current_views_and_edit_cli(write, tmp_path, capsys):
-    write(tmp_path / "nodes", 1, contains=["2-1"], layer="intent", name="intent/1-1")
-    write(tmp_path / "nodes", 2, layer="claims", name="claims/2-1")
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, band="intent", links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2, band="claims")
     assert main(["work", "1-1", "--root", str(tmp_path)]) == 0
     capsys.readouterr()
 
@@ -194,39 +218,28 @@ def test_current_views_and_edit_cli(write, tmp_path, capsys):
     assert capsys.readouterr().out.startswith("1-1  Title of 1-1 *")
 
     assert main(["edit", "2-1", "--root", str(tmp_path)]) == 0
-    assert capsys.readouterr().out == f"{(tmp_path / 'bd_work' / 'claims' / '2-1.md')}\n"
+    assert capsys.readouterr().out == f"{(tmp_path / 'bd_work' / '01-claims' / '2-1.md')}\n"
 
 
 def test_current_path_without_area_is_an_error(write, tmp_path, capsys):
-    write(tmp_path / "nodes", 1)
+    write(tmp_path / "nodes", 1, band="root")
     assert main(["current", "--path", "--root", str(tmp_path)]) == 2
     assert "no work area" in capsys.readouterr().err
 
 
-def test_export_tree_is_available(write, tmp_path):
-    write(tmp_path / "nodes", 1)
-    assert (
-        main(
-            [
-                "export",
-                "tree",
-                "1",
-                "--out",
-                str(tmp_path / "out"),
-                "--root",
-                str(tmp_path),
-            ]
-        )
-        == 0
-    )
-    assert (tmp_path / "out" / "INDEX.md").is_file()
-
-
 def test_check_view_narrows_reporting(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2-1", "3-1"])
-    write(nodes, 2, body="line\n" * 121)
-    write(nodes, 3)
+    write(
+        nodes,
+        1,
+        band="root",
+        links=[
+            {"to": "2-1", "type": "breaks_down"},
+            {"to": "3-1", "type": "breaks_down"},
+        ],
+    )
+    write(nodes, 2, band="claims", body="line\n" * 121)
+    write(nodes, 3, band="evidence")
 
     assert main(["check", "--root", str(tmp_path)]) == 0
     out = capsys.readouterr().out
@@ -236,15 +249,19 @@ def test_check_view_narrows_reporting(write, tmp_path, capsys):
     assert main(["check", "--view", "3-1", "--root", str(tmp_path)]) == 0
     out = capsys.readouterr().out
     assert "WARNING nodes/2-1.md" not in out
-    assert "0 warnings" in out
+    assert "1 nodes, 0 errors, 1 warnings (view 3-1)" in out
+    # The global graph audit still anchors elsewhere: 1-1 is an orphan now.
+    assert "node '1-1' has no incoming edge" in out
 
 
 def test_removed_subcommands_and_flags_exit_2(write, tmp_path):
-    import pytest
-
-    write(tmp_path / "nodes", 1)
+    write(tmp_path / "nodes", 1, band="root")
     root = ["--root", str(tmp_path)]
     removed = [
+        ["tree", "1-1", *root],
+        ["contain", "1-1", "2-1", *root],
+        ["uncontain", "1-1", "2-1", *root],
+        ["export", "tree", "1", "--out", str(tmp_path / "out"), *root],
         ["version", "1-1", *root],
         ["grep", "needle", *root],
         ["view", "1", "--out", str(tmp_path / "out"), *root],
@@ -264,8 +281,8 @@ def test_removed_subcommands_and_flags_exit_2(write, tmp_path):
 
 def test_bare_selector_resolves_inside_the_default_view(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2-1"])
-    write(nodes, 2)
+    write(nodes, 1, band="root", links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2, band="claims")
 
     assert main(["show", "2", "--root", str(tmp_path)]) == 0
     assert capsys.readouterr().out.startswith("# 2-1  Title of 2-1")
@@ -278,8 +295,8 @@ def test_bare_selector_resolves_inside_the_default_view(write, tmp_path, capsys)
 
 def test_bare_selector_outside_the_view_fails(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(nodes, 1)
-    write(nodes, 9)
+    write(nodes, 1, band="root")
+    write(nodes, 9, band="lone")
 
     assert main(["show", "9", "--root", str(tmp_path)]) == 1
     err = capsys.readouterr().err
@@ -289,9 +306,9 @@ def test_bare_selector_outside_the_view_fails(write, tmp_path, capsys):
 
 def test_work_depth_suffix_reports_and_current_shows_it(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2-1"], layer="intent")
-    write(nodes, 2, contains=["3-1"], layer="claims")
-    write(nodes, 3, layer="evidence")
+    write(nodes, 1, band="intent", links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2, band="claims", links=[{"to": "3-1", "type": "breaks_down"}])
+    write(nodes, 3, band="evidence")
 
     assert main(["work", "1-1+1", "--root", str(tmp_path)]) == 0
     output = capsys.readouterr().out
@@ -310,27 +327,27 @@ def test_work_depth_suffix_reports_and_current_shows_it(write, tmp_path, capsys)
 
 def test_work_depth_option_overrides_a_suffix(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2-1"], layer="intent", name="intent/1-1")
-    write(nodes, 2, contains=["3-1"], layer="claims", name="claims/2-1")
-    write(nodes, 3, layer="evidence", name="evidence/3-1")
+    write(nodes, 1, band="intent", links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2, band="claims", links=[{"to": "3-1", "type": "breaks_down"}])
+    write(nodes, 3, band="evidence")
     out = tmp_path / "bd_work"
 
     assert main(["work", "1-1+0", "--depth", "1", "--root", str(tmp_path)]) == 0
     assert "(view 1-1+1)" in capsys.readouterr().out
-    assert (out / "claims" / "2-1.md").is_symlink()
-    assert not (out / "evidence" / "3-1.md").exists()
+    assert (out / "01-claims" / "2-1.md").is_symlink()
+    assert not (out / "02-evidence" / "3-1.md").exists()
 
     assert main(["work", "1-1", "--depth", "0", "--root", str(tmp_path)]) == 0
     assert "(view 1-1+0)" in capsys.readouterr().out
-    assert not (out / "claims" / "2-1.md").exists()
+    assert not (out / "01-claims" / "2-1.md").exists()
 
     assert main(["work", "1-1+0", "--root", str(tmp_path)]) == 0
     assert "1 nodes, 1 symlinks" in capsys.readouterr().out
-    assert not (out / "claims" / "2-1.md").exists()
+    assert not (out / "01-claims" / "2-1.md").exists()
 
 
 def test_work_malformed_depth_suffix_exits_2(write, tmp_path, capsys):
-    write(tmp_path / "nodes", 1)
+    write(tmp_path / "nodes", 1, band="root")
 
     for ref in ("1-1+x", "1-1+-1"):
         assert main(["work", ref, "--root", str(tmp_path)]) == 2
@@ -342,36 +359,42 @@ def test_work_malformed_depth_suffix_exits_2(write, tmp_path, capsys):
 
 def test_edit_respects_materialized_depth(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2-1"], layer="intent", name="intent/1-1")
-    write(nodes, 2, contains=["3-1"], layer="claims", name="claims/2-1")
-    write(nodes, 3, layer="evidence", name="evidence/3-1")
+    write(nodes, 1, band="intent", links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2, band="claims", links=[{"to": "3-1", "type": "breaks_down"}])
+    write(nodes, 3, band="evidence")
 
     assert main(["work", "1-1+1", "--root", str(tmp_path)]) == 0
     capsys.readouterr()
 
     assert main(["edit", "2-1", "--root", str(tmp_path)]) == 0
-    assert capsys.readouterr().out.endswith("claims/2-1.md\n")
+    assert capsys.readouterr().out.endswith("01-claims/2-1.md\n")
 
     assert main(["edit", "3-1", "--root", str(tmp_path)]) == 2
     assert "current view 1-1+1" in capsys.readouterr().err
 
 
-def test_edit_prints_a_nested_section_path(write, tmp_path, capsys):
+def test_edit_prints_a_band_subpath(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, contains=["2-1"], section="06-evolution", title="Root")
-    write(nodes, 2, section="claims", name="idea")
+    write(
+        nodes,
+        1,
+        band="evolution",
+        order=0,
+        title="Root",
+        links=[{"to": "2-1", "type": "breaks_down"}],
+    )
+    write(nodes, 2, band="evolution", subpath="claims", order=1, name="idea")
 
     assert main(["work", "1-1", "--root", str(tmp_path)]) == 0
     capsys.readouterr()
 
     assert main(["edit", "2-1", "--root", str(tmp_path)]) == 0
-    expected = tmp_path / "bd_work" / "00-evolution" / "00-claims" / "idea.md"
+    expected = tmp_path / "bd_work" / "00-evolution" / "claims" / "idea.md"
     assert capsys.readouterr().out == f"{expected}\n"
 
 
 def test_help_texts_are_topology_neutral(capsys):
     commands = [
-        ["--help"],
         ["views", "--help"],
         ["graph", "--help"],
         ["diff", "--help"],
@@ -382,7 +405,6 @@ def test_help_texts_are_topology_neutral(capsys):
         ["out", "--help"],
         ["in", "--help"],
         ["check", "--help"],
-        ["tree", "--help"],
     ]
     for argv in commands:
         with pytest.raises(SystemExit) as excinfo:
@@ -390,4 +412,11 @@ def test_help_texts_are_topology_neutral(capsys):
         assert excinfo.value.code == 0
         out = capsys.readouterr().out
         assert "prototype" not in out
-        assert "containment views" not in out
+        assert "containment" not in out
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["--help"])
+    assert excinfo.value.code == 0
+    out = capsys.readouterr().out
+    assert "typed forward links arranged in bands" in out
+    assert "containment views" not in out

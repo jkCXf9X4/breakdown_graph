@@ -1,8 +1,8 @@
-"""Materialize one containment view as a tree of per-file symlinks.
+"""Materialize one link-closure view as a band-layout tree of per-file symlinks.
 
-The work directory is the primary editing interface: it mirrors the templated
-paths of ``bd view``, but every node ``.md`` entry is a symlink back to its
-original ``nodes/<ref>.md`` file.  Editing a file in the work tree therefore
+The work directory is the primary editing interface: it mirrors the band-layout
+paths of ``bd export graph``, but every node ``.md`` entry is a symlink back to
+its original ``nodes/<ref>.md`` file.  Editing a file in the work tree therefore
 edits the store directly: there is no sync layer, no state file and no copied
 content.
 
@@ -147,26 +147,18 @@ class WorkResult:
 
 
 def _resolve_view(root: str | Path, ref: str | int | None) -> View:
-    store = load(root)
-    if store.model == "graph":
-        # A graph store's view is the forward link closure; a bare id selects
-        # its highest existing version, exactly as `bd graph` does.
-        from .graph import build_graph, default_anchor, resolve_graph_ref
+    from .graph import build_graph, default_anchor, resolve_graph_ref
 
-        graph = build_graph(store)
-        if ref is None:
-            target = default_anchor(graph)
-            if target is None:
-                raise BreakdownError("store has no nodes")
-        else:
-            target = resolve_graph_ref(graph, ref)
+    store = load(root)
+    # A view is the forward link closure; a bare id selects its highest
+    # existing version, exactly as `bd graph` does.
+    graph = build_graph(store)
+    if ref is None:
+        target = default_anchor(graph)
+        if target is None:
+            raise BreakdownError("store has no nodes")
     else:
-        if ref is None:
-            target = store.root_ref
-            if target is None:
-                raise BreakdownError("store has no nodes")
-        else:
-            target = resolve_ref(store, ref)
+        target = resolve_graph_ref(graph, ref)
     view = load_view(store, target)
     errors = [issue for issue in view.issues if issue.level == "error"]
     if errors:
@@ -187,11 +179,10 @@ def _depth_label(ref: str, depth: int | None) -> str:
 
 
 def _depth_view(view: View, depth: int | None) -> View:
-    """Return ``view`` filtered to nodes within ``depth`` topology hops.
+    """Return ``view`` filtered to nodes within ``depth`` link hops.
 
-    ``view`` is already the dispatched closure, so this is a prefix of that
-    closure along ``Store.children``: containment prefix for a tree, link hops
-    for a graph.  ``None`` keeps the full closure.
+    ``view`` is already the link closure, so this is a prefix of that closure
+    along ``Store.children``.  ``None`` keeps the full closure.
     """
     if depth is None:
         return view

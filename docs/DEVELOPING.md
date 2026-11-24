@@ -27,45 +27,53 @@ run from the repo root with `PYTHONPATH=src python3 -m bd_tree`.
    │                                      └─ load_view(store, ref) ─► View
    │                                                                  │
    ├─ checker / navigate / freshness ◄───────────────────────────────┤
-   ├─ exporter.tree|context|dot ◄────────────────────────────────────┤
+   ├─ exporter.graph|context|dot ◄───────────────────────────────────┤
    └─ work (symlinks) ◄──────────────────────────────────────────────┘
 ```
 
 - `Store` is the full index: ref → node, all files, all edges, all issues.
-  `Store.model` is `"graph"` or `"containment"`, detected once per store:
-  containment when any node declares `contains`; otherwise graph when any node
-  has `links`, `stage`, or a non-empty `layer`/`band`.
-- `Store.children(ref)` and `Store.parents(ref)` are the topology seam:
-  `effective_contains` in a containment store, forward `links` in a graph store.
-  `Store.topology_roots()` returns containment roots or graph roots.
-- `View` is one topology closure: the nodes reachable from a root ref over
-  `Store.children`.
+  There is one topology. `Store.model` may remain as a property for internal
+  compatibility, but it always returns `"graph"`; do not add a second branch.
+- `Store.children(ref)` and `Store.parents(ref)` are the structural seam:
+  authored non-symmetric `links` and their reverse. `Store.structural_links(ref)`
+  is the authored subset; `Store.derived_links(ref)` computes opposite edges
+  from other nodes' symmetric masters (`origin="derived"`, never stored).
+  `Store.topology_roots()` returns graph roots over structural links.
+- `Store.node_edges(ref, include_derived=False)` keeps authored behaviour by
+  default; `include_derived=True` appends derived opposites.
+- `View` is one closure: the nodes reachable from a root ref over
+  `Store.children` (structural links only).
 - Every read-only command works on a `View`; structural edits work on `Store`
   and write node files.
+- Symmetric links are one authored master per pair. The loader validates
+  `symmetric` (bool) and `inverse` (non-empty string, requires `symmetric`) and
+  the opposite is derived at load. Never write a derived opposite to a file.
 
 Validation is global; export and agent context are view-scoped. The default view
-root is `ROOT`, else a graph store's lowest graph root, else a containment
-store's lowest node by `(id, version)`; an explicit ref where a command takes one
-wins, and `check --view` only narrows reporting. Reachability follows the
-store's child relation (and, in containment, a shared logical id), so versions
-of one id are one logical node. Data refs are full `id-version`; a bare id is a
-CLI selector resolved inside the selected view (`current_ref(view, id)`).
+root is `ROOT`, else the lowest graph root; an explicit ref where a command
+takes one wins, and `check --view` only narrows reporting. Data refs are full
+`id-version`; a bare id is a CLI selector resolved inside the selected view
+(`current_ref(view, id)`).
+
+A node that still declares `contains` is not parsed as another topology. The
+loader/checker surface it as `contains-removed`, and `bd migrate` is the only
+conversion path.
 
 ## Module map
 
 | Module | Responsibility |
 | --- | --- |
-| `loader.py` | Filename grammar, store scan, `ROOT`, topology view resolution (`_load_graph_view`), `current_ref`, citation edges |
-| `model.py` | `Node`, `Store` (`model`, `children`, `parents`, `topology_roots`), `View`, `Edge`, `Issue`, `Link` |
-| `graph.py` | Graph adjacency, band layout (`Graph.relative`, `band`, `band_label`), band-order derivation, graph audit and export |
+| `loader.py` | Filename grammar, store scan, `ROOT`, view resolution (`_load_graph_view`), `current_ref`, citation edges |
+| `model.py` | `Node`, `Store` (`children`, `parents`, `topology_roots`), `View`, `Edge`, `Issue`, `Link` |
+| `graph.py` | Adjacency, band layout (`Graph.relative`, `band`, `band_label`), band-order derivation, graph audit and export |
 | `frontmatter.py` | Parse and rewrite front matter; body bytes are never re-serialised |
-| `checker.py` | Structural checks; dispatches to the graph audit or containment checks, `--require`, size limits |
+| `checker.py` | Structural checks, including `contains-removed`, `--require`, size limits |
 | `freshness.py` | Pins, stale edges, reconcile |
-| `navigate.py` | `show`, `tree`, `find`, `path` renderers |
-| `exporter.py` | `tree`, `context`, `dot` projections, path templates, and `section`/`name` placement |
+| `navigate.py` | `show`, `find`, `path` renderers |
+| `exporter.py` | `graph`, `context`, `dot` projections and path templates |
 | `work.py` | Single `<project>/bd_work/` area, `current`/`views`/`edit`, switching, `--status`, `--writeback`, git context |
 | `solutions.py` | Thin `git worktree` lifecycle wrapper |
-| `ops.py` | `init`, `new` (seeds empty `title`/`summary`), `contain`, `uncontain`, `link`, `unlink`, `clone`, `replace`, `delete`, `diff`, `migrate` |
+| `ops.py` | `init`, `new` (seeds empty `title`/`summary`), `link`, `unlink`, `clone`, `replace`, `delete`, `diff`, `migrate` |
 | `api.py` | Public Python functions |
 | `cli.py` | argparse wiring and output formatting |
 
@@ -76,25 +84,25 @@ is the store-level `ROOT` file: one ref on one line.
 ## Key types
 
 ```python
-Node   id, version, ref, meta, contains, links, body, path
+Node   id, version, ref, meta, links, body, path
 Store  root, nodes: dict[ref, Node], edges, issues, declared_root
-       model -> "graph" | "containment"
-       children(ref), parents(ref), topology_roots()
+       model -> "graph"
+       children(ref), parents(ref), structural_links(ref), derived_links(ref),
+       topology_roots()
 View   store, ref, nodes: dict[ref, Node], edges, issues
-       model -> inherited from store
-Edge   source, target, type, pinned, origin ("link" or "reference")
+Link   to, type, pinned, propagates, symmetric, inverse, raw
+Edge   source, target, type, pinned, symmetric,
+       origin ("link" | "derived" | "reference")
 Issue  level, code, message, node, path
 ```
 
 `Node.version` is always `>= 1`; `Node.ref` is the canonical `id-version` and
-`node_path` always emits the suffix. In a containment store a node without
-`contains` has no children; there is no inheritance from another version. In a
-graph store children are the node's `links` targets. `bd clone` copies the
-source file, so the new peer keeps its declared list; `bd clone --subtree` also
-rewrites each cloned parent's child relation (`contains` or `links`), and
-`bd replace OLD NEW` is the separate wiring step: it puts NEW at OLD's exact
-index in its parent's `contains` (containment), repoints inbound links (graph),
-or repoints `ROOT` when OLD is the store root, leaving OLD's file as a peer.
+`node_path` always emits the suffix. Children are the node's structural `links`
+targets; a symmetric master is shown as an out-edge but does not add a child.
+`bd clone` copies the source file, so the new peer keeps its declared `links`;
+`bd clone --subtree` also rewrites each cloned parent's `links`, and
+`bd replace OLD NEW` is the separate wiring step: it repoints inbound links, or
+repoints `ROOT` when OLD is the store root, leaving OLD's file as a peer.
 
 ## Add a CLI command
 
@@ -132,17 +140,15 @@ count.set_defaults(func=_cmd_count)
 
 Test through a temporary store, not by mocking the loader.
 
-## Add a topology-aware command
+## Add a band-aware command
 
-Dispatch on `Store.model` / `View.model`, never per node, and keep the child
-relation behind `Store.children` / `Store.parents`:
+There is one topology but two band modes. Read the mode from the plan, never
+per node:
 
-1. Load with `load_view`, which already selects `contains` or forward links.
-2. Put graph-only behaviour in `graph.py` (adjacency, band layout, audit,
-   export); keep containment-only edits in `ops.py` and `work.py`.
-3. In `navigate.py`, `render_tree` and `render_ls` show the pattern: a graph
-   store renders through `graph.build_graph` / `graph_layout`; a containment
-   store walks the declared tree.
+1. Load with `load_view`, which resolves forward structural links.
+2. Put adjacency, band layout, audit, and graph export in `graph.py`.
+3. In `navigate.py`, `bd graph` renders through `graph.build_graph` /
+   `graph_layout`; there is no `bd tree` and no second child relation.
 4. A mode-aware command reads `Graph.relative`, `Graph.band`, `Graph.folders`,
    and `Graph.band_label`; build the plan through `build_graph` (which calls
    `_relative_plan` or `_absolute_plan`) instead of re-deriving band order.
@@ -153,13 +159,11 @@ relation behind `Store.children` / `Store.parents`:
    `graph.issues` (the plan's layer/stage/order findings) and then runs the
    shared edge checks; absolute mode validates `stage`, relative mode skips it.
    Put mode-specific detection in the plan, shared rules in `audit`.
-6. `bd contain` / `bd uncontain` must fail in a graph store with "graph stores use
-   edges: bd link / bd unlink"; graph `bd link` must refuse a back-edge, a band
-   cycle, or a same-band order back-edge, and keep
-   targets sorted.
-7. Test both topologies and both graph modes: the same temporary store shape,
-   one with `contains`, one with `links` and relative `band`s, one with `links`
-   and `stage`.
+6. `bd link` must refuse a back-edge, a band cycle, or a same-band order
+   back-edge, and keep targets sorted. A `--symmetric` link skips those ordering
+   checks, is never structural, and cannot carry `propagates`.
+7. Test both band modes: the same temporary store shape, one with `links` and
+   relative `band`s, one with `links` and `stage`.
 
 ## Add an exporter
 
@@ -183,19 +187,14 @@ Rules:
   but a `View` is the common seam.
 - Return `ExportResult`.
 - Preserve arbitrary front matter.
-- Placement follows the topology. In a containment store, `_default_path` uses
-  `section`: a `section` node opens a directory at its own placement name and
-  its containment descendants inherit that prefix (nested sections stack);
-  otherwise explicit `name` (`<name>.md`), then `<ref>-<title-slug>.md`, then
-  `<ref>.md` when there is no usable title. `--path-template` opts out of
-  section inheritance. In a graph store, place through the plan: a top-level
-  band is `<NN>-<slug(band)>`, inferred nested bands and explicit `subpath`
-  subpaths are appended by `graph.folders`, and `group` is inert. In absolute
-  mode `<NN>` is the stage and the label is the dominant band/layer label. `folder` is not
-  read.
+- Placement is the band plan: a top-level band is `<NN>-<slug(band)>`; inferred
+  nested bands and explicit `subpath`s are appended by `graph.folders`. In
+  absolute mode `<NN>` is the stage and the label is the dominant band/layer
+  label. `section`, `group`, and `folder` are never read. The file stem is an
+  explicit `name`, else `<ref>-<title-slug>.md`, else `<ref>.md`.
 - In a path template, `{name}`/`{slug}` is the explicit `name`, else the title
   slug, else the ref.
-- Be deterministic; sort by `(id, version)` unless `contains` order is the point.
+- Be deterministic; sort by `(id, version)`.
 - Never write outside `out`.
 - Add the name to the `export` subparser list and add a test.
 
@@ -204,8 +203,7 @@ Rules:
 Structural edits change front matter, never prose.
 
 - `parse_document(text)` keeps `opening`, `raw_fm`, `closing`, `body`.
-- `rewrite_contains(raw_fm, refs)` and `rewrite_links(raw_fm, links)` replace only
-  that block.
+- `rewrite_links(raw_fm, links)` replaces only that block.
 - `document.with_raw_fm(new_fm)` reconstructs the file with the body untouched.
 - `render_document(meta, body)` is for new files or an intended full front-matter
   rewrite.
@@ -214,15 +212,17 @@ Checklist:
 
 1. Load the store and resolve refs before writing; a bare CLI selector resolves
    through `current_ref(view, id)`, and every data write uses the full ref.
-2. Refuse cycles, duplicates, and missing targets with `BreakdownError`. In a
-   graph store, refuse a back-edge (`stage(source) < stage(target)` in absolute
-   mode), a band cycle, or a same-band `order` back-edge (relative mode), and
-   keep `links` sorted by ref.
-3. Write the declared `contains` list directly; write `[]` when clearing. There
-   is no inheritance to materialise. Graph edits rewrite only the source node's
-   `links`.
-4. Preserve body bytes and unrelated fields.
-5. Test that the body is unchanged byte-for-byte, in both topologies.
+2. Refuse cycles, duplicates, and missing targets with `BreakdownError`. Refuse
+   a back-edge (`stage(source) < stage(target)` in absolute mode), a band cycle,
+   or a same-band `order` back-edge (relative mode), and keep `links` sorted by
+   ref.
+3. Graph edits rewrite only the source node's `links`. There is no `contains`
+   list to write, and `migrate` is the only place that reads one.
+4. Preserve every link key, including `symmetric` and `inverse`; a symmetric
+   master is authored once and `unlink` removes it. `rewrite_links` formatting
+   must not drop unknown link keys.
+5. Preserve body bytes and unrelated fields.
+6. Test that the body is unchanged byte-for-byte.
 
 ## Testing
 
@@ -231,37 +231,40 @@ python3 -m pytest -q
 ```
 
 - `tests/conftest.py` provides `write_node`, a helper that writes arbitrary front
-  matter; placement uses the node's `section`/`name`/`title`.
+  matter.
 - Use `tmp_path` and real files. Do not mock the loader.
-- `test_examples.py` runs the graph example at `examples/` (store under
-  `.bd_tree/`) through `bd audit`, graph traversal, and graph export, asserting
-  twelve nodes, relative `band`/`subpath` values and no `stage`, and no
-  `contains`/`section`.
-- `test_topology.py` covers detection, `children`/`parents`, forward closure, a
-  multi-parent node appearing once, band layout, graph audit codes, and graph
-  structural edits. `test_layers.py` covers the relative plan: derived band
-  order, `graph-layer-missing`/`graph-layer-invalid`, `graph-layer-cycle`,
+- `test_examples.py` runs the example at `examples/` (store under `.bd_tree/`)
+  through `bd audit`, graph traversal, and graph export, asserting twelve nodes,
+  relative `band`/`subpath` values and no `stage`, and no `contains`/`section`.
+- `test_topology.py` covers forward closure, a multi-parent node appearing once,
+  band layout, graph audit codes, and graph structural edits. `test_layers.py`
+  covers the relative plan: derived band order,
+  `graph-layer-missing`/`graph-layer-invalid`, `graph-layer-cycle`,
   `graph-order-back-edge`, and the `unlayered` rendering fallback.
-  `test_layer_paths.py` covers the layout seam: band/subpath parsing, the shortest-path
-  top-level rule, inferred nesting, explicit subpaths, disconnected and cyclic
-  fallbacks, `group` inertness, absolute mode, and materialization through
-  `bd work`/`bd edit`/exports. Keep its worked examples in step with
-  [`GRAPH-LAYOUT.md`](GRAPH-LAYOUT.md).
+  `test_layer_paths.py` covers the layout seam: band/subpath parsing, the
+  shortest-path top-level rule, inferred nesting, explicit subpaths,
+  disconnected and cyclic fallbacks, `group` inertness, absolute mode, and
+  materialization through `bd work`/`bd edit`/exports. Keep its worked examples
+  in step with [`GRAPH-LAYOUT.md`](GRAPH-LAYOUT.md).
+- `test_symmetric.py` covers the master/derived model: parsing and extra link
+  keys, loader issues, a derived opposite that is shown but never structural,
+  the `inverse` fallback to the master type, and `out`/`in` `[derived]` marking.
+  `test_check.py` pins the five symmetric checker codes and `invalid-band-order`;
+  `test_graph.py` pins `band_order` tie-breaking and that a symmetric link does
+  not order bands.
 - Root tests cover the precedence: explicit ref where a command takes one >
-  `ROOT` > the topology's lowest root (graph root or containment
-  `(id, version)`). They also cover `root-ref-missing`, `invalid-root`, and
-  `check --view` narrowing only the report.
-- Reachability tests assert all three containment paths: through `contains`,
-  through another file with the same logical id, or through a link from a
-  reachable node.
-  Versions of one id are alternatives, so a non-selected version is not
-  `unreachable`; a linked history view is not one either.
+  `ROOT` > the lowest graph root. They also cover `root-ref-missing`,
+  `invalid-root`, and `check --view` narrowing only the report.
+- Reachability tests assert every node is reachable from a graph root through
+  forward structural links; an unreached root warns `graph-orphan`.
 - Filename tests reject a bare `<id>.md`, version `0`, and leading zeros; data
-  tests report `bare-ref` for a bare `contains`/`links`/`ROOT` entry,
-  `invalid-ref` for malformed syntax, and `duplicate-id` when one view holds
-  two versions of the same logical id.
-- Link tests cover both forms: a mapping with its own `type`, and a scalar full
-  ref whose type is read from the target node.
+  tests report `bare-ref` for a bare `links`/`ROOT` entry and `invalid-ref` for
+  malformed syntax.
+- `contains-removed` tests declare `contains` and assert `bd check` fails with a
+  message pointing at `bd migrate`.
+- Migration tests convert `contains` to ordered `links`, add `order: i` where
+  missing, map `section` to `band`/`subpath`, and assert the migrated store
+  checks clean.
 - Git tests create a temporary repository, set local `user.name`/`user.email`, and
   use `pytest.mark.skipif(shutil.which("git") is None, ...)`.
 - Structural tests assert body bytes, not just field values.
@@ -271,9 +274,8 @@ Before a commit:
 
 ```sh
 python3 -m pytest -q
-bd check                         # examples: graph, 12 nodes
-bd audit                         # graph audit
-bd check --root docs/breakdown   # containment: 57 nodes
+bd check                         # examples: 12 nodes
+bd audit                         # explicit graph audit
 git diff --check
 ```
 
@@ -284,17 +286,14 @@ git diff --check
   `.bd_tree/nodes/`, or a `.bd_root` pointer; else a unique store below cwd).
 - `bd root` shows or switches the default view root; `bd root --clear` removes
   `ROOT`. It does not rewrite the work area.
-- `bd views` lists topology roots (containment roots or graph roots) and
-  marks the default; `bd current` reports the work area and the view actually in
-  it.
+- `bd views` lists graph roots and marks the default; `bd current` reports the
+  work area and the view actually in it.
 - `bd check --view REF` narrows reporting to one closure; the default root is
-  `ROOT`, else the topology's lowest root.
-- `bd tree`, `bd show`, `bd path` quickly show what the loader sees. In a graph
-  store `bd graph`, `bd out REF`, `bd in REF`, and `bd audit` show the forward
-  edges and the audit.
+  `ROOT`, else the lowest graph root.
+- `bd graph`, `bd show`, `bd path`, `bd out REF`, `bd in REF`, and `bd audit`
+  quickly show what the loader sees.
 - `bd show REF+N` caps each body at 4000 characters unless `--max-chars` is
-  given; `--max-chars 0` prints full bodies. `bd tree --depth 0` is unlimited
-  for both the outline and the `--columns` table.
+  given; `--max-chars 0` prints full bodies.
 - `bd find` defaults to the default view; `--regex` treats the query as a
   pattern, `--view REF` narrows, and `--all` searches the whole store. Output
   stays capped.
@@ -306,12 +305,12 @@ git diff --check
 Common mistakes:
 
 - Re-serialising the body through YAML. Never do it.
-- Assuming `contains` is a set. In a containment store, order is data.
-- Treating a containment store's `links` as membership. There it is a DAG and
-  must not add view members; in a graph store it is the child relation.
+- Adding a `contains` branch. One topology: convert with `migrate`, reject with
+  `contains-removed`.
+- Treating `section` or `group` as placement. Bands are the only layout.
 - Hardcoding layer names or edge types. The tool is schema-agnostic.
 - Writing a sidecar index. Derive it.
-- Detecting topology per node. It is per store (`Store.model`).
+- Detecting band mode per node. It is per store (`Graph.relative`).
 
 ## Invariants to protect
 
@@ -319,10 +318,10 @@ Common mistakes:
    only source of truth.
 2. Filename is identity and version: every file is `<id>-<version>.md`, version
    >= 1; a bare `<id>.md` is invalid.
-3. In a containment store, `contains` is an ordered tree per view and `links`
-   is a DAG. In a graph store, `links` is the child relation: ordered by a
-   relative band (derived from cross-band edges) or an absolute
-   `stage`, sorted, with derived in-edges.
+3. Structural `links` are the child relation: ordered by a relative band
+   (derived from cross-band structural edges) or an absolute `stage`, sorted by
+   ref, with derived in-edges. Multiple parents are legal. A symmetric link is
+   associative: one authored master, opposite derived, never structural.
 4. Data refs are full `id-version`; a bare id is a CLI selector only.
 5. Arbitrary front matter survives edits and exports.
 6. Body bytes survive structural edits.
@@ -330,14 +329,13 @@ Common mistakes:
    `ROOT`, one full ref on one line, and the folder-level `.bd_root`, one store
    path on one line. The transient write lock lives outside the store.
 8. A view never crosses a branch, and neither does a version; solutions are git
-   worktrees. In a containment store, a parent's `contains` names the version
-   current in that view; in a graph store, an edge pins a full ref.
+   worktrees. An edge pins a full ref.
 9. Generated files are disposable and never committed.
 10. A project has exactly one writable work area, `<project>/bd_work/`, holding
     one view at a time. Its view changes only with `bd work`, not with `bd root`.
     Read-only exports never become a second work area.
-11. Topology is detected per store, never per node: graph when no node declares
-    `contains` and at least one declares `links`; containment otherwise.
+11. One topology. `contains` is not data: a node declaring it is an error
+    (`contains-removed`) until `bd migrate` converts it.
 
 ## Style and commits
 
@@ -354,11 +352,12 @@ The repo is documentation-driven. When behaviour changes:
 - `README.md` — front door and command map.
 - `docs/GETTING-STARTED.md` — user tutorial.
 - `docs/CHEATSHEET.md` — command reference.
-- `docs/DESIGN.md` — model, decisions, invariants.
-- `docs/GRAPH.md` — graph topology, relative and absolute bands, audit, export,
-  and dispatch.
-- `docs/GRAPH-LAYOUT.md` — the band/subpath layout algorithm, tie-breaks, worked
-  examples, diagnostics, command map, and test map.
+- `docs/DESIGN.md` — model, decisions, invariants, migration.
+- `docs/GRAPH.md` — the one topology: typed structural and symmetric links,
+  relative and absolute bands, audit, export.
+- `docs/GRAPH-LAYOUT.md` — the band/subpath layout algorithm (including the
+  `band_order` hint), tie-breaks, worked examples, diagnostics, command map, and
+  test map.
 - `docs/BRANCHES-AND-VERSIONS.md` — branch/version separation contract.
 - `AGENTS.md` — operating rules for agents.
 
@@ -366,8 +365,9 @@ Keep examples executable. Run them before committing.
 
 ## Not built yet
 
-- No CI or generic importer. `bd migrate` only converts a classic bare-file
-  store in place. Packaging is `pyproject.toml` plus the `bd` console script.
+- No CI or generic importer. `bd migrate` converts a classic bare-file store and
+  a containment store in place. Packaging is `pyproject.toml` plus the `bd`
+  console script.
 - No three-way node merge; solutions merge with git.
 - Writes to one store serialize on an advisory lock outside the store
   (`src/bd_tree/fsutil.py`); readers take none, because writers publish

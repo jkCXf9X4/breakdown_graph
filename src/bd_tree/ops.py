@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import functools
+import heapq
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from .errors import BreakdownError
 from .frontmatter import (
     FrontMatterError,
     parse_document,
     render_document,
-    rewrite_contains,
     rewrite_links,
 )
 from .fsutil import atomic_copy, atomic_write, publish_new, store_lock
@@ -136,6 +138,27 @@ def _link_type(item: Any, store: Store) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
 
 
+def _link_symmetric(item: Any) -> bool:
+    """True when an authored link is a symmetric master."""
+    return isinstance(item, dict) and item.get("symmetric") is True
+
+
+def _structural_children(store: Store, ref: str) -> list[str]:
+    """Out-links that define structure: authored, non-symmetric links only.
+
+    Prefers ``Store.structural_links`` when the model provides it, and falls
+    back to filtering the node's authored links so the operation stays correct
+    whichever loader revision is installed.
+    """
+    structural = getattr(store, "structural_links", None)
+    if callable(structural):
+        return [link.to for link in structural(ref)]
+    node = store.nodes.get(ref)
+    if node is None:
+        return []
+    return [link.to for link in node.links if not getattr(link, "symmetric", False)]
+
+
 _ROOT_BODY = "# Root\n\nState the intent of this graph here.\n"
 _GITIGNORE = "# generated work area (bd work)\nbd_work/\n"
 _GITIGNORE_ENTRY = "bd_work/"
@@ -170,10 +193,9 @@ def _serialized(func):
 def init_store(root: str | Path = ".", *, graph: bool = False) -> Path:
     """Create the canonical project with a hidden store and return its root.
 
-    The default store is containment (``contains: []``).  ``graph=True`` writes
-    a root with ``band: root``, no ``stage``, no ``contains`` and no links,
-    which the topology detection reads as a relative-band graph store ready
-    for ``bd new --parent --band``.
+    The root node declares ``band: root`` with no ``stage`` and no links, so
+    the store is a relative-band graph ready for ``bd new --parent --band``.
+    ``graph`` is accepted and ignored for backwards compatibility.
     """
     project = Path(root).resolve()
     hidden = project / STORE_DIR / "nodes"
@@ -185,10 +207,7 @@ def init_store(root: str | Path = ".", *, graph: bool = False) -> Path:
             )
     hidden.mkdir(parents=True, exist_ok=True)
     target = node_path(project / STORE_DIR, 1, 1)
-    if graph:
-        meta: dict[str, Any] = {"id": 1, "title": "Root", "band": "root"}
-    else:
-        meta = {"id": 1, "title": "Root", "contains": []}
+    meta: dict[str, Any] = {"id": 1, "title": "Root", "band": "root"}
     target.write_text(
         render_document(meta, _ROOT_BODY),
         encoding="utf-8",
@@ -211,7 +230,7 @@ def clone(
     *,
     subtree: bool = False,
 ) -> list[tuple[str, str]]:
-    """Copy a node, or its whole containment subtree, to new versions.
+    """Copy a node, or its whole link subtree, to new versions.
 
     The copy keeps the source bytes, including ``links``.  With ``subtree``,
     every cloned parent is then rewired to the cloned children, so the result
@@ -226,23 +245,35 @@ def clone(
     if subtree:
         if version is not None:
             raise BreakdownError("--version cannot be combined with --subtree")
-        view = load_view(store, source_ref)
-        errors = [issue for issue in view.issues if issue.level == "error"]
-        if errors:
-            raise BreakdownError(
-                "cannot clone an invalid view: "
-                + "; ".join(issue.message for issue in errors)
+        # Structural links only: a symmetric master never pulls its opposite
+        # (or its target) into the subtree copy.
+        order: list[str] = []
+        queued: set[str] = set()
+        queue = [source_ref]
+        while queue:
+            current = queue.pop(0)
+            if current in queued:
+                continue
+            if current not in store.nodes:
+                raise BreakdownError(
+                    f"cannot clone {source_ref}: link target {current} does not exist"
+                )
+            queued.add(current)
+            order.append(current)
+            queue.extend(
+                child
+                for child in _structural_children(store, current)
+                if child not in queued
             )
-        order = list(view.nodes)
-        seen_ids: set[int] = set()
+        seen_ids: dict[int, str] = {}
         for old_ref in order:
             node = store.nodes[old_ref]
             if node.id in seen_ids:
                 raise BreakdownError(
-                    f"cannot clone {source_ref}: the view holds two versions "
+                    f"cannot clone {source_ref}: the subtree holds two versions "
                     f"of id {node.id}"
                 )
-            seen_ids.add(node.id)
+            seen_ids[node.id] = old_ref
     else:
         order = [source_ref]
 
@@ -270,12 +301,12 @@ def clone(
         target = node_path(root, node.id, target_version)
         if target.exists():
             raise BreakdownError(f"version {target_ref} already exists")
-        # Byte copy: the clone keeps the source file's declared contains/links.
+        # Byte copy: the clone keeps the source file's declared links.
         atomic_copy(node.path, target)
         taken.add(target_version)
         mapping[old_ref] = target_ref
 
-    if subtree and store.model == "graph":
+    if subtree:
         # Rewire every cloned edge whose target was cloned too, leaving edges
         # that leave the subtree pointing at the original nodes.
         for old_ref, new_ref in mapping.items():
@@ -302,20 +333,6 @@ def clone(
                         rewrite_links(document.raw_fm, new_links)
                     ),
                 )
-    elif subtree:
-        for old_ref, new_ref in mapping.items():
-            old_node = store.nodes[old_ref]
-            new_children = [mapping.get(child, child) for child in old_node.contains]
-            if new_children == old_node.contains:
-                continue
-            target = node_path(root, *parse_ref(new_ref))
-            document = parse_document(target.read_text(encoding="utf-8"))
-            atomic_write(
-                target,
-                document.with_raw_fm(
-                    rewrite_contains(document.raw_fm, new_children)
-                ),
-            )
 
     return [(old_ref, mapping[old_ref]) for old_ref in order]
 
@@ -324,11 +341,11 @@ def clone(
 def replace(
     root: str | Path, old: str | int, new: str | int
 ) -> tuple[str, str, str]:
-    """Swap ``old`` for ``new`` in ``old``'s parent's containment list.
+    """Repoint every inbound link from ``old`` to ``new``.
 
-    The position is preserved and the old node file is untouched, so it stays
-    a peer version.  When ``old`` is the store root, ``ROOT`` is repointed to
-    ``new`` instead.  Returns ``(old_ref, parent_ref_or_ROOT, new_ref)``.
+    The old node file is untouched, so it stays a peer version.  When ``old``
+    is the store root, ``ROOT`` is repointed to ``new`` instead.  Returns
+    ``(old_ref, parent_ref_or_ROOT, new_ref)``.
     """
     root = resolve_store_root(root)
     store = load(root)
@@ -339,62 +356,35 @@ def replace(
     if old_ref == new_ref:
         raise BreakdownError(f"refusing to replace {old_ref} with itself")
 
-    if store.model == "graph":
-        repointed: list[str] = []
-        for node in store.nodes.values():
-            document = parse_document(node.path.read_text(encoding="utf-8"))
-            links = _raw_links(document)
-            changed = False
-            new_links: list[Any] = []
-            for item in links:
-                if _link_target(item) == old_ref:
-                    item = (
-                        {**item, "to": new_ref}
-                        if isinstance(item, dict)
-                        else new_ref
-                    )
-                    changed = True
-                new_links.append(item)
-            if changed:
-                atomic_write(
-                    node.path,
-                    document.with_raw_fm(rewrite_links(document.raw_fm, new_links)),
+    repointed: list[str] = []
+    for node in store.nodes.values():
+        document = parse_document(node.path.read_text(encoding="utf-8"))
+        links = _raw_links(document)
+        changed = False
+        new_links: list[Any] = []
+        for item in links:
+            if _link_target(item) == old_ref:
+                item = (
+                    {**item, "to": new_ref}
+                    if isinstance(item, dict)
+                    else new_ref
                 )
-                repointed.append(node.ref)
-        was_root = store.root_ref == old_ref
-        if was_root:
-            set_root(root, new_ref)
-        if not repointed and not was_root:
-            raise BreakdownError(
-                f"{old_ref} has no inbound links; wire {new_ref} with bd link"
+                changed = True
+            new_links.append(item)
+        if changed:
+            atomic_write(
+                node.path,
+                document.with_raw_fm(rewrite_links(document.raw_fm, new_links)),
             )
-        return old_ref, "ROOT" if was_root else "links", new_ref
-
-    view = load_view(store)
-    parents = [
-        ref for ref, node in view.nodes.items() if old_ref in node.contains
-    ]
-    if len(parents) > 1:
+            repointed.append(node.ref)
+    was_root = store.root_ref == old_ref
+    if was_root:
+        set_root(root, new_ref)
+    if not repointed and not was_root:
         raise BreakdownError(
-            f"{old_ref} has multiple parents in view {view.ref}: "
-            + ", ".join(parents)
+            f"{old_ref} has no inbound links; wire {new_ref} with bd link"
         )
-    if not parents:
-        if store.root_ref == old_ref:
-            set_root(root, new_ref)
-            return old_ref, "ROOT", new_ref
-        raise BreakdownError(
-            f"{old_ref} is not in the default view; wire {new_ref} with "
-            "bd contain"
-        )
-
-    parent = parents[0]
-    siblings = list(store.nodes[parent].contains)
-    index = siblings.index(old_ref)
-    next_ref = siblings[index + 1] if index + 1 < len(siblings) else None
-    uncontain(root, parent, old_ref)
-    contain(root, parent, new_ref, before=next_ref)
-    return old_ref, parent, new_ref
+    return old_ref, "ROOT" if was_root else "links", new_ref
 
 
 @_serialized
@@ -441,10 +431,7 @@ def delete(root: str | Path, ref: str | int, *, force: bool = False) -> Path:
             other.ref
             for other in store.nodes.values()
             if other.ref != canonical
-            and (
-                canonical in other.contains
-                or any(link.to == canonical for link in other.links)
-            )
+            and any(link.to == canonical for link in other.links)
         ]
         if referenced_by:
             raise BreakdownError(
@@ -457,7 +444,7 @@ def delete(root: str | Path, ref: str | int, *, force: bool = False) -> Path:
 
 
 def diff(root: str | Path, left: str | int, right: str | int) -> list[DiffEntry]:
-    """Compare two containment views id by id."""
+    """Compare two link views id by id."""
     store = load(root)
     a = load_view(store, resolve_ref(store, left))
     b = load_view(store, resolve_ref(store, right))
@@ -506,12 +493,12 @@ def new_node(
 ) -> Path:
     """Create the next global id at version 1 and wire it to ``parent``.
 
-    Containment appends the new ref to the parent's ``contains`` list.  A graph
-    store instead appends a typed edge to the parent's ``links``.  An absolute
-    graph (some node declares ``stage``) sets an integer ``stage`` (parent
-    stage + 1, else 0); a relative graph (no ``stage`` anywhere) requires
-    ``--band`` (with optional ``--subpath``) or the older ``--layer`` path
-    shorthand, and derives the band from it.  Both set ``order`` (0).
+    The store is always a graph: a typed edge is appended to the parent's
+    ``links``.  An absolute graph (some node declares ``stage``) sets an
+    integer ``stage`` (parent stage + 1, else 0); a relative graph (no
+    ``stage`` anywhere) requires ``--band`` (with optional ``--subpath``) or
+    the older ``--layer`` path shorthand, and derives the band from it.  Both
+    set ``order`` (0).
 
     The whole id-pick/parent-rewrite/publish sequence holds the store lock, so
     concurrent writers get distinct ids and neither loses a sibling.  Both
@@ -522,11 +509,8 @@ def new_node(
     if "id" in fields:
         raise BreakdownError("'id' is assigned by bd new and cannot be given")
     store = load(root)
-    graph = store.model == "graph"
 
     if parent is None:
-        if not graph:
-            raise BreakdownError("a containment node needs a parent")
         parent_ref: str | None = None
         parent_node: Node | None = None
     else:
@@ -540,7 +524,7 @@ def new_node(
     if links:
         meta["links"] = links
 
-    if graph and relative_store(store):
+    if relative_store(store):
         if stage is not None or "stage" in fields:
             raise BreakdownError("stores without stage use --band or --layer")
         if layer is not None and (band is not None or subpath is not None):
@@ -599,7 +583,7 @@ def new_node(
                     f"a layer cycle through '{parent_layer.band}' and "
                     f"'{parsed_layer.band}'"
                 )
-    elif graph:
+    else:
         if band is not None or subpath is not None:
             raise BreakdownError("stores with stage use --stage")
         if layer is not None:
@@ -641,120 +625,18 @@ def new_node(
         raise BreakdownError(f"node {node_id}-1 already exists at {target}")
 
     new_ref = ref_of(node_id, 1)
-    if graph:
-        if parent_node is not None:
-            document = parse_document(parent_node.path.read_text(encoding="utf-8"))
-            raw = _insert_sorted_link(
-                _raw_links(document), {"to": new_ref, "type": link_type}
-            )
-            atomic_write(
-                parent_node.path,
-                document.with_raw_fm(rewrite_links(document.raw_fm, raw)),
-            )
-        target.parent.mkdir(parents=True, exist_ok=True)
-        publish_new(target, render_document(meta, body))
-        return target
-
-    siblings = store.effective_contains(parent_ref)
-    document = parse_document(parent_node.path.read_text(encoding="utf-8"))
-    rewritten = rewrite_contains(document.raw_fm, siblings + [new_ref])
-    atomic_write(parent_node.path, document.with_raw_fm(rewritten))
+    if parent_node is not None:
+        document = parse_document(parent_node.path.read_text(encoding="utf-8"))
+        raw = _insert_sorted_link(
+            _raw_links(document), {"to": new_ref, "type": link_type}
+        )
+        atomic_write(
+            parent_node.path,
+            document.with_raw_fm(rewrite_links(document.raw_fm, raw)),
+        )
     target.parent.mkdir(parents=True, exist_ok=True)
     publish_new(target, render_document(meta, body))
     return target
-
-
-def _sibling_index(
-    store: Store,
-    siblings: list[str],
-    before: str | int | None,
-    after: str | int | None,
-) -> int:
-    before_ref = None if before is None else resolve_ref(store, before)
-    after_ref = None if after is None else resolve_ref(store, after)
-    if before_ref is not None and after_ref is not None:
-        raise BreakdownError("use either --before or --after, not both")
-    if before_ref is not None:
-        if before_ref not in siblings:
-            raise BreakdownError(f"{before_ref} is not contained by this parent")
-        return siblings.index(before_ref)
-    if after_ref is not None:
-        if after_ref not in siblings:
-            raise BreakdownError(f"{after_ref} is not contained by this parent")
-        return siblings.index(after_ref) + 1
-    return len(siblings)
-
-
-@_serialized
-def contain(
-    root: str | Path,
-    parent: str | int,
-    child: str | int,
-    *,
-    before: str | int | None = None,
-    after: str | int | None = None,
-) -> Path:
-    """Add ``child`` to ``parent``'s containment list, optionally positioned."""
-    root = Path(root).resolve()
-    store = load(root)
-    if store.model == "graph":
-        raise BreakdownError("graph stores use edges: bd link / bd unlink")
-    parent_ref = resolve_ref(store, parent)
-    child_ref = resolve_ref(store, child)
-    parent_node = _existing(store, parent_ref, "parent")
-    child_node = _existing(store, child_ref, "child")
-    if parent_ref == child_ref:
-        raise BreakdownError(f"refusing to contain {child_ref} in itself")
-    if _reaches(store, child_ref, parent_ref):
-        raise BreakdownError(
-            f"refusing to create a containment cycle: "
-            f"{child_ref} already reaches {parent_ref}"
-        )
-    subtree = load_view(store, parent_ref)
-    clash = [
-        ref
-        for ref, node in subtree.nodes.items()
-        if node.id == child_node.id and ref != child_ref
-    ]
-    if clash:
-        raise BreakdownError(
-            f"refusing to contain {child_ref}: the view of {parent_ref} already "
-            f"holds version {clash[0]} of id {child_node.id}"
-        )
-
-    siblings = store.effective_contains(parent_ref)
-    if child_ref in siblings:
-        raise BreakdownError(f"{child_ref} is already contained by {parent_ref}")
-    index = _sibling_index(store, siblings, before, after)
-    new_contains = siblings[:index] + [child_ref] + siblings[index:]
-
-    document = parse_document(parent_node.path.read_text(encoding="utf-8"))
-    rewritten = rewrite_contains(document.raw_fm, new_contains)
-    atomic_write(parent_node.path, document.with_raw_fm(rewritten))
-    return parent_node.path
-
-
-@_serialized
-def uncontain(root: str | Path, parent: str | int, child: str | int) -> Path:
-    """Remove ``child`` from ``parent``'s containment list; never delete it."""
-    root = Path(root).resolve()
-    store = load(root)
-    if store.model == "graph":
-        raise BreakdownError("graph stores use edges: bd link / bd unlink")
-    parent_ref = resolve_ref(store, parent)
-    child_ref = resolve_ref(store, child)
-    parent_node = _existing(store, parent_ref, "parent")
-    _existing(store, child_ref, "child")
-
-    siblings = store.effective_contains(parent_ref)
-    if child_ref not in siblings:
-        raise BreakdownError(f"{child_ref} is not contained by {parent_ref}")
-    new_contains = [ref for ref in siblings if ref != child_ref]
-
-    document = parse_document(parent_node.path.read_text(encoding="utf-8"))
-    rewritten = rewrite_contains(document.raw_fm, new_contains)
-    atomic_write(parent_node.path, document.with_raw_fm(rewritten))
-    return parent_node.path
 
 
 @_serialized
@@ -765,17 +647,32 @@ def link(
     *,
     link_type: str,
     propagates: bool = False,
+    symmetric: bool = False,
+    inverse: str | None = None,
 ) -> Path:
-    """Append a typed link edge, pinning the target when it propagates."""
+    """Append a typed link edge, pinning the target when it propagates.
+
+    A symmetric link is the single authored master of a two-way relation; the
+    opposite is derived at load time, never written.  ``inverse`` names the
+    derived edge's type and requires ``symmetric``.
+    """
     root = Path(root).resolve()
     if not isinstance(link_type, str) or not link_type.strip():
         raise BreakdownError("link type must be a non-empty string")
+    if inverse is not None:
+        if not symmetric:
+            raise BreakdownError("--inverse requires --symmetric")
+        if not isinstance(inverse, str) or not inverse.strip():
+            raise BreakdownError("inverse type must be a non-empty string")
+        inverse = inverse.strip()
+    if symmetric and propagates:
+        raise BreakdownError("propagates cannot be combined with symmetric")
     store = load(root)
     source_ref = resolve_ref(store, source)
     target_ref = resolve_ref(store, target)
     source_node = _existing(store, source_ref, "source")
     target_node = _existing(store, target_ref, "target")
-    if store.model == "graph" and relative_store(store):
+    if not symmetric and relative_store(store):
         source_layer = require_layer(source_node)
         target_layer = require_layer(target_node)
         if source_layer.band == target_layer.band:
@@ -791,7 +688,7 @@ def link(
                 f"a layer cycle through '{source_layer.band}' and "
                 f"'{target_layer.band}'"
             )
-    elif store.model == "graph":
+    elif not symmetric:
         source_stage = _stage_value(source_node)
         target_stage = _stage_value(target_node)
         if (
@@ -820,19 +717,20 @@ def link(
     if propagates:
         edge["propagates"] = True
         edge["pinned"] = target_node.body_hash
+    if symmetric:
+        edge["symmetric"] = True
+        if inverse is not None:
+            edge["inverse"] = inverse
     declared_type = target_node.meta.get("type")
     bare = (
         not propagates
+        and not symmetric
         and isinstance(declared_type, str)
         and declared_type.strip()
         and declared_type == link_type
     )
     item = target_ref if bare else edge
-    links = (
-        _insert_sorted_link(links, item)
-        if store.model == "graph"
-        else links + [item]
-    )
+    links = _insert_sorted_link(links, item)
     rewritten = rewrite_links(document.raw_fm, links)
     atomic_write(source_node.path, document.with_raw_fm(rewritten))
     return source_node.path
@@ -919,9 +817,269 @@ def _map_data_ref(
     return False, value
 
 
+def _key_pattern(key: str) -> re.Pattern[str]:
+    return re.compile(rf"^{re.escape(key)}\s*:")
+
+
+def _replace_block(lines: list[str], key: str, block: list[str]) -> list[str]:
+    """Replace a top-level key and its continuation lines with ``block``."""
+    pattern = _key_pattern(key)
+    start = next(
+        (index for index, line in enumerate(lines) if pattern.match(line)), None
+    )
+    if start is None:
+        return lines + block
+    end = start + 1
+    while end < len(lines):
+        line = lines[end]
+        if line and not line[0].isspace() and not line.startswith("- "):
+            break
+        end += 1
+    return lines[:start] + block + lines[end:]
+
+
+def _finish(lines: list[str], raw_fm: str) -> str:
+    rendered = "\n".join(lines)
+    if raw_fm.endswith("\n") or not raw_fm:
+        rendered += "\n"
+    return rendered
+
+
+def _scalar(value: object) -> str:
+    dumped = yaml.safe_dump(
+        value, default_flow_style=True, width=10**9, allow_unicode=True
+    )
+    lines = [
+        line for line in dumped.splitlines() if line.strip() not in ("...", "---")
+    ]
+    return "\n".join(lines).strip()
+
+
+def _set_scalar(raw_fm: str, key: str, value: object) -> str:
+    """Set a top-level scalar, leaving every other line alone."""
+    return _finish(
+        _replace_block(raw_fm.splitlines(), key, [f"{key}: {_scalar(value)}"]),
+        raw_fm,
+    )
+
+
+def _remove_key(raw_fm: str, key: str) -> str:
+    """Remove a top-level key and its continuation lines."""
+    return _finish(_replace_block(raw_fm.splitlines(), key, []), raw_fm)
+
+
+_ORDINAL_PREFIX = re.compile(r"^\d+[-_ ]\s*")
+
+
+def _section_band(meta: dict[str, Any]) -> tuple[str, str] | None:
+    """Map an inert ``section`` path to ``(band, subpath)`` when no band exists."""
+    if "band" in meta:
+        return None
+    section = meta.get("section")
+    if not isinstance(section, str):
+        return None
+    segments = [seg.strip() for seg in section.strip().strip("/").split("/")]
+    segments = [seg for seg in segments if seg]
+    if not segments:
+        return None
+    band = _ORDINAL_PREFIX.sub("", segments[0], count=1).strip()
+    if not band:
+        band = segments[0]
+    return band, "/".join(segments[1:])
+
+
+def _section_band_name(meta: dict[str, Any]) -> str | None:
+    """The band a node's inert ``section`` names, regardless of ``band``."""
+    section = meta.get("section")
+    if not isinstance(section, str):
+        return None
+    segments = [seg.strip() for seg in section.strip().strip("/").split("/")]
+    segments = [seg for seg in segments if seg]
+    if not segments:
+        return None
+    band = _ORDINAL_PREFIX.sub("", segments[0], count=1).strip()
+    return band or segments[0]
+
+
+_ORDINAL_NUMBER = re.compile(r"^(\d+)")
+
+
+def _compute_band_order(docs: dict[Path, Any]) -> list[str]:
+    """``root``, ordinal-led section bands by number, then first-seen bands."""
+    ordinal: list[tuple[int, int, str]] = []
+    rest: list[str] = []
+    seen: set[str] = {"root"}
+    for index, document in enumerate(docs.values()):
+        band = _section_band_name(document.meta)
+        if band is None or band in seen:
+            continue
+        seen.add(band)
+        section = document.meta.get("section")
+        first = section.strip().strip("/").split("/")[0].strip()
+        match = _ORDINAL_NUMBER.match(first)
+        if match:
+            ordinal.append((int(match.group(1)), index, band))
+        else:
+            rest.append(band)
+    return ["root"] + [band for _n, _i, band in sorted(ordinal)] + rest
+
+
+def _ref_text_key(text: str) -> tuple[int, int, int, str]:
+    try:
+        node_id, version = parse_ref(text)
+    except (TypeError, ValueError):
+        return (1, 0, 0, str(text))
+    return (0, node_id, version, "")
+
+
+def _topo_orders(
+    refs: list[str], edges: list[tuple[str, str]]
+) -> dict[str, int]:
+    """Deterministic topological order keyed by ``(id, version)``."""
+    nodes = sorted(refs, key=_ref_text_key)
+    node_set = set(nodes)
+    outgoing: dict[str, set[str]] = {ref: set() for ref in nodes}
+    indegree = {ref: 0 for ref in nodes}
+    for source, target in edges:
+        if source not in node_set or target not in node_set:
+            continue
+        if target in outgoing[source]:
+            continue
+        outgoing[source].add(target)
+        indegree[target] += 1
+    ready = [(_ref_text_key(ref), ref) for ref in nodes if indegree[ref] == 0]
+    heapq.heapify(ready)
+    ordered: list[str] = []
+    while ready:
+        _key, ref = heapq.heappop(ready)
+        ordered.append(ref)
+        for target in sorted(outgoing[ref], key=_ref_text_key):
+            indegree[target] -= 1
+            if indegree[target] == 0:
+                heapq.heappush(ready, (_ref_text_key(target), target))
+    if len(ordered) < len(nodes):
+        seen = set(ordered)
+        ordered.extend(ref for ref in nodes if ref not in seen)
+    return {ref: index for index, ref in enumerate(ordered)}
+
+
+def _assign_bands(
+    docs: dict[Path, Any], parents: dict[str, str]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Resolve every node's band (and optional section subpath) before writing."""
+    band_of: dict[str, str] = {}
+    subpath_of: dict[str, str] = {}
+    for target, document in docs.items():
+        ref = target.stem
+        meta = document.meta
+        if "stage" in meta:
+            continue
+        band = meta.get("band")
+        if isinstance(band, str) and band.strip():
+            band_of[ref] = band.strip()
+            continue
+        plan = _section_band(meta)
+        if plan is not None:
+            band, subpath = plan
+            band_of[ref] = band
+            if subpath:
+                subpath_of[ref] = subpath
+
+    def inherited(ref: str, seen: set[str]) -> str | None:
+        if ref in band_of:
+            return band_of[ref]
+        if ref in seen:
+            return None
+        parent = parents.get(ref)
+        if parent is not None:
+            found = inherited(parent, seen | {ref})
+            if found is not None:
+                band_of[ref] = found
+                return found
+        return None
+
+    for target, document in docs.items():
+        if "stage" in document.meta:
+            continue
+        ref = target.stem
+        if ref not in band_of:
+            band_of[ref] = inherited(ref, set()) or "root"
+    return band_of, subpath_of
+
+
+def _migration_orders(
+    final_links: dict[str, list[Any]],
+    band_of: dict[str, str],
+    docs: dict[Path, Any],
+    target_by_ref: dict[str, Path],
+) -> dict[str, int]:
+    """Per-band orders; keep explicit orders only when every edge stays forward."""
+    by_band: dict[str, list[str]] = {}
+    for ref in final_links:
+        band = band_of.get(ref)
+        if band is not None:
+            by_band.setdefault(band, []).append(ref)
+    edges: dict[str, list[tuple[str, str]]] = {}
+    for ref, links in final_links.items():
+        band = band_of.get(ref)
+        if band is None:
+            continue
+        for link in links:
+            if _link_symmetric(link):
+                continue
+            target = _link_target(link)
+            if target is None or target not in final_links:
+                continue
+            if band_of.get(target) == band:
+                edges.setdefault(band, []).append((ref, target))
+    orders: dict[str, int] = {}
+    for band, refs in by_band.items():
+        band_edges = edges.get(band, [])
+        explicit: dict[str, int] = {}
+        all_explicit = True
+        for ref in refs:
+            value = docs[target_by_ref[ref]].meta.get("order")
+            if isinstance(value, int) and not isinstance(value, bool):
+                explicit[ref] = value
+            else:
+                all_explicit = False
+        if all_explicit and all(
+            explicit[source] < explicit[target]
+            for source, target in band_edges
+        ):
+            orders.update(explicit)
+        else:
+            orders.update(_topo_orders(refs, band_edges))
+    return orders
+
+
 @_serialized
-def migrate(root: str | Path, *, dry_run: bool = False) -> MigrationResult:
-    """One-time, idempotent, in-place migration of a classic bare-file store."""
+def migrate(
+    root: str | Path,
+    *,
+    dry_run: bool = False,
+    link_type: str = "breaks_down",
+    symmetric_types: list[str] | None = None,
+    inverse_types: dict[str, str] | None = None,
+    band_order: bool = False,
+) -> MigrationResult:
+    """One-time, idempotent, in-place migration of a classic containment store.
+
+    Classic bare filenames are versioned first.  Every ``contains`` list becomes
+    typed ``links``; scalar links gain an explicit type; every list is sorted by
+    ref.  A missing band comes from ``section`` or the nearest ``contains``
+    ancestor, and same-band ``order`` values are recomputed topologically unless
+    the existing ones already satisfy every edge.  The ``contains`` key is
+    removed.
+
+    The added flags also work on an already-migrated store: ``symmetric_types``
+    marks every master link of a type, ``inverse_types`` marks a type and names
+    its derived opposite, and ``band_order`` writes the ROOT ``band_order``
+    hint (plus ``band_layout: flat``).  Running the same migration twice makes
+    no further changes.
+    """
+    if not isinstance(link_type, str) or not link_type.strip():
+        raise BreakdownError("link type must be a non-empty string")
     root = resolve_store_root(root)
     nodes_dir = root / "nodes"
     if not nodes_dir.is_dir():
@@ -960,65 +1118,213 @@ def migrate(root: str | Path, *, dry_run: bool = False) -> MigrationResult:
         )
         used.setdefault(node_id, set()).add(new_version)
 
-    ambiguous: dict[int, set[str]] = {}
-    pending: list[tuple[Path, Path, str]] = []
+    source_of: dict[Path, Path] = {
+        rename_of.get(path, path): path for path, _nid, _ver in parsed
+    }
+    docs: dict[Path, Any] = {}
     for path, _node_id, _file_version in parsed:
         target = rename_of.get(path, path)
         where = str(path.relative_to(root))
-        text = path.read_text(encoding="utf-8")
         try:
-            document = parse_document(text)
+            docs[target] = parse_document(path.read_text(encoding="utf-8"))
         except (OSError, FrontMatterError) as exc:
+            raise BreakdownError(f"cannot migrate {where}: {exc}") from exc
+
+    target_by_ref = {target.stem: target for target in docs}
+
+    def target_type(ref: str) -> str | None:
+        target = target_by_ref.get(ref)
+        if target is None:
+            return None
+        value = docs[target].meta.get("type")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
+
+    ambiguous: dict[int, set[str]] = {}
+    converted: dict[Path, list[str]] = {}
+    contains_parents: dict[str, str] = {}
+    for target, document in docs.items():
+        contains = document.meta.get("contains")
+        if not isinstance(contains, list):
+            continue
+        where = str(source_of[target].relative_to(root))
+        children: list[str] = []
+        for item in contains:
+            _changed, value = _map_data_ref(item, mapping, where, ambiguous)
+            child_ref = str(value).strip()
+            children.append(child_ref)
+            if child_ref in target_by_ref:
+                contains_parents.setdefault(child_ref, target.stem)
+        converted[target] = children
+
+    band_of, subpath_of = _assign_bands(docs, contains_parents)
+
+    final_links: dict[str, list[Any]] = {}
+    original_links: dict[str, list[Any]] = {}
+    for target, document in docs.items():
+        where = str(source_of[target].relative_to(root))
+        original = _raw_links(document)
+        original_links[target.stem] = original
+        new_links: list[Any] = []
+        for item in original:
+            if isinstance(item, dict):
+                if "to" in item:
+                    item_changed, value = _map_data_ref(
+                        item["to"], mapping, where, ambiguous
+                    )
+                    if item_changed:
+                        item = {**item, "to": value}
+                new_links.append(item)
+            elif isinstance(item, (str, int)) and not isinstance(item, bool):
+                _item_changed, value = _map_data_ref(
+                    item, mapping, where, ambiguous
+                )
+                target_ref = str(value).strip()
+                new_links.append(
+                    {
+                        "to": target_ref,
+                        "type": target_type(target_ref) or link_type,
+                    }
+                )
+            else:
+                new_links.append(item)
+        if target in converted:
+            for child_ref in converted[target]:
+                new_links.append({"to": child_ref, "type": link_type})
+        new_links.sort(key=_link_sort_key)
+        final_links[target.stem] = new_links
+
+    symmetric_set: set[str] = set()
+    for kind in symmetric_types or ():
+        if not isinstance(kind, str) or not kind.strip():
+            raise BreakdownError("--symmetric needs a non-empty link type")
+        symmetric_set.add(kind.strip())
+    inverse_map: dict[str, str] = {}
+    for kind, opposite in (inverse_types or {}).items():
+        if not isinstance(kind, str) or not kind.strip():
+            raise BreakdownError("--inverse needs a non-empty link type")
+        if not isinstance(opposite, str) or not opposite.strip():
             raise BreakdownError(
-                f"cannot migrate {where}: {exc}"
-            ) from exc
+                f"--inverse {kind}: needs a non-empty inverse type"
+            )
+        inverse_map[kind.strip()] = opposite.strip()
+    symmetric_set |= set(inverse_map)
+    if symmetric_set:
+        for ref, links in final_links.items():
+            touched = 0
+            kinds: set[str] = set()
+            for index, item in enumerate(links):
+                if not isinstance(item, dict):
+                    continue
+                etype = item.get("type")
+                if not isinstance(etype, str) or etype.strip() not in symmetric_set:
+                    continue
+                clean = etype.strip()
+                updated = {
+                    key: value
+                    for key, value in item.items()
+                    if key not in ("propagates", "pinned")
+                }
+                updated["symmetric"] = True
+                opposite = inverse_map.get(clean)
+                if opposite is not None:
+                    updated["inverse"] = opposite
+                if updated != item:
+                    links[index] = updated
+                    touched += 1
+                kinds.add(clean)
+            if touched:
+                where = str(source_of[target_by_ref[ref]].relative_to(root))
+                detail = ", ".join(sorted(kinds))
+                result.rewrites.append(
+                    f"{where}: symmetric {detail} ({touched} links)"
+                )
+
+    order_of = _migration_orders(final_links, band_of, docs, target_by_ref)
+
+    band_order_values: list[str] = []
+    root_ref: str | None = None
+    if band_order:
+        band_order_values = _compute_band_order(docs)
+        root_path = root / ROOT_FILE
+        declared = (
+            root_path.read_text(encoding="utf-8").strip()
+            if root_path.is_file()
+            else ""
+        )
+        if declared and is_full_ref(declared):
+            root_ref = declared
+        elif declared and is_bare_ref(declared) and int(declared) in mapping:
+            root_ref = mapping[int(declared)]
+        if root_ref is None or root_ref not in target_by_ref:
+            root_ref = min(target_by_ref, key=_ref_text_key) if target_by_ref else None
+
+    pending: list[tuple[Path, Path, str]] = []
+    for target, document in docs.items():
+        where = str(source_of[target].relative_to(root))
+        ref = target.stem
         raw_fm = document.raw_fm
         changed = False
 
-        contains = document.meta.get("contains")
-        if isinstance(contains, list):
-            new_contains: list[object] = []
-            contains_changed = False
-            for item in contains:
-                item_changed, value = _map_data_ref(
-                    item, mapping, where, ambiguous
-                )
-                contains_changed = contains_changed or item_changed
-                new_contains.append(value)
-            if contains_changed:
-                raw_fm = rewrite_contains(raw_fm, [str(v) for v in new_contains])
-                result.rewrites.append(f"{where}: contains {contains} -> {new_contains}")
+        if final_links[ref] != original_links[ref]:
+            raw_fm = rewrite_links(raw_fm, final_links[ref])
+            changed = True
+
+        if target in converted:
+            raw_fm = _remove_key(raw_fm, "contains")
+            result.rewrites.append(
+                f"{where}: contains -> {len(converted[target])} links "
+                f"({link_type})"
+            )
+            changed = True
+
+        if "stage" not in document.meta and ref in band_of:
+            existing_band = document.meta.get("band")
+            if not (
+                isinstance(existing_band, str) and existing_band.strip()
+            ):
+                raw_fm = _set_scalar(raw_fm, "band", band_of[ref])
+                result.rewrites.append(f"{where}: band -> {band_of[ref]}")
+                changed = True
+            subpath = subpath_of.get(ref)
+            existing_subpath = document.meta.get("subpath")
+            if subpath and not (
+                isinstance(existing_subpath, str)
+                and existing_subpath.strip()
+            ):
+                raw_fm = _set_scalar(raw_fm, "subpath", subpath)
+                result.rewrites.append(f"{where}: subpath -> {subpath}")
                 changed = True
 
-        links = document.meta.get("links")
-        if isinstance(links, list):
-            new_links: list[object] = []
-            links_changed = False
-            for item in links:
-                if isinstance(item, dict):
-                    if "to" in item:
-                        item_changed, value = _map_data_ref(
-                            item["to"], mapping, where, ambiguous
-                        )
-                        if item_changed:
-                            item = {**item, "to": value}
-                            links_changed = True
-                    new_links.append(item)
-                elif isinstance(item, (str, int)) and not isinstance(item, bool):
-                    item_changed, value = _map_data_ref(
-                        item, mapping, where, ambiguous
-                    )
-                    links_changed = links_changed or item_changed
-                    new_links.append(value)
-                else:
-                    new_links.append(item)
-            if links_changed:
-                raw_fm = rewrite_links(raw_fm, new_links)
-                result.rewrites.append(f"{where}: links {links} -> {new_links}")
+        if ref in order_of:
+            desired = order_of[ref]
+            existing_order = document.meta.get("order")
+            if not (
+                isinstance(existing_order, int)
+                and not isinstance(existing_order, bool)
+                and existing_order == desired
+            ):
+                raw_fm = _set_scalar(raw_fm, "order", desired)
+                result.rewrites.append(f"{where}: order -> {desired}")
+                changed = True
+
+        if band_order and root_ref is not None and ref == root_ref:
+            if document.meta.get("band_order") != band_order_values:
+                raw_fm = _set_scalar(raw_fm, "band_order", band_order_values)
+                result.rewrites.append(
+                    f"{where}: band_order -> {', '.join(band_order_values)}"
+                )
+                changed = True
+            if document.meta.get("band_layout") != "flat":
+                raw_fm = _set_scalar(raw_fm, "band_layout", "flat")
+                result.rewrites.append(f"{where}: band_layout -> flat")
                 changed = True
 
         if changed:
-            pending.append((path, target, document.with_raw_fm(raw_fm)))
+            pending.append(
+                (source_of[target], target, document.with_raw_fm(raw_fm))
+            )
 
     root_path = root / ROOT_FILE
     root_text: str | None = None
@@ -1044,13 +1350,14 @@ def migrate(root: str | Path, *, dry_run: bool = False) -> MigrationResult:
     if dry_run:
         return result
 
+    renamed = {old for old, new, _text in pending if old != new}
     for old, new, text in pending:
         if old != new:
             old.rename(new)
-        new.write_text(text, encoding="utf-8", newline="")
-    for old, new in rename_of.items():
-        if not any(pending_old == old for pending_old, _n, _t in pending):
-            old.rename(new)
+        atomic_write(new, text)
+    for target, old in source_of.items():
+        if old != target and old not in renamed:
+            old.rename(target)
     if root_text is not None:
-        root_path.write_text(root_text + "\n", encoding="utf-8", newline="")
+        atomic_write(root_path, root_text + "\n")
     return result
