@@ -129,6 +129,11 @@ a main line.
 If no band satisfies the equality (defensive fallback), the roots become
 top-level.
 
+**Flat bands.** Set `band_layout: flat` on the store's `ROOT` node to skip the
+shortest-path rule. Every band then becomes top-level, ordered by `_layer_order`
+(`:408`); explicit `subpath` values still nest below their band folder. This is
+a per-store projection convention, not a change to link semantics.
+
 ### 4.4 Build top-level folders
 
 For each top-level band, in rank order:

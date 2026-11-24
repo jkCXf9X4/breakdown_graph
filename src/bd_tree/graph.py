@@ -317,6 +317,20 @@ def relative_store(store: Store) -> bool:
     return not any("stage" in node.meta for node in store.nodes.values())
 
 
+def flat_bands(store: Store) -> bool:
+    """True when the store's ROOT node declares ``band_layout: flat``.
+
+    Flat mode keeps every relative band top-level and orders them by the band
+    graph's topological order.  Explicit subpaths still nest below their band.
+    """
+    root = store.root_ref
+    node = store.nodes.get(root) if root is not None else None
+    if node is None:
+        return False
+    value = node.meta.get("band_layout")
+    return isinstance(value, str) and value.strip().lower() == "flat"
+
+
 def _order_of(node: Node) -> int:
     value = node.meta.get("order", 0)
     if isinstance(value, bool) or not isinstance(value, int):
@@ -617,7 +631,11 @@ def _relative_plan(store: Store) -> BandPlan:
             )
         )
     topological = ordered + remaining
-    top_level, distances = _top_level_bands(bands, edges)
+    if flat_bands(store):
+        top_level = list(topological)
+        distances = {band: 0 for band in top_level}
+    else:
+        top_level, distances = _top_level_bands(bands, edges)
     ordinal = {band: index for index, band in enumerate(top_level)}
 
     band_folder: dict[str, str] = {}

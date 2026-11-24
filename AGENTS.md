@@ -72,14 +72,16 @@ behaviour change and update the docs listed at the bottom.
   `band` (or the older `layer: band/subpath` shorthand), and an optional
   `subpath` names an explicit folder below the band. Band order and nesting
   come from cross-band edges by the
-  shortest-path rule (equal-length branches stay top-level), and `order`
+  shortest-path rule (equal-length branches stay top-level), unless the ROOT
+  node declares `band_layout: flat`, which keeps every band top-level in
+  topological order; and `order`
   positions nodes inside a band, where a same-band edge needs
   `order(source) < order(target)`, including across subpaths. See
   [`docs/GRAPH-LAYOUT.md`](docs/GRAPH-LAYOUT.md).
 - Front matter is arbitrary; only the identity/containment/link/freshness keys
   (`id`, `legacy`, `contains`, `links`, `to`, `type`, `propagates`, `pinned`)
   and the graph band keys (`layer`, `band`, `subpath`, `stage`, `order`,
-  `group`) are reserved. In
+  `group`, and the ROOT node's `band_layout`) are reserved. In
   a containment store, `section`, `name`, and `title` are
   presentation fields: work and export paths use `section` to open directories,
   else `<name>.md`, else `<ref>-<title-slug>.md`, else `<ref>.md`.

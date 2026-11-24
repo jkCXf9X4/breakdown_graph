@@ -133,6 +133,44 @@ def test_equal_length_parallel_branches_are_both_top_level(write, tmp_path):
     assert build_graph(tmp_path).band["3-1"] == 2
 
 
+def test_band_layout_flat_keeps_every_band_top_level(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    _fork(nodes, nested=True)
+    _w(nodes, 1, "intent", links=["2-1"], band_layout="flat")
+    graph = build_graph(tmp_path)
+    bands = graph_layout(graph, graph_view(graph, "1-1"))
+
+    assert all(band.top_level for band in bands)
+    assert len({band.stage for band in bands}) == len(bands)
+    assert all("/" not in folder for folder in graph.band_folder.values())
+    paths = _paths(tmp_path)
+    assert all(path.count("/") == 1 for path in paths.values())
+
+
+def test_band_layout_flat_still_nests_explicit_subpaths(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    _w(nodes, 1, "intent", links=["2-1"], band_layout="flat")
+    _w(nodes, 2, None, band="claims", links=["3-1"], subpath="argument")
+    _w(nodes, 3, "evidence")
+    paths = _paths(tmp_path)
+
+    assert paths["2-1"] == "01-claims/argument/2-1.md"
+    assert paths["3-1"] == "02-evidence/3-1.md"
+
+
+def test_graph_work_root_index_lists_bands_not_link_children(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    _fork(nodes)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1-1", out)
+
+    index = (out / "INDEX.md").read_text(encoding="utf-8")
+    assert "- [intent](00-intent/INDEX.md) — 1 node" in index
+    assert "- [breakdown](01-breakdown/INDEX.md) — 1 node" in index
+    assert "- [claims](02-claims/INDEX.md) — 1 node" in index
+    assert "\n  - " not in index
+
+
 def test_explicit_layer_path_wins_over_inference(write, tmp_path):
     nodes = tmp_path / "nodes"
     _w(nodes, 1, "intent", links=["2-1"])

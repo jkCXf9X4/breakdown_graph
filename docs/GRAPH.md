@@ -203,8 +203,13 @@ renders with a fallback order after the audit reports `graph-layer-cycle`.
 - one `INDEX.md` per band, per inferred or explicit folder: a directory lists
   its direct nodes with authored `→` out-links and derived `←` in-links, then
   links to its immediate subfolder indexes;
-- a root `INDEX.md` listing each band with its node count and a link to its
-  index.
+- a root `INDEX.md` listing each top-level band with its node count and a link
+  to its index.
+
+`bd work` and `bd export tree` write the same root index for a graph store: one
+entry per top-level band, never a link pre-order. Declaring `band_layout: flat`
+on the store's `ROOT` node keeps every band top-level (see
+[`GRAPH-LAYOUT.md`](GRAPH-LAYOUT.md)).
 
 The output is deterministic and byte-identical across runs. `--force` writes
 into a non-empty directory; `--clean` removes the output first.

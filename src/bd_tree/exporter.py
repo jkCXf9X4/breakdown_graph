@@ -335,6 +335,48 @@ def _node_entry(
     return line
 
 
+def _graph_index_text(
+    view: View,
+    *,
+    banner: str | None = None,
+    label: str | None = None,
+    nodes_link: str | None = None,
+) -> str:
+    """Root index for a graph view: one entry per top-level band.
+
+    A graph store's topology children are link targets, so a containment-style
+    pre-order walk would nest bands under whichever link parent happens to be
+    visited first.  The band layout is flat by band; this mirrors
+    :func:`bd_tree.graph._root_index` while keeping the work-area header.
+    """
+    from .graph import build_graph, graph_layout
+
+    bands = graph_layout(build_graph(view.store), view.nodes)
+    lines: list[str] = []
+    if nodes_link is not None:
+        lines.extend(["---", f"nodes: {nodes_link}", "---", ""])
+    lines.extend(
+        [
+            banner if banner is not None else BANNER.format(name="tree"),
+            "",
+            f"# View {view.ref if label is None else label}",
+            "",
+        ]
+    )
+    if nodes_link is not None:
+        lines.extend([_nodes_pointer(nodes_link), ""])
+    for band in bands:
+        if not band.top_level:
+            continue
+        count = len(band.refs)
+        noun = "node" if count == 1 else "nodes"
+        lines.append(f"- [{band.label}]({band.directory}/INDEX.md) — {count} {noun}")
+    if not bands:
+        lines.append("_No nodes in this view._")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _index_text(
     view: View,
     paths: dict[str, str],
@@ -430,8 +472,15 @@ def _directory_indexes(
     the output root to the store's ``nodes/`` folder; each index carries it in
     front matter and as a clickable link back to the real files.
     """
-    indexes = {
-        "": _index_text(
+    root_index = (
+        _graph_index_text(
+            view,
+            banner=banner,
+            label=label,
+            nodes_link=nodes_link,
+        )
+        if view.model == "graph"
+        else _index_text(
             view,
             paths,
             title_field,
@@ -440,7 +489,8 @@ def _directory_indexes(
             label=label,
             nodes_link=nodes_link,
         )
-    }
+    )
+    indexes = {"": root_index}
     banner_text = banner if banner is not None else BANNER.format(name="tree")
     directories: set[str] = {""}
     subdirectories: dict[str, list[str]] = {}
