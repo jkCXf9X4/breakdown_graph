@@ -9,7 +9,6 @@ EXPECTED = (
     "---\n"
     "id: 1\n"
     "title: Root\n"
-    "band: root\n"
     "---\n"
     "# Root\n"
     "\n"
@@ -84,7 +83,7 @@ def test_init_prints_next_steps(tmp_path, capsys):
     assert (
         "next:\n"
         f"  cd {root}\n"
-        '  bd new --parent 1-1 --field title="First claim" --band claims\n'
+        '  bd new --parent 1-1 --field title="First claim"\n'
         "  bd graph 1-1\n"
         "  bd work 1-1\n"
     ) in out
@@ -97,33 +96,33 @@ def test_graph_shows_root_after_init(tmp_path, capsys):
     assert "Root" in capsys.readouterr().out
     assert parse_document(
         (tmp_path / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")
-    ).meta == {"id": 1, "title": "Root", "band": "root"}
+    ).meta == {"id": 1, "title": "Root"}
 
 
-def test_init_root_has_band_root_and_fresh_store_checks_clean(tmp_path):
+def test_init_root_has_no_placement_and_fresh_store_checks_clean(tmp_path):
     project = tmp_path / "store"
     init_store(project)
     meta = parse_document(
         (project / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")
     ).meta
-    assert meta == {"id": 1, "title": "Root", "band": "root"}
+    assert meta == {"id": 1, "title": "Root"}
     result = check(project)
     assert result.ok
     assert result.issues == []
     assert result.nodes_scanned == 1
 
 
-def test_init_default_relative_band_graph_end_to_end(tmp_path, capsys):
+def test_init_default_graph_end_to_end(tmp_path, capsys):
     project = tmp_path / "graph"
     assert main(["init", str(project)]) == 0
     meta = parse_document(
         (project / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")
     ).meta
-    assert meta == {"id": 1, "title": "Root", "band": "root"}
+    assert meta == {"id": 1, "title": "Root"}
     assert api.load(project).model == "graph"
 
     assert main(["graph", "--root", str(project)]) == 0
-    assert "layer 0 — root" in capsys.readouterr().out
+    assert "## 0 — 1-1" in capsys.readouterr().out
     assert main(["audit", "--root", str(project)]) == 0
     assert "0 errors, 0 warnings" in capsys.readouterr().out
     result = check(project)
@@ -131,7 +130,7 @@ def test_init_default_relative_band_graph_end_to_end(tmp_path, capsys):
     assert result.nodes_scanned == 1
 
     assert main(
-        ["new", "--parent", "1-1", "--band", "next", "--field", "title=X", "--root", str(project)]
+        ["new", "--parent", "1-1", "--field", "title=X", "--root", str(project)]
     ) == 0
     links = parse_document(
         (project / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")

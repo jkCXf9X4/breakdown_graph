@@ -1,4 +1,4 @@
-"""Symmetric masters derive a read-only opposite; band_order is a layout hint."""
+"""Symmetric masters derive a read-only peer; they no longer gate membership."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ def test_loader_reports_invalid_symmetric_and_inverse(write, tmp_path):
     assert "inverse-without-symmetric" in codes
 
 
-def test_derived_opposite_is_loaded_but_never_structural(write, tmp_path):
+def test_symmetric_master_joins_the_component_as_a_peer(write, tmp_path):
     _pair(write, tmp_path)
     store = load(tmp_path)
 
@@ -86,8 +86,21 @@ def test_derived_opposite_is_loaded_but_never_structural(write, tmp_path):
     assert store.node_edges("1-1", include_derived=True) == master
 
     view = api.load_view(tmp_path, "1-1")
-    assert set(view.nodes) == {"1-1"}
-    assert view.edges == []
+    assert set(view.nodes) == {"1-1", "2-1"}
+    assert view.distance == {"1-1": 0, "2-1": 1}
+    # The authored master is in the view; the derived opposite is not a second edge.
+    assert [
+        (edge.source, edge.target, edge.type, edge.origin) for edge in view.edges
+    ] == [("1-1", "2-1", "verifies", "link")]
+
+    assert [
+        (neighbor.ref, neighbor.kind, neighbor.link.type)
+        for neighbor in store.neighbors("1-1")
+    ] == [("2-1", "peer", "verifies")]
+    assert [
+        (neighbor.ref, neighbor.kind, neighbor.link.type)
+        for neighbor in store.neighbors("2-1")
+    ] == [("1-1", "peer", "verifies")]
 
 
 def test_derived_opposite_reuses_the_master_type_without_inverse(write, tmp_path):

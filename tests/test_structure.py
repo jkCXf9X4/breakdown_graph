@@ -137,10 +137,10 @@ def test_link_refuses_duplicates_and_accepts_arbitrary_types(write, tmp_path):
     }
 
 
-def test_link_refuses_a_backward_same_band_edge(write, tmp_path):
+def test_link_allows_a_backward_edge(write, tmp_path):
     _tree(write, tmp_path)
-    with pytest.raises(BreakdownError, match="not forward"):
-        api.link(tmp_path, "2-1", "1-1", link_type="supports")
+    api.link(tmp_path, "2-1", "1-1", link_type="supports")
+    assert {"to": "1-1", "type": "supports"} in _meta(tmp_path, "2-1")["links"]
 
 
 def test_unlink_by_type_and_by_target(write, tmp_path):
@@ -209,3 +209,9 @@ def test_cli_structure_commands_and_exit_codes(write, tmp_path, capsys):
 
     assert main(["unlink", "1", "4-1", "--root", root]) == 2
     assert "no link" in capsys.readouterr().err
+
+
+def test_link_allows_a_cycle_between_distinct_nodes(write, tmp_path):
+    _tree(write, tmp_path)
+    api.link(tmp_path, "4-1", "1-1", link_type="history")
+    assert {"to": "1-1", "type": "history"} in _meta(tmp_path, "4-1")["links"]

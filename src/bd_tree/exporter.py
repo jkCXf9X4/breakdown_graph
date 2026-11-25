@@ -1,8 +1,8 @@
 """Export link-closure views.  Registry via ``@exporter``.
 
 Everything display-related comes from front-matter fields chosen on the command
-line: paths from the band layout or a template, titles and summaries from
-configurable keys, dot colours and shapes from arbitrary fields.  No layer or
+line: paths from the flat ring layout or a template, titles and summaries from
+configurable keys, dot colours and shapes from arbitrary fields.  No folder or
 link-type names live here.
 """
 
@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from collections import defaultdict
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Any
 
-from .checker import path_problem
 from .errors import ExportError
 from .freshness import stale_edge_list
 from .frontmatter import render_document
@@ -96,85 +97,34 @@ def _text(value: object) -> str:
     return "" if value is None else str(value)
 
 
-def _placement_name(node: Node) -> str:
-    """Explicit ``name``, else the title slug, else the ref."""
-    return node.placement_name
-
-
-def _template_fields(node: Node) -> dict[str, str]:
-    fields = {key: _text(value) for key, value in node.meta.items()}
-    fields.update(
-        {
-            "ref": node.ref,
-            "id": str(node.id),
-            "version": str(node.version),
-            "name": _placement_name(node),
-            "slug": _placement_name(node),
-        }
-    )
-    return fields
-
-
-def _validated_path(node: Node, path: str) -> str:
-    problem = path_problem(path)
-    if problem:
-        raise ExportError(
-            f"node {node.ref} resolves to invalid path '{path}': {problem}"
-        )
-    return path
-
-
-def render_path(node: Node, template: str) -> str:
-    try:
-        path = template.format_map(_template_fields(node))
-    except KeyError as exc:
-        raise ExportError(
-            f"path template '{template}' uses unknown field {exc.args[0]!r}"
-        ) from None
-    except (ValueError, IndexError) as exc:
-        raise ExportError(f"invalid path template '{template}': {exc}") from None
-    return _validated_path(node, path)
-
-
 def _build_paths(
     view: View,
     template: str | None,
     refs: Iterable[str],
     *,
     reserved: frozenset[str] = frozenset(),
+    graph: Any | None = None,
 ) -> dict[str, str]:
-    paths: dict[str, str] = {}
-    used: dict[str, str] = {}
-    refs = list(refs)
-    graph_paths: dict[str, str] | None = None
-    if template is None:
-        # Imported lazily: graph.py imports this module's banner and helpers.
-        from .graph import build_graph, layout_paths
+    """Resolve the flat materialization for ``refs`` from one anchored graph.
 
-        graph_paths = layout_paths(build_graph(view.store), refs)
+    ``graph`` is the anchored :class:`~.graph.Graph` when the caller already has
+    one; otherwise it is built with this view's ref as the anchor.  The path
+    source is :func:`bd_tree.graph.layout_paths`: the store file basename, or
+    the template, with a ``-<ref>`` suffix on a collision.
+    """
+    # Imported lazily: graph.py imports this module's banner and helpers.
+    from .graph import build_graph, layout_paths
+
+    if graph is None:
+        graph = build_graph(view.store, anchor=view.ref)
+    resolved = layout_paths(graph, template)
+    paths: dict[str, str] = {}
     for ref in refs:
-        node = view.nodes[ref]
-        if graph_paths is not None:
-            path = graph_paths[ref]
-        else:
-            path = render_path(node, template)
-        # Reserved names are refused in every directory, not only the root: a
-        # node may never resolve to a nested generated file such as
-        # ``<dir>/INDEX.md``.
+        path = resolved[ref].as_posix()
+        # Generated names are reserved in every directory: a node may never
+        # resolve to a file such as ``INDEX.md`` or ``AGENTS.md``.
         if path.rsplit("/", 1)[-1] in reserved:
             raise ExportError(f"node {ref} path collides with generated '{path}'")
-        previous = used.get(path)
-        if previous is not None:
-            raise ExportError(
-                f"nodes {previous} and {ref} both resolve to path '{path}'"
-            )
-        for other, other_ref in used.items():
-            if path.startswith(other + "/") or other.startswith(path + "/"):
-                raise ExportError(
-                    f"nodes {other_ref} and {ref} resolve to conflicting paths "
-                    f"'{other}' and '{path}'"
-                )
-        used[path] = ref
         paths[ref] = path
     return paths
 
@@ -219,23 +169,102 @@ def _node_entry(
     return line
 
 
+_KIND_NOUN = {"child": "children", "parent": "parents", "peer": "peers"}
+_KIND_ORDER = ("child", "parent", "peer")
+
+
+def _identity(graph: Any, ref: str) -> tuple[int, int]:
+    node = graph.store.nodes[ref]
+    return node.id, node.version
+
+
+def _ring_layout(
+    graph: Any, refs: Iterable[str]
+) -> list[tuple[str, str, list[str]]]:
+    """Ordered ring sections: ``(heading, kind, members)`` for a flat view.
+
+    Ring 0 is ``Active``; ring 1 splits into children, parents and peers by the
+    anchor's authored direction; deeper rings are one ``Distance N`` section.
+    Every list is sorted by ``(distance, kind_rank, link type, id, version)``.
+    """
+    store = graph.store
+    anchor = graph.anchor or store.root_ref
+    distance = graph.distance or {}
+    selected = [ref for ref in refs if ref in store.nodes]
+    kinds: dict[str, str] = {}
+    link_types: dict[str, str] = {}
+    if anchor is not None and anchor in store.nodes:
+        for neighbor in store.neighbors(anchor):
+            kinds[neighbor.ref] = neighbor.kind
+            link_types[neighbor.ref] = neighbor.link.type
+
+    ring0: list[str] = []
+    split: dict[str, list[str]] = {kind: [] for kind in _KIND_ORDER}
+    higher: dict[int, list[str]] = defaultdict(list)
+    other: list[str] = []
+    for ref in selected:
+        if ref == anchor:
+            ring0.append(ref)
+            continue
+        level = distance.get(ref)
+        if level is None:
+            other.append(ref)
+        elif level == 1:
+            split.setdefault(kinds.get(ref, "peer"), []).append(ref)
+        else:
+            higher[level].append(ref)
+
+    sections: list[tuple[str, str, list[str]]] = []
+    if ring0:
+        sections.append(
+            (
+                "## Active",
+                "active",
+                sorted(ring0, key=lambda ref: _identity(graph, ref)),
+            )
+        )
+    for kind in _KIND_ORDER:
+        members = sorted(
+            split[kind],
+            key=lambda ref: (link_types.get(ref, ""), *_identity(graph, ref)),
+        )
+        if members:
+            sections.append((f"## Distance 1 — {_KIND_NOUN[kind]}", kind, members))
+    for level in sorted(higher):
+        sections.append(
+            (
+                f"## Distance {level}",
+                "",
+                sorted(higher[level], key=lambda ref: _identity(graph, ref)),
+            )
+        )
+    if other:
+        sections.append(
+            (
+                "## Other",
+                "",
+                sorted(other, key=lambda ref: _identity(graph, ref)),
+            )
+        )
+    return sections
+
+
 def _graph_index_text(
     view: View,
+    paths: dict[str, str],
+    title_field: str,
+    summary_field: str,
     *,
+    graph: Any | None = None,
     banner: str | None = None,
     label: str | None = None,
     nodes_link: str | None = None,
 ) -> str:
-    """Root index for a graph view: one entry per top-level band.
+    """Root index for a flat ring view: ring sections, split at ring 1."""
+    from .graph import build_graph
 
-    A graph store's topology children are link targets, so a containment-style
-    pre-order walk would nest bands under whichever link parent happens to be
-    visited first.  The band layout is flat by band; this mirrors
-    :func:`bd_tree.graph._root_index` while keeping the work-area header.
-    """
-    from .graph import build_graph, graph_layout
-
-    bands = graph_layout(build_graph(view.store), view.nodes)
+    if graph is None:
+        graph = build_graph(view.store, anchor=view.ref)
     lines: list[str] = []
     if nodes_link is not None:
         lines.extend(["---", f"nodes: {nodes_link}", "---", ""])
@@ -249,36 +278,26 @@ def _graph_index_text(
     )
     if nodes_link is not None:
         lines.extend([_nodes_pointer(nodes_link), ""])
-    for band in bands:
-        if not band.top_level:
-            continue
-        count = len(band.refs)
-        noun = "node" if count == 1 else "nodes"
-        lines.append(f"- [{band.label}]({band.directory}/INDEX.md) — {count} {noun}")
-    if not bands:
+    sections = _ring_layout(graph, view.nodes)
+    if not sections:
         lines.append("_No nodes in this view._")
-    lines.append("")
+    for heading, _kind, members in sections:
+        lines.extend([heading, ""])
+        for ref in members:
+            node = view.nodes[ref]
+            title = _display(node, title_field, node.ref)
+            summary = _display(node, summary_field, "")
+            lines.append(
+                _node_entry(
+                    node,
+                    title,
+                    paths[ref],
+                    summary=summary,
+                    nodes_link=nodes_link,
+                )
+            )
+        lines.append("")
     return "\n".join(lines)
-
-
-def _preorder_refs(view: View) -> list[str]:
-    """View refs in link pre-order from the anchor, then unreached refs."""
-    order: list[str] = []
-    emitted: set[str] = set()
-
-    def walk(ref: str) -> None:
-        if ref in emitted or ref not in view.nodes:
-            return
-        emitted.add(ref)
-        order.append(ref)
-        for child in view.store.children(ref):
-            walk(child)
-
-    walk(view.ref)
-    for ref in sorted(view.nodes, key=lambda r: (view.nodes[r].id, view.nodes[r].version)):
-        if ref not in emitted:
-            walk(ref)
-    return order
 
 
 def _directory_indexes(
@@ -287,84 +306,30 @@ def _directory_indexes(
     title_field: str,
     summary_field: str,
     *,
+    graph: Any | None = None,
     banner: str | None = None,
     label: str | None = None,
     nodes_link: str | None = None,
 ) -> dict[str, str]:
-    """Generated index text for the output root and every node directory.
+    """Generated index text for the output root only.
 
-    The keys are output-relative directory POSIX paths (``""`` is the root).
-    Its immediate subdirectories are listed in first-appearance order.  Every
-    ancestor of a node directory is included, so a multi-segment band path never
-    leaves a bare prefix folder unindexed.  ``nodes_link``, when given, is the
-    path from the output root to the store's ``nodes/`` folder; each index
-    carries it in front matter and as a clickable link back to the real files.
+    The flat ring layout has no node directories, so there is exactly one
+    ``INDEX.md``.  ``nodes_link``, when given, is the path from the output root
+    to the store's ``nodes/`` folder; the index carries it in front matter and
+    as a clickable link back to the real files.
     """
-    root_index = _graph_index_text(
-        view,
-        banner=banner,
-        label=label,
-        nodes_link=nodes_link,
-    )
-    indexes = {"": root_index}
-    banner_text = banner if banner is not None else BANNER.format(name="graph")
-    directories: set[str] = {""}
-    subdirectories: dict[str, list[str]] = {}
-    direct: dict[str, list[str]] = {}
-
-    def parent(directory: str) -> str:
-        return directory.rsplit("/", 1)[0] if "/" in directory else ""
-
-    for ref in _preorder_refs(view):
-        path = paths.get(ref)
-        if path is None:
-            continue
-        directory = parent(path)
-        direct.setdefault(directory, []).append(ref)
-        chain: list[str] = []
-        current = directory
-        while current:
-            chain.append(current)
-            current = parent(current)
-        for current in reversed(chain):
-            if current in directories:
-                continue
-            directories.add(current)
-            subdirectories.setdefault(parent(current), []).append(
-                current.rsplit("/", 1)[-1]
-            )
-
-    for directory in sorted(directories):
-        if directory == "":
-            continue
-        link = None
-        if nodes_link is not None:
-            link = "../" * len(directory.split("/")) + nodes_link
-        lines: list[str] = []
-        if link is not None:
-            lines.extend(["---", f"nodes: {link}", "---", ""])
-        lines.extend([banner_text, "", f"# {directory}/", ""])
-        if link is not None:
-            lines.extend([_nodes_pointer(link), ""])
-        for ref in direct.get(directory, []):
-            node = view.nodes[ref]
-            title = _display(node, title_field, node.ref)
-            summary = _display(node, summary_field, "")
-            filename = paths[ref].rsplit("/", 1)[-1]
-            lines.append(
-                _node_entry(
-                    node,
-                    title,
-                    filename,
-                    summary=summary,
-                    nodes_link=link,
-                )
-            )
-        for name in subdirectories.get(directory, []):
-            lines.append(f"- [{name}]({name}/INDEX.md)")
-        lines.append("")
-        indexes[directory] = "\n".join(lines)
-    return indexes
+    return {
+        "": _graph_index_text(
+            view,
+            paths,
+            title_field,
+            summary_field,
+            graph=graph,
+            banner=banner,
+            label=label,
+            nodes_link=nodes_link,
+        )
+    }
 
 
 def _write_indexes(out: Path, indexes: dict[str, str]) -> list[Path]:
@@ -443,8 +408,11 @@ def export_context(
         "",
         "# Stale context — open questions",
         "",
-        "These nodes are excluded because a propagating edge is stale or untracked. "
-        "They are listed as open questions; their bodies are deliberately absent.",
+        (
+            "These nodes are excluded because a propagating edge is stale or "
+            "untracked. They are listed as open questions; their bodies are "
+            "deliberately absent."
+        ),
         "",
     ]
     if excluded_ids:
@@ -460,14 +428,21 @@ def export_context(
     agents = [
         f"# Context for view `{view.ref}`",
         "",
-        "This directory is the complete context for this view. Every node required "
-        "for the task is present here.",
+        (
+            "This directory is the complete context for this view. Every node "
+            "required for the task is present here."
+        ),
         "",
-        "Do not read files outside this directory. If something seems missing, it was "
-        "excluded as stale; consult STALE.md and re-derive it upstream instead.",
+        (
+            "Do not read files outside this directory. If something seems missing, "
+            "it was excluded as stale; consult STALE.md and re-derive it upstream "
+            "instead."
+        ),
         "",
-        f"Nodes included: {len(included)}. "
-        f"Nodes excluded as stale: {len(excluded)}.",
+        (
+            f"Nodes included: {len(included)}. "
+            f"Nodes excluded as stale: {len(excluded)}."
+        ),
         "",
     ]
     agents_path = out / "AGENTS.md"
@@ -503,12 +478,7 @@ def _value_map(
 def _dot_text(view: View, color_by: str | None, shape_by: str | None) -> str:
     nodes = list(view.nodes.values())
     if color_by is None:
-        if any(node.meta.get("band") not in (None, "") for node in nodes):
-            color_by = "band"
-        elif any(
-            node.meta.get("layer") not in (None, "") for node in nodes
-        ):
-            color_by = "layer"
+        color_by = "type"
     color_index = _value_map(nodes, color_by)
     shape_index = _value_map(nodes, shape_by)
 

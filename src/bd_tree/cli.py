@@ -43,7 +43,6 @@ from .navigate import (
     render_path,
     render_show,
     resolve_ref,
-    view_roots,
 )
 
 
@@ -100,9 +99,8 @@ def _add_display(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--path-template",
         default=None,
-        help="output path template: {ref} {id} {version} {band} {name} {slug} "
-        "or any field (default: band dirs, else name, else "
-        "<ref>-<title-slug>.md, else <ref>.md)",
+        help="output path template: {ref} {id} {version} {distance} {slug} "
+        "{title} or any field (default: the store file basename)",
     )
     parser.add_argument(
         "--title-field",
@@ -129,7 +127,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
     print(f"store initialized at {root}")
     print("next:")
     print(f"  cd {root}")
-    print('  bd new --parent 1-1 --field title="First claim" --band claims')
+    print('  bd new --parent 1-1 --field title="First claim"')
     print("  bd graph 1-1")
     print("  bd work 1-1")
     return 0
@@ -150,15 +148,36 @@ def _cmd_current(args: argparse.Namespace) -> int:
     return 0
 
 
+def _work_anchor(root: Path) -> str | None:
+    """The active work-area anchor, read lazily so plain views never need work."""
+    try:
+        from .work import area as work_area
+
+        return work_area(root).ref
+    except Exception:
+        return None
+
+
 def _cmd_views(args: argparse.Namespace) -> int:
-    store = api.load(_find_root(args.root))
-    roots = view_roots(store)
-    if not roots:
-        raise BreakdownError("store has no topology roots")
-    width = max(len(node.ref) for node in roots)
-    for node in roots:
-        marker = " *" if node.ref == store.root_ref else ""
-        print(f"{node.ref:<{width}}  {node.title}{marker}")
+    root = _find_root(args.root)
+    store = api.load(root)
+    components = store.components()
+    if not components:
+        raise BreakdownError("store has no components")
+    anchor = _work_anchor(root)
+    width = max(len(members[0]) for members in components)
+    for members in components:
+        representative = store.nodes[members[0]]
+        marks = []
+        if store.root_ref is not None and store.root_ref in members:
+            marks.append("*")
+        if anchor is not None and anchor in members:
+            marks.append(f"anchor {anchor}")
+        suffix = f"  {' '.join(marks)}" if marks else ""
+        print(
+            f"{representative.ref:<{width}}  {len(members):>4} nodes  "
+            f"{representative.title}{suffix}"
+        )
     return 0
 
 
@@ -296,32 +315,32 @@ def _cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
-def _parse_stage_range(text: str | None) -> tuple[int, int] | None:
+def _parse_distance_range(text: str | None) -> tuple[int, int] | None:
     if text is None:
         return None
     left, sep, right = text.partition(":")
     if not sep:
-        raise BreakdownError(f"invalid --stage {text!r} (expected A:B)")
+        raise BreakdownError(f"invalid --distance {text!r} (expected A:B)")
     try:
         low, high = int(left), int(right)
     except ValueError as exc:
         raise BreakdownError(
-            f"invalid --stage {text!r} (expected integers A:B)"
+            f"invalid --distance {text!r} (expected integers A:B)"
         ) from exc
     if low > high:
-        raise BreakdownError(f"invalid --stage {text!r} (A must be <= B)")
+        raise BreakdownError(f"invalid --distance {text!r} (A must be <= B)")
     return low, high
 
 
 def _cmd_graph(args: argparse.Namespace) -> int:
     graph = build_graph(api.load(_find_root(args.root)))
-    stages = _parse_stage_range(args.stage)
+    distances = _parse_distance_range(args.distance)
     refs = graph_view(
         graph,
         args.ref,
         depth=args.depth,
+        distance=distances,
         types=args.type,
-        stages=stages,
     )
     if args.svg:
         text, kind = render_svg(graph, refs), "svg"
@@ -421,7 +440,13 @@ def _cmd_replace(args: argparse.Namespace) -> int:
 
 def _cmd_clone(args: argparse.Namespace) -> int:
     root = _find_root(args.root)
-    pairs = api.clone(root, args.ref, args.version, subtree=args.subtree)
+    pairs = api.clone(
+        root,
+        args.ref,
+        args.version,
+        subtree=args.subtree,
+        depth=args.depth,
+    )
     for old, new in pairs:
         print(f"{old} -> {new}")
     return 0
@@ -454,7 +479,6 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
         link_type=args.type,
         symmetric_types=args.symmetric,
         inverse_types=_parse_inverse_types(args.inverse),
-        band_order=args.band_order,
     )
     for old, new in result.renames:
         print(f"rename {old} -> {new}")
@@ -520,10 +544,6 @@ def _cmd_new(args: argparse.Namespace) -> int:
         parent=args.parent,
         fields=_parse_fields(args.field),
         body=args.body or "",
-        stage=args.stage,
-        band=args.band,
-        subpath=args.subpath,
-        order=args.order,
         link_type=args.type,
     )
     print(f"created {path.relative_to(root)}")
@@ -628,9 +648,9 @@ def _cmd_path(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bd",
-        description="A numeric markdown graph: typed forward links arranged in "
-        "bands. Front-matter fields are arbitrary; only id, legacy and links "
-        "have built-in meaning.",
+        description="A numeric markdown graph: typed links projected as "
+        "undirected distance rings. Front-matter fields are arbitrary; only "
+        "id, legacy and links have built-in meaning.",
         epilog="Start with `bd work`: it builds a writable symlink tree over the "
         "store and is the primary editing interface.\n"
         "Edit through the symlinks; every node .md file there is the store file.\n"
@@ -645,9 +665,8 @@ def build_parser() -> argparse.ArgumentParser:
     init = sub.add_parser(
         "init",
         help="create a store with one root node in an empty directory",
-        description="Create a hidden store with a relative-band root "
-        "(band: root, no stage, no links). Add edges with "
-        "bd new --parent --band or bd link.",
+        description="Create a hidden store with one root node and no links. "
+        "Add nodes with bd new --parent or edges with bd link.",
     )
     init.add_argument("dir", nargs="?", default=".", help="store directory (default: .)")
     init.set_defaults(func=_cmd_init)
@@ -655,9 +674,9 @@ def build_parser() -> argparse.ArgumentParser:
     work = sub.add_parser(
         "work",
         help="primary interface: writable symlink tree over the store",
-        description="Build the single writable work area for one view. "
-        "A different REF replaces its contents. The view materializes band "
-        "directories (relative band or absolute stage).",
+        description="Build the single writable work area for one undirected "
+        "view. A different REF replaces its contents; the flat layout holds "
+        "one symlink per node plus ring-sorted INDEX.md and REFS.md.",
     )
     _add_root(work)
     work.add_argument(
@@ -665,7 +684,7 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default=None,
         help="view root ref, optionally with +DEPTH (default: ROOT file, "
-        "else lowest topology root); in a graph store this is a link anchor",
+        "else lowest component representative); in a graph store this is a link anchor",
     )
     work.add_argument(
         "--depth",
@@ -758,7 +777,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, help_text in (
         ("context", "fresh nodes only, plus STALE.md and AGENTS.md"),
         ("dot", "Graphviz dot graph, optionally rendered"),
-        ("graph", "banded graph snapshot with band indexes"),
+        ("graph", "graph snapshot with ring index"),
         ("svg", "rendered Graphviz SVG of one view"),
     ):
         child = export_sub.add_parser(name, help=help_text)
@@ -795,7 +814,7 @@ def build_parser() -> argparse.ArgumentParser:
                 "--color-by",
                 default=None,
                 help="front-matter field mapped to a stable colour "
-                "(default: layer when present, else no colour)",
+                "(default: link type)",
             )
             child.add_argument(
                 "--shape-by",
@@ -806,7 +825,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     graph = sub.add_parser(
         "graph",
-        help="render the banded forward graph (the single view renderer)",
+        help="render an undirected view as distance rings",
     )
     _add_root(graph)
     graph.add_argument(
@@ -819,10 +838,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--depth", type=int, default=None, help="edge hops to follow (default: all)"
     )
     graph.add_argument(
-        "--stage",
+        "--distance",
         default=None,
         metavar="A:B",
-        help="inclusive band range (stage ordinal or top-level band ordinal)",
+        help="inclusive ring range shown in the output (traversal continues)",
     )
     graph.add_argument(
         "--type",
@@ -855,7 +874,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     audit = sub.add_parser(
         "audit",
-        help="validate the bands (stage or band) and edges of the store",
+        help="validate the links and component structure of the store",
     )
     _add_root(audit)
     audit.add_argument(
@@ -914,7 +933,13 @@ def build_parser() -> argparse.ArgumentParser:
     clone.add_argument(
         "--subtree",
         action="store_true",
-        help="clone every descendant and rewire the copies to each other",
+        help="clone the whole undirected component and rewire the copies",
+    )
+    clone.add_argument(
+        "--depth",
+        type=int,
+        default=None,
+        help="clone BFS rings 0..N of the component (implies subtree)",
     )
     clone.set_defaults(func=_cmd_clone)
 
@@ -943,8 +968,8 @@ def build_parser() -> argparse.ArgumentParser:
         "migrate",
         help="convert a classic or containment store to typed links",
         description="Version bare filenames, then convert every contains list "
-        "into ordered typed links: order is filled where absent, section maps "
-        "to band/subpath where no band exists, and contains is removed.",
+        "into typed links and strip retired placement keys (band, subpath, "
+        "layer, stage, order, band_layout, band_order).",
     )
     _add_root(migrate)
     migrate.add_argument(
@@ -966,12 +991,6 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="TYPE=TYPE2",
         help="mark links of TYPE symmetric with derived opposite TYPE2 "
         "(repeatable)",
-    )
-    migrate.add_argument(
-        "--band-order",
-        action="store_true",
-        help="write ROOT band_order (root, ordinal section bands, then the "
-        "rest) and band_layout: flat",
     )
     migrate.add_argument(
         "--dry-run", action="store_true", help="print the plan without touching disk"
@@ -999,11 +1018,9 @@ def build_parser() -> argparse.ArgumentParser:
     new = sub.add_parser(
         "new",
         help="create the next global id and link it from a parent",
-        description="Append the new ref as a typed edge of --parent. Absolute "
-        "graph (a node declares stage): set stage/order. Relative graph (no "
-        "stage anywhere): --band (with optional --subpath) is required, and "
-        "order places the node inside its band. Without --parent it is a new "
-        "root.",
+        description="Append the new ref as a typed edge of --parent. No "
+        "authored placement is written. Without --parent the node starts its "
+        "own component.",
     )
     _add_root(new)
     new.add_argument(
@@ -1020,30 +1037,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     new.add_argument("--body", default="", help="markdown body after the front matter")
     new.add_argument(
-        "--stage",
-        type=int,
-        default=None,
-        help="absolute graph only: integer stage (default: parent stage + 1, "
-        "else 0); a store without stage rejects it in favour of --band",
-    )
-    new.add_argument(
-        "--band",
-        default=None,
-        help="relative graph only: band name (required; bare band names may "
-        "nest by the shortest-path rule)",
-    )
-    new.add_argument(
-        "--subpath",
-        default=None,
-        help="relative graph only: presentation subfolder under --band",
-    )
-    new.add_argument(
-        "--order",
-        type=int,
-        default=None,
-        help="integer order within the band (default: 0)",
-    )
-    new.add_argument(
         "--type",
         default="breaks_down",
         help="edge type from --parent (default: breaks_down)",
@@ -1053,8 +1046,8 @@ def build_parser() -> argparse.ArgumentParser:
     link = sub.add_parser(
         "link",
         help="append a typed link edge",
-        description="Append a typed edge. In a graph store the target must "
-        "exist and be in a strictly later stage; edges stay sorted by target.",
+        description="Append a typed edge. Back-edges, reciprocal edges and "
+        "cycles are legal; targets stay sorted and a self-loop is refused.",
     )
     _add_root(link)
     link.add_argument("source", metavar="FROM")
@@ -1088,7 +1081,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     unlink.set_defaults(func=_cmd_unlink)
 
-    show = sub.add_parser("show", help="print a node and its descendants")
+    show = sub.add_parser("show", help="print a node and its distance rings")
     _add_root(show)
     show.add_argument("ref", help="ref, optionally with +DEPTH (e.g. 5-1+2)")
     show.add_argument(
@@ -1137,7 +1130,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     find.set_defaults(func=_cmd_find)
 
-    path = sub.add_parser("path", help="print the ancestry of a ref")
+    path = sub.add_parser("path", help="print the shortest undirected path to a ref")
     _add_root(path)
     path.add_argument("ref")
     path.set_defaults(func=_cmd_path)

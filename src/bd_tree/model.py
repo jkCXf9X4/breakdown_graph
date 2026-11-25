@@ -1,9 +1,9 @@
-"""In-memory representation of a loaded store and one link-closure view.
+"""In-memory representation of a loaded store and one undirected view.
 
 A store is the full index of every node file: ``ref -> Node`` plus the logical
 ``id -> versions`` grouping.  There is one topology: edges are declared
-``links``.  A view is the closure of one ref over those out-links; a node
-reached through several parents appears once.
+``links``.  A view is the weakly connected component of one ref over those
+authored links; a node reached through several neighbours appears once.
 
 The model is deliberately schema-agnostic: ``id``, ``legacy`` and ``links`` are
 structural; every other front-matter key (including ``name``, ``title``,
@@ -57,6 +57,40 @@ class Link:
         return self.propagates or self.pinned is not None
 
 
+@dataclass(frozen=True)
+class Neighbor:
+    """One undirected neighbour of a ref.
+
+    ``kind`` is the direction from the queried ref's point of view: ``child``
+    (an authored out-link), ``parent`` (another node's authored link targets the
+    queried ref) or ``peer`` (a symmetric master in either direction).
+    ``link`` is the representative authored link and is never a derived
+    opposite.
+    """
+
+    ref: str
+    kind: str
+    link: Link
+
+
+KIND_RANK: dict[str, int] = {"child": 0, "parent": 1, "peer": 2}
+_KIND_BY_RANK: tuple[str, ...] = ("child", "parent", "peer")
+
+
+def _offer_neighbor(
+    chosen: dict[str, tuple[int, str, Link]],
+    target: str,
+    kind: str,
+    link: Link,
+) -> None:
+    """Keep the best authored link per neighbour: kind rank, then type."""
+    key = (KIND_RANK[kind], link.type)
+    current = chosen.get(target)
+    if current is not None and (current[0], current[1]) <= key:
+        return
+    chosen[target] = (key[0], key[1], link)
+
+
 @dataclass
 class Node:
     """One node file.  ``version`` is always ``>= 1``; versions are peers."""
@@ -102,10 +136,10 @@ class Node:
 
     @property
     def section(self) -> str | None:
-        """Best-effort read of the ``section`` key, kept for compatibility.
+        """Best-effort read of the inert ``section`` key.
 
-        In the single link topology ``section`` is ordinary front matter with no
-        effect on paths, layout or validation; bands are the only layout.
+        ``section`` is ordinary front matter and places nothing: membership and
+        order come from the undirected component and BFS distance.  The value
         ``section: true`` still resolves to this node's placement name and a
         leading ``/`` is stripped, but callers must not treat either as
         structure.
@@ -171,17 +205,9 @@ class Issue:
         return f"{prefix}: {self.message}"
 
 
-def _stage_key(node: Node) -> tuple[int, int, int, int]:
-    """Deterministic graph order: ``(stage, id, version)`` when a stage exists.
-
-    Nodes without an integer ``stage`` (a relative layer-only store, or a
-    half-built absolute one) sort after staged nodes by ``(id, version)`` so
-    the key is total and deterministic.
-    """
-    value = node.meta.get("stage")
-    if isinstance(value, int) and not isinstance(value, bool):
-        return (0, value, node.id, node.version)
-    return (1, 0, node.id, node.version)
+def _ref_key(node: Node) -> tuple[int, int]:
+    """Deterministic identity order: ``(id, version)``."""
+    return node.id, node.version
 
 
 @dataclass
@@ -217,10 +243,10 @@ class Store:
     def root_ref(self) -> str | None:
         """The store's default anchor.
 
-        Declared ``ROOT`` wins.  Otherwise the lowest topology root by
-        ``(stage, id, version)``.  A declared root is returned even when its file
-        is missing, so the breakage is reported instead of silently falling
-        back.
+        Declared ``ROOT`` wins.  Otherwise the lowest member of the first weak
+        component by ``(id, version)``.  A declared root is returned even when
+        its file is missing, so the breakage is reported instead of silently
+        falling back.
         """
         if self.declared_root is not None:
             return self.declared_root
@@ -232,8 +258,9 @@ class Store:
     def structural_links(self, ref: str) -> list[Link]:
         """Authored non-symmetric links of ``ref`` (the structural subset).
 
-        Only these links expand a view, define ancestry and topology roots, and
-        drive band inference.  A symmetric master is shown but never structural.
+        Only these links keep the authored child direction and drive
+        ``bd clone --subtree``.  They no longer gate view membership.  A
+        symmetric master is shown but never structural.
         """
         node = self.nodes.get(ref)
         if node is None:
@@ -273,8 +300,77 @@ class Store:
 
         return [link.to for link in self.structural_links(ref) if is_full_ref(link.to)]
 
+    def neighbors(self, ref: str) -> list[Neighbor]:
+        """Undirected neighbours of ``ref`` over authored links.
+
+        Both directions are considered, one entry per neighbour ref.  Kind
+        precedence is ``child > parent > peer``: a reciprocal structural pair is
+        a ``child`` and a symmetric master in either direction is a ``peer``.
+        The representative ``link`` is always an authored link, never a derived
+        opposite.  Sorted by ``(kind_rank, link.type, id, version)``.
+        """
+        from .loader import is_full_ref, parse_ref
+
+        chosen: dict[str, tuple[int, str, Link]] = {}
+        node = self.nodes.get(ref)
+        if node is not None:
+            for link in node.links:
+                if link.to == ref or not is_full_ref(link.to):
+                    continue
+                kind = "peer" if link.symmetric else "child"
+                _offer_neighbor(chosen, link.to, kind, link)
+        for other in self.nodes.values():
+            if other.ref == ref:
+                continue
+            for link in other.links:
+                if link.to != ref:
+                    continue
+                kind = "peer" if link.symmetric else "parent"
+                _offer_neighbor(chosen, other.ref, kind, link)
+
+        def sort_key(item: tuple[str, tuple[int, str, Link]]):
+            target, (rank, link_type, _link) = item
+            try:
+                node_id, version = parse_ref(target)
+            except ValueError:
+                node_id, version = 0, 0
+            return rank, link_type, node_id, version
+
+        return [
+            Neighbor(ref=target, kind=_KIND_BY_RANK[rank], link=link)
+            for target, (rank, _type, link) in sorted(chosen.items(), key=sort_key)
+        ]
+
+    def components(self) -> list[list[str]]:
+        """Weak components over :meth:`neighbors`, members sorted by identity.
+
+        Every ref appears in exactly one component.  Members are sorted by
+        ``(id, version)`` and the components by their first member, so the
+        result is deterministic even with cycles.
+        """
+        seen: set[str] = set()
+        found: list[list[str]] = []
+        for start in sorted(self.nodes.values(), key=_ref_key):
+            if start.ref in seen:
+                continue
+            component: list[str] = []
+            queue = [start.ref]
+            seen.add(start.ref)
+            while queue:
+                current = queue.pop(0)
+                component.append(current)
+                for neighbor in self.neighbors(current):
+                    if neighbor.ref in seen or neighbor.ref not in self.nodes:
+                        continue
+                    seen.add(neighbor.ref)
+                    queue.append(neighbor.ref)
+            component.sort(key=lambda ref: _ref_key(self.nodes[ref]))
+            found.append(component)
+        found.sort(key=lambda component: _ref_key(self.nodes[component[0]]))
+        return found
+
     def parents(self, ref: str) -> list[str]:
-        """Refs whose structural ``links`` target ``ref``, sorted by stage key."""
+        """Refs whose structural ``links`` target ``ref``, by ``(id, version)``."""
         found = [
             node
             for node in self.nodes.values()
@@ -282,14 +378,16 @@ class Store:
                 link.to == ref and not link.symmetric for link in node.links
             )
         ]
-        return [node.ref for node in sorted(found, key=_stage_key)]
+        return [node.ref for node in sorted(found, key=_ref_key)]
 
     def topology_roots(self) -> list[Node]:
-        """Nodes no other node reaches through structural links, by stage key."""
-        roots = [
-            node for node in self.nodes.values() if not self.parents(node.ref)
-        ]
-        return sorted(roots, key=_stage_key)
+        """One representative per weak component, lowest member by identity.
+
+        Kept under its historical name so callers and the ``ROOT`` fallback keep
+        working.  Cycles are ordinary edges, so a non-empty store always has at
+        least one representative.
+        """
+        return [self.nodes[members[0]] for members in self.components()]
 
     def versions(self, node_id: int) -> list[Node]:
         """Every existing version of ``node_id``, ascending by version."""
@@ -334,13 +432,19 @@ class Store:
 
 @dataclass
 class View:
-    """The link closure rooted at ``ref``: out-link targets, seen-set deduped."""
+    """The weakly connected component around ``ref``.
+
+    ``nodes`` holds every member exactly once.  ``distance`` is the undirected
+    BFS hop count from ``ref``.  ``edges`` keeps authored links with both ends
+    inside the component; derived opposites are never stored here.
+    """
 
     store: Store
     ref: str
     nodes: dict[str, Node]  # ref -> node, view members only
     edges: list[Edge]
     issues: list[Issue]
+    distance: dict[str, int] = field(default_factory=dict)
 
     @property
     def root(self) -> Path:

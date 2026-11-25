@@ -102,9 +102,18 @@ def test_already_pinned_link_propagates_without_the_flag(write, tmp_path, pin):
     assert [edge.state for edge in stale(tmp_path, "1-1")] == ["stale"]
 
 
+def test_reconcile_reaches_a_parent_through_an_undirected_view(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2", "type": "breaks_down"}])
+    write(nodes, 2)
+    # 1-1 is a parent of the view anchor but still inside its component.
+    assert reconcile(tmp_path, ["1-1"], "2-1") == []
+
+
 def test_reconcile_ref_outside_view_fails(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, links=[{"to": "2", "type": "breaks_down"}])
     write(nodes, 2)
+    write(nodes, 9)
     with pytest.raises(BreakdownError, match="outside view"):
-        reconcile(tmp_path, ["1-1"], "2-1")
+        reconcile(tmp_path, ["9-1"], "2-1")

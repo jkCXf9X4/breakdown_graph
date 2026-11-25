@@ -17,16 +17,14 @@ from .graph import (
     build_graph,
     default_anchor,
     export_graph,
-    graph_layout,
     graph_view,
-    order,
     render_audit,
     render_dot,
     render_graph,
     render_in,
     render_out,
     resolve_graph_ref,
-    stage,
+    ring_distances,
 )
 from .loader import load as _load
 from .loader import load_view as _load_view
@@ -105,7 +103,6 @@ __all__ = [
     "edit_path",
     "export_graph",
     "export_view",
-    "graph_layout",
     "graph_view",
     "init_store",
     "link",
@@ -114,7 +111,6 @@ __all__ = [
     "migrate",
     "new_node",
     "node_path",
-    "order",
     "parse_filename",
     "parse_ref",
     "parse_selector",
@@ -128,12 +124,12 @@ __all__ = [
     "replace",
     "resolve_graph_ref",
     "resolve_ref",
+    "ring_distances",
     "root_ref",
     "set_root",
     "solution_list",
     "solution_new",
     "solution_remove",
-    "stage",
     "stale",
     "unlink",
     "versions",
@@ -142,7 +138,7 @@ __all__ = [
 
 
 def init_store(root: str | Path = ".") -> Path:
-    """Create a relative-band graph root in an empty project; return its root."""
+    """Create a graph root in an empty project; return its root."""
     return _init_store(root)
 
 
@@ -162,7 +158,7 @@ def load_view(root: str | Path | Store, ref: str | int | None = None) -> View:
 
 
 def default_root(root: Store | str | Path) -> str:
-    """Declared ``ROOT``, else the lowest topology root, else the lowest node."""
+    """Declared ``ROOT``, else the lowest component representative, else the lowest node."""
     store = root if isinstance(root, Store) else _load(root)
     return _default_root(store)
 
@@ -258,9 +254,10 @@ def clone(
     version: int | None = None,
     *,
     subtree: bool = False,
+    depth: int | None = None,
 ) -> list[tuple[str, str]]:
-    """Copy a node, or its link subtree, to new versions."""
-    return _clone(root, ref, version, subtree=subtree)
+    """Copy a node, or its undirected neighbourhood, to new versions."""
+    return _clone(root, ref, version, subtree=subtree, depth=depth)
 
 
 def replace(
@@ -282,13 +279,13 @@ def migrate(
     link_type: str = "breaks_down",
     symmetric_types: list[str] | None = None,
     inverse_types: dict[str, str] | None = None,
-    band_order: bool = False,
 ) -> MigrationResult:
     """Convert a classic or containment store in place (or print the plan).
 
+    Retired placement keys are stripped from every node and ROOT;
     ``symmetric_types`` and ``inverse_types`` mark master links on an existing
-    store; ``band_order`` writes the ROOT band-order hint.  Every flag is
-    idempotent, so re-running the same migration is a no-op.
+    store.  Every flag is idempotent, so re-running the same migration is a
+    no-op.
     """
     return _migrate(
         root,
@@ -296,7 +293,6 @@ def migrate(
         link_type=link_type,
         symmetric_types=symmetric_types,
         inverse_types=inverse_types,
-        band_order=band_order,
     )
 
 
@@ -327,25 +323,15 @@ def new_node(
     fields: dict[str, Any] | None = None,
     body: str = "",
     links: list[dict[str, Any]] | None = None,
-    stage: int | None = None,
-    layer: str | None = None,
-    band: str | None = None,
-    subpath: str | None = None,
-    order: int | None = None,
     link_type: str = "breaks_down",
 ) -> Path:
-    """Create the next global id at version 1 under ``parent``."""
+    """Create the next global id at version 1, optionally linked to ``parent``."""
     return _new_node(
         root,
         parent=parent,
         fields=fields,
         body=body,
         links=links,
-        stage=stage,
-        layer=layer,
-        band=band,
-        subpath=subpath,
-        order=order,
         link_type=link_type,
     )
 

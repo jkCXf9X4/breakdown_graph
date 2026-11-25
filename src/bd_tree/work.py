@@ -1,18 +1,19 @@
-"""Materialize one link-closure view as a band-layout tree of per-file symlinks.
+"""Materialize one view as a flat ring projection of per-file symlinks.
 
-The work directory is the primary editing interface: it mirrors the band-layout
-paths of ``bd export graph``, but every node ``.md`` entry is a symlink back to
-its original ``nodes/<ref>.md`` file.  Editing a file in the work tree therefore
-edits the store directly: there is no sync layer, no state file and no copied
-content.
+The work directory is the primary editing interface: it is a flat directory
+holding one symlink per materialized ref back to its original
+``nodes/<ref>.md`` file.  Ring 0 is the active node, ring 1 is split into
+children, parents and peers, deeper rings are numbered.  Editing a file in the
+work area therefore edits the store directly: there is no sync layer, no state
+file and no copied content.
 
 There is one fixed work area per project, ``<project>/bd_work``.  Building a
 different view replaces its contents, so a single area always shows exactly one
 view.  The API's ``out`` parameter is a programmatic override for tests and
 embedders; the CLI exposes only the one area.
 
-An ``INDEX.md`` is generated in every directory, plus ``REFS.md`` (navigation)
-and ``AGENTS.md`` (instructions for a human or agent browsing the tree).
+A single root ``INDEX.md`` is generated, plus ``REFS.md`` (navigation) and
+``AGENTS.md`` (instructions for a human or agent browsing the area).
 """
 
 from __future__ import annotations
@@ -22,18 +23,20 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .errors import BreakdownError, ExportError
 from .exporter import (
     _build_paths,
     _directory_indexes,
     _prepare_out,
+    _ring_layout,
     _write_indexes,
 )
 from .frontmatter import FrontMatterError, parse_document
 from .fsutil import atomic_write, store_lock
 from .loader import load, load_view
-from .model import View
+from .model import KIND_RANK, View
 from .navigate import resolve_ref
 
 GENERATED = ("INDEX.md", "AGENTS.md", "REFS.md")
@@ -169,37 +172,45 @@ def _resolve_view(root: str | Path, ref: str | int | None) -> View:
     return view
 
 
-def _sorted_refs(view: View) -> list[str]:
-    return sorted(view.nodes, key=lambda r: (view.nodes[r].id, view.nodes[r].version))
+def _graph(view: View) -> Any:
+    """The graph anchored at the work view's ref (lazy import avoids a cycle)."""
+    from .graph import build_graph
+
+    return build_graph(view.store, anchor=view.ref)
+
+
+def _ordered_refs(view: View, graph: Any | None = None) -> list[str]:
+    """Every materialized ref in ``(distance, kind_rank, type, id, version)``."""
+    if graph is None:
+        graph = _graph(view)
+    return [
+        ref
+        for _heading, _kind, members in _ring_layout(graph, view.nodes)
+        for ref in members
+    ]
 
 
 def _depth_label(ref: str, depth: int | None) -> str:
-    """The materialized expression: ``REF`` for a full closure, else ``REF+N``."""
+    """The materialized expression: ``REF`` for a full component, else ``REF+N``."""
     return ref if depth is None else f"{ref}+{depth}"
 
 
 def _depth_view(view: View, depth: int | None) -> View:
-    """Return ``view`` filtered to nodes within ``depth`` link hops.
+    """Return ``view`` filtered to BFS rings 0..``depth`` over neighbours.
 
-    ``view`` is already the link closure, so this is a prefix of that closure
-    along ``Store.children``.  ``None`` keeps the full closure.
+    ``view`` is already the weak component of its ref, so the filter keeps every
+    ref whose undirected hop count is at most ``depth``.  A node reached through
+    several routes keeps its minimum distance and appears exactly once; cycles
+    need no special handling.  ``None`` keeps the whole component.
     """
     if depth is None:
         return view
-    kept: set[str] = set()
-    seen: set[str] = set()
+    from .graph import ring_distances
 
-    def walk(ref: str, level: int) -> None:
-        if ref in seen or ref not in view.nodes:
-            return
-        seen.add(ref)
-        kept.add(ref)
-        if level >= depth:
-            return
-        for child in view.store.children(ref):
-            walk(child, level + 1)
-
-    walk(view.ref, 0)
+    distance = view.distance or ring_distances(view.store, view.ref)
+    kept = {
+        ref for ref, level in distance.items() if level <= depth and ref in view.nodes
+    }
     nodes = {ref: node for ref, node in view.nodes.items() if ref in kept}
     edges = [
         edge for edge in view.edges if edge.source in kept and edge.target in kept
@@ -210,12 +221,21 @@ def _depth_view(view: View, depth: int | None) -> View:
         nodes=nodes,
         edges=edges,
         issues=view.issues,
+        distance={ref: distance[ref] for ref in kept},
     )
 
 
-def _expected(view: View, path_template: str | None) -> dict[str, str]:
+def _expected(
+    view: View, path_template: str | None, graph: Any | None = None
+) -> dict[str, str]:
+    if graph is None:
+        graph = _graph(view)
     return _build_paths(
-        view, path_template, _sorted_refs(view), reserved=GENERATED_SET
+        view,
+        path_template,
+        _ordered_refs(view, graph),
+        reserved=GENERATED_SET,
+        graph=graph,
     )
 
 
@@ -374,9 +394,10 @@ def _inspect(view: View, out: Path, path_template: str | None) -> list[WorkEntry
         entries.extend(_strays(out, set(manifest)))
         entries.extend(_node_link_strays(view, out, set(manifest)))
         return entries
-    paths = _expected(view, path_template)
+    graph = _graph(view)
+    paths = _expected(view, path_template, graph)
     entries = []
-    for ref in _sorted_refs(view):
+    for ref in _ordered_refs(view, graph):
         rel = paths[ref]
         entries.append(WorkEntry(rel, ref, _classify(out / rel, view.nodes[ref].path)))
     entries.extend(_strays(out, set(paths.values())))
@@ -385,21 +406,37 @@ def _inspect(view: View, out: Path, path_template: str | None) -> list[WorkEntry
 
 
 def _refs_text(
-    view: View, paths: dict[str, str], title_field: str, label: str
+    view: View,
+    paths: dict[str, str],
+    title_field: str,
+    label: str,
+    graph: Any | None = None,
 ) -> str:
+    """Flat ring table sorted by ``(distance, kind, ref)``."""
+    if graph is None:
+        graph = _graph(view)
+    distance = graph.distance or {}
     lines = [
         BANNER.format(ref=label),
         "",
         f"# References — view {label}",
         "",
-        "| Path | Ref | Title |",
-        "| --- | --- | --- |",
+        "| Path | Ref | Kind | Distance | Title |",
+        "| --- | --- | --- | --- | --- |",
     ]
-    for ref in _sorted_refs(view):
+    rows: list[tuple[int, str, int, int, str]] = []
+    for _heading, kind, members in _ring_layout(graph, view.nodes):
+        for ref in members:
+            node = view.nodes[ref]
+            rows.append(
+                (distance.get(ref, 0), kind or "-", node.id, node.version, ref)
+            )
+    rows.sort(key=lambda row: (row[0], KIND_RANK.get(row[1], 3), row[2], row[3]))
+    for level, kind, _node_id, _version, ref in rows:
         node = view.nodes[ref]
         title = str(node.meta.get(title_field) or node.ref)
         title = title.replace("|", "\\|").replace("\n", " ").replace("\r", " ")
-        lines.append(f"| `{paths[ref]}` | {ref} | {title} |")
+        lines.append(f"| `{paths[ref]}` | {ref} | {kind} | {level} | {title} |")
     lines.append("")
     return "\n".join(lines)
 
@@ -527,7 +564,8 @@ def _build(
                 stale.unlink()
         _prune_empty_dirs(out)
 
-    paths = _expected(view, path_template)
+    graph = _graph(view)
+    paths = _expected(view, path_template, graph)
     known = set(paths.values())
     for leftover in _node_link_strays(view, out, known):
         link = out / leftover.path
@@ -535,7 +573,7 @@ def _build(
             link.unlink()
     _prune_empty_dirs(out)
     files: list[Path] = []
-    for ref in _sorted_refs(view):
+    for ref in _ordered_refs(view, graph):
         node = view.nodes[ref]
         dest = out / paths[ref]
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -547,6 +585,7 @@ def _build(
         paths,
         title_field,
         summary_field,
+        graph=graph,
         banner=BANNER.format(ref=label),
         label=label,
         nodes_link=nodes_link,
@@ -555,7 +594,9 @@ def _build(
     _prune_empty_dirs(out)
     refs_path = out / "REFS.md"
     refs_path.write_text(
-        _refs_text(view, paths, title_field, label), encoding="utf-8", newline=""
+        _refs_text(view, paths, title_field, label, graph),
+        encoding="utf-8",
+        newline="",
     )
     agents_path = out / "AGENTS.md"
     agents_path.write_text(

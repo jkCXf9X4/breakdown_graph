@@ -24,7 +24,7 @@ def slow_loader(monkeypatch, delay: float = 0.05) -> None:
 def test_parallel_new_takes_distinct_ids_and_keeps_every_child(
     write, tmp_path, monkeypatch
 ):
-    write(tmp_path / "nodes", 1, band="root", order=0)
+    write(tmp_path / "nodes", 1)
     slow_loader(monkeypatch, delay=0.15)
 
     workers = 8
@@ -36,7 +36,6 @@ def test_parallel_new_takes_distinct_ids_and_keeps_every_child(
             tmp_path,
             parent="1",
             fields={"title": f"w{index}"},
-            band="children",
         )
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -63,9 +62,9 @@ def test_store_lock_lives_outside_the_store(tmp_path):
 
 def test_parallel_link_keeps_every_edge(write, tmp_path, monkeypatch):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, band="root", order=0)
+    write(nodes, 1)
     for node_id in range(2, 10):
-        write(nodes, node_id, band="children", order=node_id - 2)
+        write(nodes, node_id)
     slow_loader(monkeypatch)
 
     workers = 8

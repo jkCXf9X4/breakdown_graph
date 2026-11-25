@@ -1,11 +1,9 @@
-"""Read-only navigation over the link closure: show, find and path.
+"""Read-only navigation over the undirected view: show, find and path.
 
 Everything here is a pure projection of an already loaded :class:`~.model.Store`.
-Children are the ``links`` targets of a node; cycles are broken with a seen-set,
-and every walk is bounded by the requested depth.
-
-Bare ids are CLI selectors, never refs: :func:`resolve_ref` maps ``5`` to the
-version of id 5 that the chosen view contains.
+Neighbours are the authored links in both directions; the anchor is a focus, not
+a filter.  Every walk is a breadth-first search with a seen-set, so cycles are
+ordinary and a node appears once.
 """
 
 from __future__ import annotations
@@ -17,7 +15,16 @@ from typing import Any
 
 from .errors import BreakdownError
 from .loader import load_view, parse_selector
-from .model import Node, Store
+from .model import KIND_RANK, Node, Store
+
+# Direction labels for one step out of a node.
+ARROW: dict[str, str] = {"child": "→", "parent": "←", "peer": "↔"}
+_KIND_BY_RANK: dict[int, str] = {rank: kind for kind, rank in KIND_RANK.items()}
+_INVERSE_KIND: dict[str, str] = {
+    "child": "parent",
+    "parent": "child",
+    "peer": "peer",
+}
 
 # Front-matter keys that drive the model or are displayed separately.
 RESERVED: frozenset[str] = frozenset(
@@ -69,7 +76,7 @@ def parse_ref_depth(text: str, override: int | None = None) -> RefDepth:
 
 
 def default_root(store: Store) -> str:
-    """Declared ``ROOT``, else the lowest topology root, else the lowest node."""
+    """Declared ``ROOT``, else the first component representative."""
     ref = store.root_ref
     if ref is None:
         raise NavigationError("store has no nodes")
@@ -113,67 +120,115 @@ def get_node(store: Store, ref: str) -> Node:
 
 
 def view_roots(store: Store) -> list[Node]:
-    """Topology roots: nodes no other node reaches through ``links``, sorted."""
+    """One representative per weak component, sorted by ``(id, version)``."""
     return store.topology_roots()
 
 
-def ancestor_chain(store: Store, ref: str, root: str | None = None) -> list[str]:
-    """Refs from a topology root down to ``ref``, following ``Store.parents``.
+def shortest_path(
+    store: Store, start: str, target: str
+) -> list[tuple[str, str]] | None:
+    """Shortest undirected path from ``start`` to ``target``.
 
-    When a node has several parents the first by ``(stage, id, version)`` is
-    chosen, so the chain is deterministic but one of several possible paths; the
-    ambiguity is intentional and reported by ``bd check`` rather than hidden.
+    Returns ``[(ref, arrow_into_ref), ...]`` starting with ``(start, "")`` in
+    which each later arrow is the direction of that step (``→`` child, ``←``
+    parent, ``↔`` peer).  ``None`` means the two refs are in different
+    components.
     """
-    target = get_node(store, ref).ref
-    chain = [target]
-    seen: set[str] = {target}
-    current = target
-    while True:
-        parents = [
-            parent for parent in store.parents(current) if parent in store.nodes
-        ]
-        if not parents or parents[0] in seen:
-            break
-        seen.add(parents[0])
-        chain.append(parents[0])
-        current = parents[0]
-    chain.reverse()
-    if root is not None and root in chain:
-        return chain[chain.index(root) :]
-    return chain
+    if start not in store.nodes or target not in store.nodes:
+        return None
+    if start == target:
+        return [(start, "")]
+    previous: dict[str, tuple[str, str]] = {}
+    seen = {start}
+    queue = [start]
+    while queue:
+        current = queue.pop(0)
+        for neighbor in store.neighbors(current):
+            if neighbor.ref in seen or neighbor.ref not in store.nodes:
+                continue
+            seen.add(neighbor.ref)
+            previous[neighbor.ref] = (current, ARROW.get(neighbor.kind, "→"))
+            if neighbor.ref == target:
+                path: list[tuple[str, str]] = []
+                cursor = target
+                while cursor != start:
+                    parent, arrow = previous[cursor]
+                    path.append((cursor, arrow))
+                    cursor = parent
+                path.append((start, ""))
+                path.reverse()
+                return path
+            queue.append(neighbor.ref)
+    return None
+
+
+def _path_text(store: Store, start: str, target: str) -> str:
+    """Ref chain for display; the target alone when no path exists."""
+    path = shortest_path(store, start, target)
+    if path is None:
+        return target
+    return " > ".join(ref for ref, _arrow in path)
 
 
 def _breadcrumb(store: Store, ref: str) -> str:
+    path = shortest_path(store, default_root(store), ref)
+    if path is None:
+        return ref
     parts = []
-    for current in ancestor_chain(store, ref):
+    for current, arrow in path:
         node = store.nodes.get(current)
-        parts.append(f"{current} {node.title if node else ''}".rstrip())
+        label = f"{current} {node.title}".rstrip() if node else current
+        parts.append(f"{arrow} {label}".strip())
     return " > ".join(parts)
 
 
-def walk_links(
+def walk_neighbors(
     store: Store, ref: str, depth: int | None
-) -> Iterator[tuple[Node, int]]:
-    """Pre-order ``(node, level)`` pairs over ``Store.children`` (out-links).
+) -> Iterator[tuple[Node, int, str]]:
+    """BFS ``(node, distance, arrow)`` pairs over undirected neighbours.
 
-    The seen-set breaks cycles, and ``depth`` (None = unlimited) bounds the walk.
+    Rings are emitted in order 0..``depth`` (``None`` = the whole component) and
+    each node once.  Inside a ring the order is ``(kind_rank, link.type, id,
+    version)``; the arrow labels the best arriving step from the previous ring,
+    or is empty for the anchor.
     """
-    seen: set[str] = set()
+    get_node(store, ref)
+    distance: dict[str, int] = {ref: 0}
+    queue = [ref]
+    while queue:
+        current = queue.pop(0)
+        if depth is not None and distance[current] >= depth:
+            continue
+        for neighbor in store.neighbors(current):
+            if neighbor.ref in distance or neighbor.ref not in store.nodes:
+                continue
+            distance[neighbor.ref] = distance[current] + 1
+            queue.append(neighbor.ref)
 
-    def walk(current: str, level: int) -> Iterator[tuple[Node, int]]:
-        if current in seen:
-            return
-        node = store.nodes.get(current)
-        if node is None:
-            return
-        seen.add(current)
-        yield node, level
-        if depth is not None and level >= depth:
-            return
-        for child in store.children(current):
-            yield from walk(child, level + 1)
-
-    yield from walk(ref, 0)
+    entries: list[tuple[int, int, str, int, int, str, str]] = []
+    for current, hops in distance.items():
+        node = store.nodes[current]
+        if hops == 0:
+            entries.append((0, -1, "", node.id, node.version, current, ""))
+            continue
+        best: tuple[int, str] | None = None
+        for neighbor in store.neighbors(current):
+            if distance.get(neighbor.ref) != hops - 1:
+                continue
+            # The neighbour entry is its view of ``current``; invert it to
+            # label the step from the previous ring into ``current``.
+            arrival = _INVERSE_KIND[neighbor.kind]
+            key = (KIND_RANK[arrival], neighbor.link.type)
+            if best is None or key < best:
+                best = key
+        assert best is not None
+        entries.append(
+            (hops, best[0], best[1], node.id, node.version, current,
+             _KIND_BY_RANK[best[0]])
+        )
+    entries.sort(key=lambda entry: entry[:5])
+    for hops, _rank, _type, _node_id, _version, current, kind in entries:
+        yield store.nodes[current], hops, ARROW.get(kind, "")
 
 
 def format_value(value: Any) -> str:
@@ -216,51 +271,29 @@ def _display_body(node: Node, max_chars: int) -> str:
 
 
 def _graph_link_footer(store: Store, printed: Iterable[str]) -> str:
-    """Authored out-edges and derived opposites for every printed node.
+    """Undirected neighbour rows for every printed node.
 
-    Structural in-edges are shown as ``[derived]`` because only the source node
-    authors them.  A symmetric master is shown as an out-edge; its opposite is
-    derived on the target node and also carries ``[derived]``.
+    Direction is a label on the row: ``→`` child, ``←`` parent, ``↔`` peer.
+    A symmetric master is a peer in both directions; derived opposites are
+    never emitted separately.
     """
     rows: list[str] = []
-    seen: set[tuple[str, str, str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
     for ref in printed:
-        node = store.nodes.get(ref)
-        if node is None:
+        if ref not in store.nodes:
             continue
-        for link in node.links:
-            key = ("out", ref, link.to, link.type)
+        for neighbor in store.neighbors(ref):
+            key = (ref, neighbor.ref, neighbor.link.type)
             if key in seen:
                 continue
             seen.add(key)
-            target = store.nodes.get(link.to)
+            target = store.nodes.get(neighbor.ref)
             title = target.title if target is not None else "(missing)"
-            rows.append(f"- {ref} -> {link.to}  {title}  ({link.type})")
-        for edge in store.derived_links(ref):
-            key = ("derived", ref, edge.target, edge.type)
-            if key in seen:
-                continue
-            seen.add(key)
-            target = store.nodes.get(edge.target)
-            title = target.title if target is not None else "(missing)"
+            arrow = ARROW.get(neighbor.kind, "→")
             rows.append(
-                f"- {ref} -> {edge.target}  {title}  ({edge.type})  [derived]"
+                f"- {ref} {arrow} {neighbor.ref}  {title}  "
+                f"({neighbor.link.type})"
             )
-        for parent in store.parents(ref):
-            parent_node = store.nodes.get(parent)
-            if parent_node is None:
-                continue
-            for link in parent_node.links:
-                if link.to != ref or link.symmetric:
-                    continue
-                key = ("in", parent, ref, link.type)
-                if key in seen:
-                    continue
-                seen.add(key)
-                rows.append(
-                    f"- {ref} <- {parent}  {parent_node.title}  "
-                    f"({link.type})  [derived]"
-                )
     if not rows:
         return ""
     return "links:\n" + "\n".join(rows)
@@ -290,10 +323,12 @@ def render_show(
     if show_path:
         blocks.append(f"path: {_breadcrumb(store, ref)}")
     printed: list[str] = []
-    for node, level in walk_links(store, ref, depth):
+    for node, level, arrow in walk_neighbors(store, ref, depth):
         printed.append(node.ref)
         heading = "#" * min(level + 1, 6)
         parts = [f"{heading} {node.ref}  {node.title}"]
+        if arrow:
+            parts[0] = f"{parts[0]}  {arrow}"
         if node.summary:
             parts.append(f"summary: {node.summary}")
         for key, value in header_fields(node, fields):
@@ -386,11 +421,14 @@ def render_find(
 ) -> str:
     pattern = _compile(query, regex)
     conditions = where or []
+    anchor: str | None = None
     if all_nodes:
         nodes: Iterable[Node] = store.nodes.values()
+        anchor = store.root_ref
     else:
         ref = resolve_ref(store, view) if view is not None else default_root(store)
         get_node(store, ref)
+        anchor = ref
         nodes = load_view(store, ref).nodes.values()
     blocks: list[str] = []
     found = 0
@@ -421,8 +459,12 @@ def render_find(
         if not hits:
             continue
         found += 1
-        path = " > ".join(ancestor_chain(store, node.ref))
-        head = f"{node.ref}  {node.title}" if path == node.ref else f"{node.ref}  {path}  {node.title}"
+        path = (
+            _path_text(store, anchor, node.ref)
+            if anchor is not None
+            else node.ref
+        )
+        head = f"{node.ref}  {path}  {node.title}" if path != node.ref else f"{node.ref}  {node.title}"
         lines = [head]
         for number, text in hits[:MAX_FIND_LINES]:
             text = " ".join(text.split())
@@ -433,10 +475,25 @@ def render_find(
     return "\n\n".join(blocks)
 
 
-def render_path(store: Store, ref: str) -> str:
+def render_path(store: Store, ref: str, *, anchor: str | None = None) -> str:
+    """Shortest undirected path from the anchor to ``ref``, with arrows.
+
+    The anchor defaults to the store anchor (declared ``ROOT``, else the first
+    component representative).  There is no ancestry and no first-parent chain:
+    a BFS gives the shortest path and each step carries ``→`` (child), ``←``
+    (parent) or ``↔`` (peer).
+    """
     get_node(store, ref)
+    start = anchor if anchor is not None else default_root(store)
+    get_node(store, start)
+    path = shortest_path(store, start, ref)
+    if path is None:
+        raise NavigationError(
+            f"no undirected path from {start} to {ref}"
+        )
     lines = []
-    for current in ancestor_chain(store, ref):
+    for current, arrow in path:
         node = store.nodes[current]
-        lines.append(f"{node.ref}  {node.title}")
+        prefix = f"{arrow} " if arrow else ""
+        lines.append(f"{prefix}{node.ref}  {node.title}")
     return "\n".join(lines)

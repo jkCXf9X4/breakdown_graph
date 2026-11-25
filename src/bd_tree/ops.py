@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import functools
-import heapq
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-
-import yaml
 
 from .errors import BreakdownError
 from .frontmatter import (
@@ -19,13 +16,7 @@ from .frontmatter import (
     rewrite_links,
 )
 from .fsutil import atomic_copy, atomic_write, publish_new, store_lock
-from .graph import (
-    layer_reaches,
-    parse_band_fields,
-    relative_store,
-    require_layer,
-    require_layer_value,
-)
+from .graph import ring_distances
 from .loader import (
     ROOT_FILE,
     STORE_DIR,
@@ -56,37 +47,6 @@ def _existing(store: Store, ref: str, role: str) -> Node:
     if node is None:
         raise BreakdownError(f"{role} {ref} does not exist")
     return node
-
-
-def _reaches(store: Store, start: str, target: str) -> bool:
-    """Whether ``target`` is reachable from ``start`` through the topology."""
-    seen: set[str] = set()
-    stack = [start]
-    while stack:
-        current = stack.pop()
-        if current == target:
-            return True
-        if current in seen:
-            continue
-        seen.add(current)
-        stack.extend(store.children(current))
-    return False
-
-
-def _stage_value(node: Node) -> int | None:
-    """The node's integer ``stage``, or ``None`` when missing/invalid."""
-    value = node.meta.get("stage")
-    if isinstance(value, bool) or not isinstance(value, int):
-        return None
-    return value
-
-
-def _order_value(node: Node) -> int:
-    """The node's integer ``order``; a missing or invalid value is ``0``."""
-    value = node.meta.get("order", 0)
-    if isinstance(value, bool) or not isinstance(value, int):
-        return 0
-    return value
 
 
 def _link_sort_key(item: Any) -> tuple[int, int, int, str]:
@@ -138,27 +98,6 @@ def _link_type(item: Any, store: Store) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
 
 
-def _link_symmetric(item: Any) -> bool:
-    """True when an authored link is a symmetric master."""
-    return isinstance(item, dict) and item.get("symmetric") is True
-
-
-def _structural_children(store: Store, ref: str) -> list[str]:
-    """Out-links that define structure: authored, non-symmetric links only.
-
-    Prefers ``Store.structural_links`` when the model provides it, and falls
-    back to filtering the node's authored links so the operation stays correct
-    whichever loader revision is installed.
-    """
-    structural = getattr(store, "structural_links", None)
-    if callable(structural):
-        return [link.to for link in structural(ref)]
-    node = store.nodes.get(ref)
-    if node is None:
-        return []
-    return [link.to for link in node.links if not getattr(link, "symmetric", False)]
-
-
 _ROOT_BODY = "# Root\n\nState the intent of this graph here.\n"
 _GITIGNORE = "# generated work area (bd work)\nbd_work/\n"
 _GITIGNORE_ENTRY = "bd_work/"
@@ -193,9 +132,9 @@ def _serialized(func):
 def init_store(root: str | Path = ".", *, graph: bool = False) -> Path:
     """Create the canonical project with a hidden store and return its root.
 
-    The root node declares ``band: root`` with no ``stage`` and no links, so
-    the store is a relative-band graph ready for ``bd new --parent --band``.
-    ``graph`` is accepted and ignored for backwards compatibility.
+    The root node carries only identity metadata and no links; placement keys
+    are retired, so nothing declares a band or stage.  ``graph`` is accepted
+    and ignored for backwards compatibility.
     """
     project = Path(root).resolve()
     hidden = project / STORE_DIR / "nodes"
@@ -207,7 +146,7 @@ def init_store(root: str | Path = ".", *, graph: bool = False) -> Path:
             )
     hidden.mkdir(parents=True, exist_ok=True)
     target = node_path(project / STORE_DIR, 1, 1)
-    meta: dict[str, Any] = {"id": 1, "title": "Root", "band": "root"}
+    meta: dict[str, Any] = {"id": 1, "title": "Root"}
     target.write_text(
         render_document(meta, _ROOT_BODY),
         encoding="utf-8",
@@ -229,42 +168,45 @@ def clone(
     version: int | None = None,
     *,
     subtree: bool = False,
+    depth: int | None = None,
 ) -> list[tuple[str, str]]:
-    """Copy a node, or its whole link subtree, to new versions.
+    """Copy one node, or its undirected neighbourhood, to new versions.
 
-    The copy keeps the source bytes, including ``links``.  With ``subtree``,
-    every cloned parent is then rewired to the cloned children, so the result
-    is a self-contained copy.  Nothing is wired into the original view; use
-    :func:`replace` for that.  Returns ``(source, clone)`` pairs.
+    The copy keeps the source bytes, including ``links``.  With ``subtree``
+    the whole weak component of the source is copied; ``depth=N`` narrows that
+    to BFS rings ``0..N`` over authored links.  Every cloned node is then
+    rewired to cloned targets, so the result is a self-contained copy.
+    Nothing is wired into the original component; use :func:`replace` for
+    that.  Returns ``(source, clone)`` pairs.
     """
     root = resolve_store_root(root)
     store = load(root)
     source_ref = resolve_ref(store, ref)
     _existing(store, source_ref, "source")
 
-    if subtree:
+    neighbourhood = subtree or depth is not None
+    if neighbourhood:
         if version is not None:
-            raise BreakdownError("--version cannot be combined with --subtree")
-        # Structural links only: a symmetric master never pulls its opposite
-        # (or its target) into the subtree copy.
-        order: list[str] = []
-        queued: set[str] = set()
-        queue = [source_ref]
-        while queue:
-            current = queue.pop(0)
-            if current in queued:
-                continue
-            if current not in store.nodes:
-                raise BreakdownError(
-                    f"cannot clone {source_ref}: link target {current} does not exist"
-                )
-            queued.add(current)
-            order.append(current)
-            queue.extend(
-                child
-                for child in _structural_children(store, current)
-                if child not in queued
+            raise BreakdownError(
+                "--version cannot be combined with --subtree or --depth"
             )
+        if depth is not None:
+            if isinstance(depth, bool) or not isinstance(depth, int) or depth < 0:
+                raise BreakdownError(f"invalid depth {depth!r}")
+        distances = ring_distances(store, source_ref)
+        selected = [
+            old_ref
+            for old_ref, distance in distances.items()
+            if depth is None or distance <= depth
+        ]
+        order = sorted(
+            selected,
+            key=lambda old_ref: (
+                distances[old_ref],
+                store.nodes[old_ref].id,
+                store.nodes[old_ref].version,
+            ),
+        )
         seen_ids: dict[int, str] = {}
         for old_ref in order:
             node = store.nodes[old_ref]
@@ -306,9 +248,9 @@ def clone(
         taken.add(target_version)
         mapping[old_ref] = target_ref
 
-    if subtree:
+    if neighbourhood:
         # Rewire every cloned edge whose target was cloned too, leaving edges
-        # that leave the subtree pointing at the original nodes.
+        # that leave the neighbourhood pointing at the original nodes.
         for old_ref, new_ref in mapping.items():
             target = node_path(root, *parse_ref(new_ref))
             document = parse_document(target.read_text(encoding="utf-8"))
@@ -412,7 +354,7 @@ def clear_root(root: str | Path) -> Path | None:
 
 @_serialized
 def delete(root: str | Path, ref: str | int, *, force: bool = False) -> Path:
-    """Delete one node file, refusing anything still bound into the graph."""
+    """Delete one node file, refusing the root and authored inbound targets."""
     root = Path(root).resolve()
     store = load(root)
     canonical = resolve_ref(store, ref)
@@ -422,21 +364,16 @@ def delete(root: str | Path, ref: str | int, *, force: bool = False) -> Path:
             raise BreakdownError(
                 f"refusing to delete the store root {canonical} (use --force)"
             )
-        if _reaches(store, store.root_ref or canonical, canonical):
-            raise BreakdownError(
-                f"refusing to delete {canonical}: it is reachable from root "
-                f"{store.root_ref} (use --force)"
-            )
-        referenced_by = [
+        referenced_by = sorted(
             other.ref
             for other in store.nodes.values()
             if other.ref != canonical
             and any(link.to == canonical for link in other.links)
-        ]
+        )
         if referenced_by:
             raise BreakdownError(
-                f"refusing to delete {canonical}: referenced by "
-                + ", ".join(sorted(referenced_by))
+                f"refusing to delete {canonical}: inbound target of "
+                + ", ".join(referenced_by)
                 + " (use --force)"
             )
     node.path.unlink()
@@ -484,21 +421,13 @@ def new_node(
     fields: dict[str, Any] | None = None,
     body: str = "",
     links: list[dict[str, Any]] | None = None,
-    stage: int | None = None,
-    layer: str | None = None,
-    band: str | None = None,
-    subpath: str | None = None,
-    order: int | None = None,
     link_type: str = "breaks_down",
 ) -> Path:
     """Create the next global id at version 1 and wire it to ``parent``.
 
-    The store is always a graph: a typed edge is appended to the parent's
-    ``links``.  An absolute graph (some node declares ``stage``) sets an
-    integer ``stage`` (parent stage + 1, else 0); a relative graph (no
-    ``stage`` anywhere) requires ``--band`` (with optional ``--subpath``) or
-    the older ``--layer`` path shorthand, and derives the band from it.  Both
-    set ``order`` (0).
+    No authored placement is written: bands, stages and orders are retired.
+    A typed edge is appended to the parent's ``links`` when ``parent`` is
+    given; without a parent the node is a new component of its own.
 
     The whole id-pick/parent-rewrite/publish sequence holds the store lock, so
     concurrent writers get distinct ids and neither loses a sibling.  Both
@@ -511,11 +440,11 @@ def new_node(
     store = load(root)
 
     if parent is None:
-        parent_ref: str | None = None
         parent_node: Node | None = None
     else:
-        parent_ref = resolve_ref(store, parent)
-        parent_node = _existing(store, parent_ref, "parent")
+        parent_node = _existing(store, resolve_ref(store, parent), "parent")
+        if not isinstance(link_type, str) or not link_type.strip():
+            raise BreakdownError("link type must be a non-empty string")
 
     node_id = max((node.id for node in store.nodes.values()), default=0) + 1
     meta: dict[str, Any] = {"id": node_id}
@@ -523,102 +452,6 @@ def new_node(
     meta.update(fields)
     if links:
         meta["links"] = links
-
-    if relative_store(store):
-        if stage is not None or "stage" in fields:
-            raise BreakdownError("stores without stage use --band or --layer")
-        if layer is not None and (band is not None or subpath is not None):
-            raise BreakdownError(
-                "use either --layer or --band/--subpath, not both"
-            )
-        if "layer" in fields and (band is not None or subpath is not None):
-            raise BreakdownError(
-                "fields cannot mix 'layer' with --band/--subpath"
-            )
-        if ("band" in fields or "subpath" in fields) and layer is not None:
-            raise BreakdownError(
-                "fields cannot mix 'band'/'subpath' with --layer"
-            )
-        if layer is not None:
-            if not isinstance(layer, str) or not layer.strip():
-                raise BreakdownError("a band graph needs a non-empty --layer")
-            parsed_layer = require_layer_value(layer)
-            meta["layer"] = parsed_layer.raw
-        elif band is not None or subpath is not None:
-            parsed_layer = parse_band_fields(band, subpath)
-            meta["band"] = parsed_layer.band
-            if parsed_layer.subpath:
-                meta["subpath"] = parsed_layer.subpath
-        else:
-            raise BreakdownError(
-                "a band graph needs a non-empty --band (or --layer)"
-            )
-        if order is not None:
-            if isinstance(order, bool) or not isinstance(order, int):
-                raise BreakdownError(f"invalid order {order!r}")
-            meta["order"] = order
-        elif "order" not in meta:
-            meta["order"] = 0
-        if not isinstance(meta.get("order"), int) or isinstance(
-            meta.get("order"), bool
-        ):
-            raise BreakdownError(
-                f"invalid order {meta.get('order')!r} (expected an integer)"
-            )
-        if parent_node is not None:
-            if not isinstance(link_type, str) or not link_type.strip():
-                raise BreakdownError("link type must be a non-empty string")
-            parent_layer = require_layer(parent_node)
-            new_ref = f"{node_id}-1"
-            if parent_layer.band == parsed_layer.band:
-                if _order_value(parent_node) >= meta["order"]:
-                    raise BreakdownError(
-                        f"edge {parent_ref} -> {new_ref} is not forward within "
-                        f"layer '{parent_layer.band}': order "
-                        f"{_order_value(parent_node)} >= {meta['order']}"
-                    )
-            elif layer_reaches(store, parsed_layer.band, parent_layer.band):
-                raise BreakdownError(
-                    f"edge {parent_ref} -> {new_ref} ({link_type}) would create "
-                    f"a layer cycle through '{parent_layer.band}' and "
-                    f"'{parsed_layer.band}'"
-                )
-    else:
-        if band is not None or subpath is not None:
-            raise BreakdownError("stores with stage use --stage")
-        if layer is not None:
-            meta["layer"] = layer
-        if stage is not None:
-            if isinstance(stage, bool) or not isinstance(stage, int):
-                raise BreakdownError(f"invalid stage {stage!r}")
-            meta["stage"] = stage
-        elif "stage" not in meta:
-            parent_stage = (
-                _stage_value(parent_node) if parent_node is not None else None
-            )
-            meta["stage"] = parent_stage + 1 if parent_stage is not None else 0
-        if not isinstance(meta.get("stage"), int) or isinstance(
-            meta.get("stage"), bool
-        ):
-            raise BreakdownError(
-                f"invalid stage {meta.get('stage')!r} (expected an integer)"
-            )
-        if order is not None:
-            if isinstance(order, bool) or not isinstance(order, int):
-                raise BreakdownError(f"invalid order {order!r}")
-            meta["order"] = order
-        elif "order" not in meta:
-            meta["order"] = 0
-        if not isinstance(meta.get("order"), int) or isinstance(
-            meta.get("order"), bool
-        ):
-            raise BreakdownError(
-                f"invalid order {meta.get('order')!r} (expected an integer)"
-            )
-        if parent_node is not None and (
-            not isinstance(link_type, str) or not link_type.strip()
-        ):
-            raise BreakdownError("link type must be a non-empty string")
 
     target = node_path(root, node_id, 1)
     if target.exists():
@@ -652,9 +485,11 @@ def link(
 ) -> Path:
     """Append a typed link edge, pinning the target when it propagates.
 
-    A symmetric link is the single authored master of a two-way relation; the
-    opposite is derived at load time, never written.  ``inverse`` names the
-    derived edge's type and requires ``symmetric``.
+    Direction is only a label: back-edges, reciprocal edges and cycles are
+    legal, and targets stay sorted.  A symmetric link is the single authored
+    master of a two-way relation; the opposite is derived at load time, never
+    written.  ``inverse`` names the derived edge's type and requires
+    ``symmetric``.  A ref may not link to itself.
     """
     root = Path(root).resolve()
     if not isinstance(link_type, str) or not link_type.strip():
@@ -672,34 +507,11 @@ def link(
     target_ref = resolve_ref(store, target)
     source_node = _existing(store, source_ref, "source")
     target_node = _existing(store, target_ref, "target")
-    if not symmetric and relative_store(store):
-        source_layer = require_layer(source_node)
-        target_layer = require_layer(target_node)
-        if source_layer.band == target_layer.band:
-            if _order_value(source_node) >= _order_value(target_node):
-                raise BreakdownError(
-                    f"edge {source_ref} -> {target_ref} ({link_type}) is not "
-                    f"forward within layer '{source_layer.band}': order "
-                    f"{_order_value(source_node)} >= {_order_value(target_node)}"
-                )
-        elif layer_reaches(store, target_layer.band, source_layer.band):
-            raise BreakdownError(
-                f"edge {source_ref} -> {target_ref} ({link_type}) would create "
-                f"a layer cycle through '{source_layer.band}' and "
-                f"'{target_layer.band}'"
-            )
-    elif not symmetric:
-        source_stage = _stage_value(source_node)
-        target_stage = _stage_value(target_node)
-        if (
-            source_stage is not None
-            and target_stage is not None
-            and source_stage >= target_stage
-        ):
-            raise BreakdownError(
-                f"edge {source_ref} -> {target_ref} ({link_type}) is not "
-                f"strictly forward: stage {source_stage} >= {target_stage}"
-            )
+    if source_ref == target_ref:
+        raise BreakdownError(
+            f"link {source_ref} -> {target_ref} ({link_type}) is a self-loop; "
+            "a ref cannot link to itself"
+        )
 
     document = parse_document(source_node.path.read_text(encoding="utf-8"))
     links = _raw_links(document)
@@ -845,83 +657,9 @@ def _finish(lines: list[str], raw_fm: str) -> str:
     return rendered
 
 
-def _scalar(value: object) -> str:
-    dumped = yaml.safe_dump(
-        value, default_flow_style=True, width=10**9, allow_unicode=True
-    )
-    lines = [
-        line for line in dumped.splitlines() if line.strip() not in ("...", "---")
-    ]
-    return "\n".join(lines).strip()
-
-
-def _set_scalar(raw_fm: str, key: str, value: object) -> str:
-    """Set a top-level scalar, leaving every other line alone."""
-    return _finish(
-        _replace_block(raw_fm.splitlines(), key, [f"{key}: {_scalar(value)}"]),
-        raw_fm,
-    )
-
-
 def _remove_key(raw_fm: str, key: str) -> str:
     """Remove a top-level key and its continuation lines."""
     return _finish(_replace_block(raw_fm.splitlines(), key, []), raw_fm)
-
-
-_ORDINAL_PREFIX = re.compile(r"^\d+[-_ ]\s*")
-
-
-def _section_band(meta: dict[str, Any]) -> tuple[str, str] | None:
-    """Map an inert ``section`` path to ``(band, subpath)`` when no band exists."""
-    if "band" in meta:
-        return None
-    section = meta.get("section")
-    if not isinstance(section, str):
-        return None
-    segments = [seg.strip() for seg in section.strip().strip("/").split("/")]
-    segments = [seg for seg in segments if seg]
-    if not segments:
-        return None
-    band = _ORDINAL_PREFIX.sub("", segments[0], count=1).strip()
-    if not band:
-        band = segments[0]
-    return band, "/".join(segments[1:])
-
-
-def _section_band_name(meta: dict[str, Any]) -> str | None:
-    """The band a node's inert ``section`` names, regardless of ``band``."""
-    section = meta.get("section")
-    if not isinstance(section, str):
-        return None
-    segments = [seg.strip() for seg in section.strip().strip("/").split("/")]
-    segments = [seg for seg in segments if seg]
-    if not segments:
-        return None
-    band = _ORDINAL_PREFIX.sub("", segments[0], count=1).strip()
-    return band or segments[0]
-
-
-_ORDINAL_NUMBER = re.compile(r"^(\d+)")
-
-
-def _compute_band_order(docs: dict[Path, Any]) -> list[str]:
-    """``root``, ordinal-led section bands by number, then first-seen bands."""
-    ordinal: list[tuple[int, int, str]] = []
-    rest: list[str] = []
-    seen: set[str] = {"root"}
-    for index, document in enumerate(docs.values()):
-        band = _section_band_name(document.meta)
-        if band is None or band in seen:
-            continue
-        seen.add(band)
-        section = document.meta.get("section")
-        first = section.strip().strip("/").split("/")[0].strip()
-        match = _ORDINAL_NUMBER.match(first)
-        if match:
-            ordinal.append((int(match.group(1)), index, band))
-        else:
-            rest.append(band)
-    return ["root"] + [band for _n, _i, band in sorted(ordinal)] + rest
 
 
 def _ref_text_key(text: str) -> tuple[int, int, int, str]:
@@ -932,127 +670,6 @@ def _ref_text_key(text: str) -> tuple[int, int, int, str]:
     return (0, node_id, version, "")
 
 
-def _topo_orders(
-    refs: list[str], edges: list[tuple[str, str]]
-) -> dict[str, int]:
-    """Deterministic topological order keyed by ``(id, version)``."""
-    nodes = sorted(refs, key=_ref_text_key)
-    node_set = set(nodes)
-    outgoing: dict[str, set[str]] = {ref: set() for ref in nodes}
-    indegree = {ref: 0 for ref in nodes}
-    for source, target in edges:
-        if source not in node_set or target not in node_set:
-            continue
-        if target in outgoing[source]:
-            continue
-        outgoing[source].add(target)
-        indegree[target] += 1
-    ready = [(_ref_text_key(ref), ref) for ref in nodes if indegree[ref] == 0]
-    heapq.heapify(ready)
-    ordered: list[str] = []
-    while ready:
-        _key, ref = heapq.heappop(ready)
-        ordered.append(ref)
-        for target in sorted(outgoing[ref], key=_ref_text_key):
-            indegree[target] -= 1
-            if indegree[target] == 0:
-                heapq.heappush(ready, (_ref_text_key(target), target))
-    if len(ordered) < len(nodes):
-        seen = set(ordered)
-        ordered.extend(ref for ref in nodes if ref not in seen)
-    return {ref: index for index, ref in enumerate(ordered)}
-
-
-def _assign_bands(
-    docs: dict[Path, Any], parents: dict[str, str]
-) -> tuple[dict[str, str], dict[str, str]]:
-    """Resolve every node's band (and optional section subpath) before writing."""
-    band_of: dict[str, str] = {}
-    subpath_of: dict[str, str] = {}
-    for target, document in docs.items():
-        ref = target.stem
-        meta = document.meta
-        if "stage" in meta:
-            continue
-        band = meta.get("band")
-        if isinstance(band, str) and band.strip():
-            band_of[ref] = band.strip()
-            continue
-        plan = _section_band(meta)
-        if plan is not None:
-            band, subpath = plan
-            band_of[ref] = band
-            if subpath:
-                subpath_of[ref] = subpath
-
-    def inherited(ref: str, seen: set[str]) -> str | None:
-        if ref in band_of:
-            return band_of[ref]
-        if ref in seen:
-            return None
-        parent = parents.get(ref)
-        if parent is not None:
-            found = inherited(parent, seen | {ref})
-            if found is not None:
-                band_of[ref] = found
-                return found
-        return None
-
-    for target, document in docs.items():
-        if "stage" in document.meta:
-            continue
-        ref = target.stem
-        if ref not in band_of:
-            band_of[ref] = inherited(ref, set()) or "root"
-    return band_of, subpath_of
-
-
-def _migration_orders(
-    final_links: dict[str, list[Any]],
-    band_of: dict[str, str],
-    docs: dict[Path, Any],
-    target_by_ref: dict[str, Path],
-) -> dict[str, int]:
-    """Per-band orders; keep explicit orders only when every edge stays forward."""
-    by_band: dict[str, list[str]] = {}
-    for ref in final_links:
-        band = band_of.get(ref)
-        if band is not None:
-            by_band.setdefault(band, []).append(ref)
-    edges: dict[str, list[tuple[str, str]]] = {}
-    for ref, links in final_links.items():
-        band = band_of.get(ref)
-        if band is None:
-            continue
-        for link in links:
-            if _link_symmetric(link):
-                continue
-            target = _link_target(link)
-            if target is None or target not in final_links:
-                continue
-            if band_of.get(target) == band:
-                edges.setdefault(band, []).append((ref, target))
-    orders: dict[str, int] = {}
-    for band, refs in by_band.items():
-        band_edges = edges.get(band, [])
-        explicit: dict[str, int] = {}
-        all_explicit = True
-        for ref in refs:
-            value = docs[target_by_ref[ref]].meta.get("order")
-            if isinstance(value, int) and not isinstance(value, bool):
-                explicit[ref] = value
-            else:
-                all_explicit = False
-        if all_explicit and all(
-            explicit[source] < explicit[target]
-            for source, target in band_edges
-        ):
-            orders.update(explicit)
-        else:
-            orders.update(_topo_orders(refs, band_edges))
-    return orders
-
-
 @_serialized
 def migrate(
     root: str | Path,
@@ -1061,22 +678,20 @@ def migrate(
     link_type: str = "breaks_down",
     symmetric_types: list[str] | None = None,
     inverse_types: dict[str, str] | None = None,
-    band_order: bool = False,
 ) -> MigrationResult:
     """One-time, idempotent, in-place migration of a classic containment store.
 
     Classic bare filenames are versioned first.  Every ``contains`` list becomes
     typed ``links``; scalar links gain an explicit type; every list is sorted by
-    ref.  A missing band comes from ``section`` or the nearest ``contains``
-    ancestor, and same-band ``order`` values are recomputed topologically unless
-    the existing ones already satisfy every edge.  The ``contains`` key is
-    removed.
+    ref.  Retired placement keys (``band``, ``subpath``, ``layer``, ``stage``,
+    ``order``) are stripped from every node, and ``band_layout`` /
+    ``band_order`` from the ROOT node, while bodies and unrelated front matter
+    are preserved byte for byte.
 
-    The added flags also work on an already-migrated store: ``symmetric_types``
-    marks every master link of a type, ``inverse_types`` marks a type and names
-    its derived opposite, and ``band_order`` writes the ROOT ``band_order``
-    hint (plus ``band_layout: flat``).  Running the same migration twice makes
-    no further changes.
+    The flags also work on an already-migrated store: ``symmetric_types`` marks
+    every master link of a type and ``inverse_types`` marks a type and names its
+    derived opposite.  Running the same migration twice makes no further
+    changes.
     """
     if not isinstance(link_type, str) or not link_type.strip():
         raise BreakdownError("link type must be a non-empty string")
@@ -1143,7 +758,6 @@ def migrate(
 
     ambiguous: dict[int, set[str]] = {}
     converted: dict[Path, list[str]] = {}
-    contains_parents: dict[str, str] = {}
     for target, document in docs.items():
         contains = document.meta.get("contains")
         if not isinstance(contains, list):
@@ -1152,13 +766,8 @@ def migrate(
         children: list[str] = []
         for item in contains:
             _changed, value = _map_data_ref(item, mapping, where, ambiguous)
-            child_ref = str(value).strip()
-            children.append(child_ref)
-            if child_ref in target_by_ref:
-                contains_parents.setdefault(child_ref, target.stem)
+            children.append(str(value).strip())
         converted[target] = children
-
-    band_of, subpath_of = _assign_bands(docs, contains_parents)
 
     final_links: dict[str, list[Any]] = {}
     original_links: dict[str, list[Any]] = {}
@@ -1241,24 +850,22 @@ def migrate(
                     f"{where}: symmetric {detail} ({touched} links)"
                 )
 
-    order_of = _migration_orders(final_links, band_of, docs, target_by_ref)
-
-    band_order_values: list[str] = []
-    root_ref: str | None = None
-    if band_order:
-        band_order_values = _compute_band_order(docs)
-        root_path = root / ROOT_FILE
-        declared = (
-            root_path.read_text(encoding="utf-8").strip()
-            if root_path.is_file()
-            else ""
+    root_path = root / ROOT_FILE
+    declared = (
+        root_path.read_text(encoding="utf-8").strip()
+        if root_path.is_file()
+        else ""
+    )
+    if declared and is_full_ref(declared):
+        root_ref: str | None = declared
+    elif declared and is_bare_ref(declared) and int(declared) in mapping:
+        root_ref = mapping[int(declared)]
+    else:
+        root_ref = None
+    if root_ref is None or root_ref not in target_by_ref:
+        root_ref = (
+            min(target_by_ref, key=_ref_text_key) if target_by_ref else None
         )
-        if declared and is_full_ref(declared):
-            root_ref = declared
-        elif declared and is_bare_ref(declared) and int(declared) in mapping:
-            root_ref = mapping[int(declared)]
-        if root_ref is None or root_ref not in target_by_ref:
-            root_ref = min(target_by_ref, key=_ref_text_key) if target_by_ref else None
 
     pending: list[tuple[Path, Path, str]] = []
     for target, document in docs.items():
@@ -1279,47 +886,22 @@ def migrate(
             )
             changed = True
 
-        if "stage" not in document.meta and ref in band_of:
-            existing_band = document.meta.get("band")
-            if not (
-                isinstance(existing_band, str) and existing_band.strip()
-            ):
-                raw_fm = _set_scalar(raw_fm, "band", band_of[ref])
-                result.rewrites.append(f"{where}: band -> {band_of[ref]}")
-                changed = True
-            subpath = subpath_of.get(ref)
-            existing_subpath = document.meta.get("subpath")
-            if subpath and not (
-                isinstance(existing_subpath, str)
-                and existing_subpath.strip()
-            ):
-                raw_fm = _set_scalar(raw_fm, "subpath", subpath)
-                result.rewrites.append(f"{where}: subpath -> {subpath}")
-                changed = True
-
-        if ref in order_of:
-            desired = order_of[ref]
-            existing_order = document.meta.get("order")
-            if not (
-                isinstance(existing_order, int)
-                and not isinstance(existing_order, bool)
-                and existing_order == desired
-            ):
-                raw_fm = _set_scalar(raw_fm, "order", desired)
-                result.rewrites.append(f"{where}: order -> {desired}")
-                changed = True
-
-        if band_order and root_ref is not None and ref == root_ref:
-            if document.meta.get("band_order") != band_order_values:
-                raw_fm = _set_scalar(raw_fm, "band_order", band_order_values)
-                result.rewrites.append(
-                    f"{where}: band_order -> {', '.join(band_order_values)}"
-                )
-                changed = True
-            if document.meta.get("band_layout") != "flat":
-                raw_fm = _set_scalar(raw_fm, "band_layout", "flat")
-                result.rewrites.append(f"{where}: band_layout -> flat")
-                changed = True
+        retired = [
+            key
+            for key in ("band", "subpath", "layer", "stage", "order")
+            if key in document.meta
+        ]
+        if ref == root_ref:
+            retired.extend(
+                key
+                for key in ("band_layout", "band_order")
+                if key in document.meta
+            )
+        if retired:
+            for key in retired:
+                raw_fm = _remove_key(raw_fm, key)
+            result.rewrites.append(f"{where}: strip {', '.join(retired)}")
+            changed = True
 
         if changed:
             pending.append(

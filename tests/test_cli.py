@@ -22,8 +22,8 @@ def test_export_graph_writes_view_output_shape(write, tmp_path):
         == 0
     )
     assert (out / "INDEX.md").is_file()
-    assert (out / "00-root" / "1-1.md").is_file()
-    assert (out / "01-claims" / "2-1.md").is_file()
+    assert (out / "1-1.md").is_file()
+    assert (out / "2-1.md").is_file()
 
 
 def test_versions_and_delete_cli(write, tmp_path):
@@ -76,8 +76,18 @@ def test_clone_subtree_cli_prints_every_pair(write, tmp_path, capsys):
 
     assert main(["clone", "2-1", "--subtree", "--root", str(tmp_path)]) == 0
     assert capsys.readouterr().out == (
-        "2-1 -> 2-2\n3-1 -> 3-2\n4-1 -> 4-2\n"
+        "2-1 -> 2-2\n1-1 -> 1-2\n3-1 -> 3-2\n4-1 -> 4-2\n"
     )
+
+
+def test_clone_depth_cli(write, tmp_path, capsys):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2, links=[{"to": "3-1", "type": "breaks_down"}])
+    write(nodes, 3)
+
+    assert main(["clone", "2-1", "--depth", "1", "--root", str(tmp_path)]) == 0
+    assert capsys.readouterr().out == "2-1 -> 2-2\n1-1 -> 1-2\n3-1 -> 3-2\n"
 
 
 def test_replace_cli_swaps_and_prints_canonical_message(write, tmp_path, capsys):
@@ -124,15 +134,13 @@ def test_clone_rejects_replace_flag_cli_exits_2(write, tmp_path):
 
 def test_new_with_arbitrary_field_cli(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, band="root")
+    write(nodes, 1)
     assert (
         main(
             [
                 "new",
                 "--parent",
                 "1",
-                "--band",
-                "claims",
                 "--root",
                 str(tmp_path),
                 "--field",
@@ -150,7 +158,7 @@ def test_new_with_arbitrary_field_cli(write, tmp_path):
 
     doc = parse_document((nodes / "2-1.md").read_text(encoding="utf-8"))
     assert doc.meta["phase"] == "build"
-    assert doc.meta["band"] == "claims"
+    assert "band" not in doc.meta
     assert "folder" not in doc.meta
     assert doc.body == "hello\n"
     assert load(tmp_path).children("1-1") == ["2-1"]
@@ -158,14 +166,27 @@ def test_new_with_arbitrary_field_cli(write, tmp_path):
 
 def test_new_prefills_title_and_summary_cli(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, band="root")
-    assert main(["new", "--parent", "1", "--band", "claims", "--root", str(tmp_path)]) == 0
+    write(nodes, 1)
+    assert main(["new", "--parent", "1", "--root", str(tmp_path)]) == 0
 
     from bd_tree.frontmatter import parse_document
 
     doc = parse_document((nodes / "2-1.md").read_text(encoding="utf-8"))
     assert doc.meta["title"] == ""
     assert doc.meta["summary"] == ""
+
+
+def test_new_rejects_retired_placement_flags_cli(write, tmp_path):
+    write(tmp_path / "nodes", 1)
+    for flag, value in (
+        ("--band", "claims"),
+        ("--subpath", "nested"),
+        ("--order", "1"),
+        ("--stage", "2"),
+    ):
+        with pytest.raises(SystemExit) as exc:
+            main(["new", "--parent", "1", flag, value, "--root", str(tmp_path)])
+        assert exc.value.code == 2
 
 
 def test_check_require_flag_and_view_path_template(write, tmp_path):
@@ -215,10 +236,15 @@ def test_current_views_and_edit_cli(write, tmp_path, capsys):
     assert capsys.readouterr().out == f"{(tmp_path / 'bd_work').resolve()}\n"
 
     assert main(["views", "--root", str(tmp_path)]) == 0
-    assert capsys.readouterr().out.startswith("1-1  Title of 1-1 *")
+    out = capsys.readouterr().out
+    assert out.startswith("1-1")
+    assert "2 nodes" in out
+    assert "Title of 1-1" in out
+    assert "*" in out
+    assert "anchor 1-1" in out
 
     assert main(["edit", "2-1", "--root", str(tmp_path)]) == 0
-    assert capsys.readouterr().out == f"{(tmp_path / 'bd_work' / '01-claims' / '2-1.md')}\n"
+    assert capsys.readouterr().out == f"{(tmp_path / 'bd_work' / '2-1.md')}\n"
 
 
 def test_current_path_without_area_is_an_error(write, tmp_path, capsys):
@@ -229,29 +255,21 @@ def test_current_path_without_area_is_an_error(write, tmp_path, capsys):
 
 def test_check_view_narrows_reporting(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(
-        nodes,
-        1,
-        band="root",
-        links=[
-            {"to": "2-1", "type": "breaks_down"},
-            {"to": "3-1", "type": "breaks_down"},
-        ],
-    )
-    write(nodes, 2, band="claims", body="line\n" * 121)
-    write(nodes, 3, band="evidence")
+    write(nodes, 1, links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2, body="line\n" * 121)
+    write(nodes, 3)
 
     assert main(["check", "--root", str(tmp_path)]) == 0
     out = capsys.readouterr().out
     assert "WARNING nodes/2-1.md" in out
-    assert "1 warnings" in out
+    assert "2 nodes, 0 errors, 2 warnings (view 1-1)" in out
 
     assert main(["check", "--view", "3-1", "--root", str(tmp_path)]) == 0
     out = capsys.readouterr().out
     assert "WARNING nodes/2-1.md" not in out
-    assert "1 nodes, 0 errors, 1 warnings (view 3-1)" in out
-    # The global graph audit still anchors elsewhere: 1-1 is an orphan now.
-    assert "node '1-1' has no incoming edge" in out
+    assert "1 nodes, 0 errors, 2 warnings (view 3-1)" in out
+    # Nodes outside the selected component are reported as orphans.
+    assert "not in the default component" in out
 
 
 def test_removed_subcommands_and_flags_exit_2(write, tmp_path):
@@ -289,7 +307,7 @@ def test_bare_selector_resolves_inside_the_default_view(write, tmp_path, capsys)
 
     assert main(["path", "2", "--root", str(tmp_path)]) == 0
     assert capsys.readouterr().out == (
-        "1-1  Title of 1-1\n2-1  Title of 2-1\n"
+        "1-1  Title of 1-1\n→ 2-1  Title of 2-1\n"
     )
 
 
@@ -334,16 +352,16 @@ def test_work_depth_option_overrides_a_suffix(write, tmp_path, capsys):
 
     assert main(["work", "1-1+0", "--depth", "1", "--root", str(tmp_path)]) == 0
     assert "(view 1-1+1)" in capsys.readouterr().out
-    assert (out / "01-claims" / "2-1.md").is_symlink()
-    assert not (out / "02-evidence" / "3-1.md").exists()
+    assert (out / "2-1.md").is_symlink()
+    assert not (out / "3-1.md").exists()
 
     assert main(["work", "1-1", "--depth", "0", "--root", str(tmp_path)]) == 0
     assert "(view 1-1+0)" in capsys.readouterr().out
-    assert not (out / "01-claims" / "2-1.md").exists()
+    assert not (out / "2-1.md").exists()
 
     assert main(["work", "1-1+0", "--root", str(tmp_path)]) == 0
     assert "1 nodes, 1 symlinks" in capsys.readouterr().out
-    assert not (out / "01-claims" / "2-1.md").exists()
+    assert not (out / "2-1.md").exists()
 
 
 def test_work_malformed_depth_suffix_exits_2(write, tmp_path, capsys):
@@ -367,29 +385,27 @@ def test_edit_respects_materialized_depth(write, tmp_path, capsys):
     capsys.readouterr()
 
     assert main(["edit", "2-1", "--root", str(tmp_path)]) == 0
-    assert capsys.readouterr().out.endswith("01-claims/2-1.md\n")
+    assert capsys.readouterr().out.endswith("2-1.md\n")
 
     assert main(["edit", "3-1", "--root", str(tmp_path)]) == 2
     assert "current view 1-1+1" in capsys.readouterr().err
 
 
-def test_edit_prints_a_band_subpath(write, tmp_path, capsys):
+def test_edit_prints_a_flat_basename(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
     write(
         nodes,
         1,
-        band="evolution",
-        order=0,
         title="Root",
         links=[{"to": "2-1", "type": "breaks_down"}],
     )
-    write(nodes, 2, band="evolution", subpath="claims", order=1, name="idea")
+    write(nodes, 2, name="idea")
 
     assert main(["work", "1-1", "--root", str(tmp_path)]) == 0
     capsys.readouterr()
 
     assert main(["edit", "2-1", "--root", str(tmp_path)]) == 0
-    expected = tmp_path / "bd_work" / "00-evolution" / "claims" / "idea.md"
+    expected = tmp_path / "bd_work" / "2-1.md"
     assert capsys.readouterr().out == f"{expected}\n"
 
 
@@ -415,8 +431,17 @@ def test_help_texts_are_topology_neutral(capsys):
         assert "containment" not in out
 
     with pytest.raises(SystemExit) as excinfo:
+        main(["new", "--help"])
+    assert excinfo.value.code == 0
+    out = capsys.readouterr().out
+    assert "--band" not in out
+    assert "--stage" not in out
+    assert "--order" not in out
+    assert "--subpath" not in out
+
+    with pytest.raises(SystemExit) as excinfo:
         main(["--help"])
     assert excinfo.value.code == 0
     out = capsys.readouterr().out
-    assert "typed forward links arranged in bands" in out
+    assert "undirected distance rings" in out
     assert "containment views" not in out

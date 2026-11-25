@@ -1,15 +1,15 @@
-"""Load the flat numeric node store and resolve a view as a link closure.
+"""Load the flat numeric node store and resolve a view as a component.
 
 Every node lives at ``nodes/<id>-<version>.md``.  The filename is the only
 identity and the only version marker; there is no bare ``<id>.md`` file and no
 privileged "main" version.  All versions of one logical id are peers.
 
-Edges are declared ``links`` and nothing else.  A view is the forward closure
-over those links, rooted at one ref; a node reached through several parents
-appears once.  Data refs (``links`` and the ``ROOT`` file) must be fully
-qualified ``<id>-<version>`` refs.  A bare id in data is recorded as a
-``bare-ref`` issue.  A leftover ``contains`` key is inert metadata here; the
-checker reports it as ``contains-removed``.
+Edges are declared ``links`` and nothing else.  A view is the weakly connected
+component over those authored links, rooted at one ref; a node reached through
+several neighbours appears once.  Data refs (``links`` and the ``ROOT`` file)
+must be fully qualified ``<id>-<version>`` refs.  A bare id in data is recorded
+as a ``bare-ref`` issue.  A leftover ``contains`` key is inert metadata here;
+the checker reports it as ``contains-removed``.
 """
 
 from __future__ import annotations
@@ -601,27 +601,27 @@ def require_full_ref(text: str, role: str) -> str:
 
 
 def _load_graph_view(store: Store, canonical: str) -> View:
-    """Forward closure over ``Store.children`` — the only view walk.
+    """Undirected BFS over ``Store.neighbors`` — the whole weak component.
 
-    A node reached through several parents is included once, so cycles close
-    instead of raising; ``bd check`` reports them.  Edges keep every authored
-    link whose source and target are both in the closure.
+    Repeated refs close the walk, so cycles are ordinary edges.  ``distance``
+    records the hop count from ``canonical``.  ``edges`` keeps every authored
+    link whose source and target are both in the component; symmetric masters
+    stay in and derived opposites never enter.
     """
     included: dict[str, Node] = {}
-    seen: set[str] = set()
+    distance: dict[str, int] = {canonical: 0}
     queue = [canonical]
     while queue:
         current = queue.pop(0)
-        if current in seen:
-            continue
         node = store.nodes.get(current)
         if node is None:
             continue
-        seen.add(current)
         included[current] = node
-        queue.extend(
-            child for child in store.children(current) if child not in seen
-        )
+        for neighbor in store.neighbors(current):
+            if neighbor.ref in distance or neighbor.ref not in store.nodes:
+                continue
+            distance[neighbor.ref] = distance[current] + 1
+            queue.append(neighbor.ref)
 
     edges: list[Edge] = []
     for node in included.values():
@@ -644,17 +644,18 @@ def _load_graph_view(store: Store, canonical: str) -> View:
         nodes=included,
         edges=edges,
         issues=list(store.issues),
+        distance=distance,
     )
 
 
 def load_view(root: str | Path | Store, ref: str | None = None) -> View:
-    """Return the link closure rooted at ``ref``.
+    """Return the weak component around ``ref``.
 
-    ``ref`` defaults to the store's default anchor.  The walk is the forward
-    closure over ``links`` with a seen-set: multiple parents are legal and a
-    node appears once.  Bare data refs are already reported by ``scan``; a bare
-    *view root* raises :class:`BreakdownError` because a view can never pick a
-    version for the caller.
+    ``ref`` defaults to the store's default anchor.  The walk is undirected BFS
+    over ``links`` with a distance map: every member appears once, cycles are
+    legal, and order is the anchor's hop count.  Bare data refs are already
+    reported by ``scan``; a bare *view root* raises :class:`BreakdownError`
+    because a view can never pick a version for the caller.
     """
     store = root if isinstance(root, Store) else load(root)
     issues: list[Issue] = []

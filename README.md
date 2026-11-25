@@ -5,20 +5,21 @@ edges, a git solution boundary, and a single custom symlink work area.
 
 - **Store** — one markdown file per node version, keyed by `<id>-<version>`.
 - **One topology: typed links.** A node declares edges in `links: [{to, type}]`.
-  There is no second topology and no `contains` key. A link is *structural* by
-  default; a link with `symmetric: true` is one authored master whose opposite
-  is derived at load time (see below).
-- **Layout — bands.** A node names a `band`, plus an optional `subpath`, and the
-  band order and nesting are derived from cross-band structural links; or a node
-  declares an absolute integer `stage`. `order` positions nodes inside a band,
-  and a ROOT `band_order` list is an optional tie-break hint. Paths do not
-  define structure.
-- **Root** — an optional `ROOT` file names the default view root in one full ref.
-- **View** — the closure of one ref over authored *structural* out-links. A node
-  reached by several parents appears once; multiple parents are legal.
+  There is no second topology and no `contains` key. In-edges are derived. A
+  link with `symmetric: true` is one authored master whose opposite is derived
+  at load.
+- **View — undirected.** The view is the weakly connected component of one
+  anchor: every node reachable through authored links in either direction.
+  Direction stays in the data and as a label; it does not filter membership.
+  Cycles and back-edges are legal.
+- **Layout — rings.** Ordering is the undirected BFS hop count from the anchor.
+  Ring 0 is the anchor; ring 1 is split into children, parents, and peers;
+  deeper rings are numbered. Distance is derived on every command.
+- **Root** — an optional `ROOT` file names the default anchor in one full ref.
 - **Solutions** — git branches and worktrees.
-- **Work area** — `bd work` renders one view as symlinks into the store, in a
-  single `<project>/bd_work/` area. `bd current` reports which view is there.
+- **Work area** — `bd work` renders one view as a flat set of symlinks into the
+  store, in a single `<project>/bd_work/` area. `bd current` reports which view
+  is there.
 - **Freshness** — typed links record what depends on what and whether it still
   holds.
 
@@ -43,27 +44,25 @@ These are deliberately separate:
   still owns every branch decision.
   [The full separation](docs/BRANCHES-AND-VERSIONS.md).
 
-A store-level `ROOT` file names one default view root (`bd root 1-1`), so
+A store-level `ROOT` file names one default anchor (`bd root 1-1`), so
 `graph`, `find`, `work`, `check`, `stale`, and `reconcile` follow it without an
 argument. An explicit ref wins where a command takes one; with no `ROOT`, the
-store uses its lowest graph root. `bd check --view REF` only narrows reporting.
-The default root and the view in the work area are separate: `bd root REF`
-changes the default used by commands, while `bd work REF` replaces the contents
-of `<project>/bd_work/`; the area keeps its view until you run `bd work` again.
+store uses the lowest member of its first component. `bd check --view REF` only
+narrows reporting. The default anchor and the view in the work area are
+separate: `bd root REF` changes the default used by commands, while `bd work REF`
+replaces the contents of `<project>/bd_work/`; the area keeps its view until you
+run `bd work` again.
 
 A ref in data is always the full `id-version` (`5-1`, not `5`); `links` and
 `ROOT` never hold a bare id. At the command line a bare id is a selector:
 `bd show 5` resolves `5` to the version present in the selected view and never
 writes the short form into data.
 
-Structural links define structure; symmetric links are associative and derive
-an opposite. A link is structural unless it declares `symmetric: true`, and only
-structural links expand a view, define `path` ancestry and `views` roots, order
-bands, and feed `bd clone --subtree`. A symmetric master is authored on exactly
-one node — `X --T--> Y` — and load derives the opposite `Y --(inverse or T)--> X`
-without storing it; `bd out`, `bd in`, and the `show --links` footer mark
-derived edges `[derived]`. Because one file
-owns the relation, there is nothing to keep in sync and no second copy to merge.
+A symmetric master is authored on exactly one node — `X --T--> Y` — and load
+derives the opposite `Y --(inverse or T)--> X` without storing it; `bd out`,
+`bd in`, and the `show --links` footer mark derived edges `[derived]`. Because
+one file owns the relation, there is nothing to keep in sync and no second copy
+to merge.
 
 Git answers what changed. `links` answer what belongs and what depends. Pins
 answer whether it still holds.
@@ -95,73 +94,74 @@ export BD_ROOT=examples
 
 bd check                       # 12 nodes, 0 errors, 0 warnings
 bd audit                       # graph validation: 0 errors, 0 warnings
-bd graph                       # text render with derived band layout from 1-1
+bd graph                       # rings 0..4 from 1-1
 bd graph --svg --out /tmp/bd-graph.svg  # rendered SVG (needs Graphviz)
-bd graph 1-1 --depth 1         # direct children only
+bd graph 1-1 --depth 1         # rings 0 and 1
+bd graph 1-1 --distance 2:3    # ring 0 plus rings 2 and 3
 bd out 1-1                     # authored out-edges, sorted
 bd in 4-1                      # derived in-edges for a two-parent node
+bd path 10-1                   # shortest undirected chain from 1-1
+bd views                       # component representatives
 bd find links --limit 3
-bd work 1-1                    # single work area, derived band layout
+bd work 1-1                    # single flat work area for the component
+bd current                     # <project>/bd_work (view 1-1)
 bd export graph --view 1-1 --out /tmp/bd-graph
 ```
 
-`bd graph` is the only view renderer: text bands by default, `--dot` for
+`bd graph` is the only view renderer: text rings by default, `--dot` for
 Graphviz DOT, `--svg` for a rendered image. `bd export graph` writes the same
-band layout as a read-only snapshot (band directories, one `INDEX.md` per
-folder, and a root index), never a work area. `bd work` materializes the same
-layout with symlinks.
+flat view as a read-only snapshot (node files plus one ring-section `INDEX.md`),
+never a work area. `bd work` materializes the same view with symlinks.
 
 `bd work` writes the single `<project>/bd_work/` area and replaces its contents;
-node `.md` files there are symlinks into the store, while `INDEX.md`, `AGENTS.md`,
-and `REFS.md` are generated. Use `bd edit REF` to find a ref in the active view.
+node `.md` files there are symlinks into the store at their store basename, while
+`INDEX.md`, `AGENTS.md`, and `REFS.md` are generated. Use `bd edit REF` to find
+a ref in the active view.
 
 ## Create a store
 
 ```sh
 mkdir my-graph && cd my-graph
 bd init
-bd new --parent 1-1 --field title="Why does this exist?" --band intent
-bd new --parent 1-1 --field title="What is true?" --band claims
+bd new --parent 1-1 --field title="Why does this exist?"
+bd new --parent 1-1 --field title="What is true?"
 bd graph 1-1
 bd work 1-1
 ```
 
-`bd init` creates `.bd_tree/nodes/1-1.md` as the graph root (`band: root`),
-writes a `.gitignore` entry for `bd_work/`, and prints the next commands. There
-is no `--graph` flag; the graph is the only topology. `bd init DIR` scaffolds
-the same layout inside `DIR`.
+`bd init` creates `.bd_tree/nodes/1-1.md` as the graph root, writes a
+`.gitignore` entry for `bd_work/`, and prints the next commands. There is no
+`--graph` flag; the graph is the only topology. `bd init DIR` scaffolds the same
+layout inside `DIR`.
 
 `bd new` allocates the next global id at version 1 and adds a typed link to the
-parent (`--type`, default `breaks_down`). In relative mode it takes `--band` with
-optional `--subpath` (or the older `--layer BAND[/SUB]`); in absolute mode it
-takes `--stage`; both take `--order`. It prefills `title` and `summary` as empty
+parent (`--type`, default `breaks_down`). It takes no placement flags: the view
+and its rings are derived from links and distance. Without `--parent` the node
+starts its own component. It prefills `title` and `summary` as empty
 placeholders, and `--field` overrides them. Front matter is arbitrary: use
 `status`, `phase`, `audience`, or anything else.
 
-Graph validation has two code sets. Relative mode reports `graph-layer-missing`,
-`graph-layer-invalid`, `graph-layer-cycle`, and `graph-order-back-edge`; absolute
-mode reports `graph-stage-missing`, `graph-stage-invalid`, and `graph-back-edge`.
-Both share `graph-order-invalid`, `graph-dangling-link`, and `graph-cycle`; graph
-warnings include `graph-group-ignored` (`group` is inert) and
-`graph-unsorted-links`. Symmetric links add `invalid-symmetric`,
-`inverse-without-symmetric`, `symmetric-self-edge`, `duplicate-symmetric-edge`,
-and `propagates-on-symmetric`; a non-list ROOT `band_order` is
-`invalid-band-order`. A node that still declares `contains` fails `bd check`
+Graph validation keeps structural and edge checks. The graph codes are
+`graph-dangling-link`, `graph-orphan` (a node outside the default component),
+`graph-duplicate-version`, `graph-wide-fanout`, and `graph-unsorted-links`.
+Symmetric links add `invalid-symmetric`, `inverse-without-symmetric`,
+`symmetric-self-edge`, `duplicate-symmetric-edge`, and
+`propagates-on-symmetric`. Cycles, back-edges, and reciprocal edges are legal
+and produce no error. A node that still declares `contains` fails `bd check`
 with `contains-removed`, which tells you to run `bd migrate`.
 
 ## Migration
 
 `bd migrate` converts an older store in place. It still renames classic bare
-`nodes/<id>.md` files to `<id>-<version>.md`, and now also converts a
-containment store to the one topology:
+`nodes/<id>.md` files to `<id>-<version>.md`, and also converts a containment
+store to the one topology:
 
 1. Every `contains: [c0, c1, ...]` becomes `links: [{to: c0, type: T}, ...]`,
    preserving order; the key is removed. `T` is `--type`, default `breaks_down`.
-2. Sibling order is preserved by writing `order: i` for converted children that
-   have no explicit `order`.
-3. A `section` path on a node with no `band` becomes `band` plus `subpath` (a
-   leading ordinal such as `00-` is dropped); `section` itself stays as inert
-   front matter.
+2. Scalar links gain an explicit type, and every link list is sorted by ref.
+3. Retired placement keys are stripped from every node (`band`, `subpath`,
+   `layer`, `stage`, `order`) and from the ROOT node (`band_layout`,
+   `band_order`). `section` stays as inert front matter.
 
 ```sh
 bd migrate --dry-run           # print the plan, touch nothing
@@ -170,20 +170,19 @@ bd check                       # the converted store passes
 ```
 
 `--root` works as on every command. `--type` chooses the edge type for converted
-`contains` lists. Three additions also run on an already-migrated store and are
+`contains` lists. Two additions also run on an already-migrated store and are
 idempotent:
 
 - `--symmetric TYPE` (repeatable) sets `symmetric: true` on every link of that
   type, and drops `propagates`/`pinned` from it.
 - `--inverse TYPE=TYPE2` (repeatable) does the same and names the derived
   opposite's type.
-- `--band-order` writes the ROOT `band_order` hint (`root` first, then bands
-  whose `section` has a leading `NN` ordinal by number, then remaining
-  section-derived bands in first-seen order) and sets `band_layout: flat`.
 
 ```sh
-bd migrate --symmetric verifies --inverse verifies=verified_by --band-order
+bd migrate --symmetric verifies --inverse verifies=verified_by
 ```
+
+There is no placement flag: rings are derived from the graph.
 
 ## Where is my store?
 
@@ -198,7 +197,7 @@ current directory to depth 3 and uses the store when exactly one is found.
 - `.bd_root` is a one-line pointer a working folder may hold to name its store;
   a relative path is resolved from the folder holding the file. It is the
   folder-level way to choose among several stores. `ROOT` is a different file:
-  the store-level default-view ref.
+  the store-level default-anchor ref.
 - An ancestor store or `.bd_root` always wins over a store found below the
   current directory.
 - Several stores below the current directory are a refusal: `bd` lists all of
@@ -221,7 +220,7 @@ checkout. `BD_ROOT=examples` and `--root` still override.
 | Look up a command quickly | [`docs/CHEATSHEET.md`](docs/CHEATSHEET.md) |
 | Understand the model and decisions | [`docs/DESIGN.md`](docs/DESIGN.md) |
 | Work in the graph topology | [`docs/GRAPH.md`](docs/GRAPH.md) |
-| Understand the band folder layout | [`docs/GRAPH-LAYOUT.md`](docs/GRAPH-LAYOUT.md) |
+| Understand the ring layout and work area | [`docs/GRAPH-LAYOUT.md`](docs/GRAPH-LAYOUT.md) |
 | Know what is a branch and what is a version | [`docs/BRANCHES-AND-VERSIONS.md`](docs/BRANCHES-AND-VERSIONS.md) |
 | Change the tool itself | [`docs/DEVELOPING.md`](docs/DEVELOPING.md) |
 | Work safely as an agent | [`AGENTS.md`](AGENTS.md) |
@@ -242,13 +241,14 @@ bd init | bd new | bd link | bd unlink | bd migrate
 ```
 
 `bd new` seeds empty `title` and `summary`; `--field` overrides them. It adds a
-typed link and takes `--band`/`--subpath` (or `--layer`), `--stage`, and
-`--order`.
+typed link to `--parent` and takes no placement flags. Without `--parent` the
+node starts its own component.
 
-`bd link FROM TO --type T` adds a structural edge and refuses a back-edge or a
-band cycle. `--symmetric` instead authors the single master of a two-way
-relation, and `--inverse T2` names the derived opposite's type; a symmetric link
-skips the band/stage ordering checks and cannot combine with `--propagates`.
+`bd link FROM TO --type T` adds an edge and keeps targets sorted. Back-edges,
+reciprocal edges, and cycles are legal; a self-loop on the same ref is refused.
+`--symmetric` instead authors the single master of a two-way relation, and
+`--inverse T2` names the derived opposite's type; a symmetric link cannot
+combine with `--propagates`.
 
 Root:
 
@@ -267,40 +267,34 @@ bd edit REF
 
 `bd work REF` writes the single `<project>/bd_work/` area and replaces its
 contents; it does not create a second folder. With no REF it uses the default
-view. The view is always the full closure of one ref over forward structural
-links; the work area may materialize only its first `N` descendant levels with
-`REF+N` (the
-same suffix `bd show` uses) or `--depth N`, where `0` is the root alone and
-`--depth` overrides a suffix. A level is a link hop and the layout is the band
-plan (derived bands, or absolute stages). `REFS.md`, each folder's `INDEX.md`,
-and `AGENTS.md` carry the materialized expression (`REF+N`), so `bd current` and
-`bd edit` recover it. A rebuild with a different depth replaces the area.
+anchor. The view is always the whole component of one ref; the work area may
+materialize only rings `0..N` with `REF+N` (the same suffix `bd show` uses) or
+`--depth N`, where `0` is the anchor alone and `--depth` overrides a suffix.
+`REFS.md`, `INDEX.md`, and `AGENTS.md` carry the materialized expression
+(`REF+N`), so `bd current` and `bd edit` recover it. A rebuild with a different
+depth replaces the area.
 `bd current` is read-only and prints `<project>/bd_work (view <ref>)`; `--path`
 prints only the path and `--view` only the ref, and it errors when no area
 exists. `--status` and `--writeback` inspect the view actually in the area, not
-the requested or default view. `bd views` lists graph roots, marking the store
-default with `*`. `bd edit REF` prints the absolute path of that ref inside the
-current work area and errors if the ref is not in the materialized area.
+the requested or default view. `bd views` lists component representatives,
+marking the store default with `*` and the work-area anchor. `bd edit REF`
+prints the absolute path of that ref inside the current work area and errors if
+the ref is not in the materialized area.
 
-Bands are the only layout. A node lands in its band's folder, plus an explicit
-`subpath`; a top-level band folder is `<NN>-<slug(band)>`. The file stem is an
-explicit `name` (`<name>.md`), else `<ref>-<title-slug>.md`, else `<ref>.md` when
-there is no usable title; the title slug is lowercase kebab-case. `--path-template`
-overrides the whole area; `{name}` and `{slug}` in a template are the explicit
-`name`, else the title slug, else the ref. The ROOT node may add
-`band_order: [band, ...]` to break ties in the topological band order (and so
-order flat top-level folders); it never overrides a real edge constraint, and
-unknown or duplicate names are ignored. It composes with `band_layout: flat`:
-same top-level folders, ordered by the hint.
+The work area is flat: one symlink per node at its store basename.
+`--path-template` overrides the whole area; placeholders are `{ref}`, `{id}`,
+`{version}`, `{distance}`, `{slug}`, `{title}`, plus any front-matter key.
+`{slug}` is the title slug, else the ref.
+`group`, `section`, `folder`, and `home` are inert front matter: preserved,
+never read, and they affect no path.
 
-`section` is inert front matter: preserved, never read, and it affects no path.
-`folder` is likewise ordinary front matter: preserved, never read, and it
-affects no placement, naming, validation, or warning.
-
-Every directory in the work area and in `bd export graph` gets a generated
-`INDEX.md` listing its direct node files, then its immediate subfolders. It is
-derived from the band plan on every build, so it cannot go stale. The names
-`INDEX.md`, `AGENTS.md`, and `REFS.md` are reserved in every directory.
+`INDEX.md` is one generated file at the work-area root, with ring sections. Its
+`nodes:` front-matter path points at the store's real `nodes/` folder, and every
+node entry also links straight to its real file. `REFS.md` is the sorted
+path/ref/kind/distance/title table and carries the active view in its header.
+`AGENTS.md` records the editing rules and, inside git, the branch, commit, and
+worktree. The names `INDEX.md`, `AGENTS.md`, and `REFS.md` are reserved in every
+directory.
 
 Solutions:
 
@@ -316,20 +310,22 @@ bd versions | bd clone | bd replace | bd delete | bd diff
 
 `bd clone REF` copies a ref to the next free version of the same logical id
 (or to `--version N`) and keeps the source file's declared `links`; it wires
-nothing into the current view. `bd clone REF --subtree` clones every descendant
-in the structural forward closure and rewrites each cloned parent's `links`. The
-copy is self-contained and the original stays untouched; `--version` cannot be
-combined with `--subtree`.
+nothing into the current view. `bd clone REF --subtree` clones the whole weakly
+connected component and rewrites each cloned node's `links`; `--depth N` narrows
+that to rings `0..N` and implies `--subtree`. Edges whose targets were cloned
+are rewired to the copies; a depth prefix keeps edges that leave the prefix
+pointing at the originals. The original stays untouched; `--version` cannot be
+combined with `--subtree` or `--depth`.
 `bd replace OLD NEW` is the separate wiring step: it repoints every inbound link.
 It repoints `ROOT` when OLD is the store root; OLD's file stays as a peer. To
 clone and swap in one logical flow, run `bd clone REF --subtree` then
 `bd replace REF <printed new root ref>`. If OLD is not in the default view,
 `bd replace` errors. Several parents are legal, and a view warns when two
 versions of one id are reachable (`graph-duplicate-version`). Edges pin a full
-ref. Switch the default root with `bd root`, or switch the work-area view with
+ref. Switch the default anchor with `bd root`, or switch the work-area view with
 `bd work`.
-`bd delete REF` removes a version and refuses a `ROOT`, a reachable ref, or one
-referenced by any link unless `--force` is given.
+`bd delete REF` removes a version and refuses an effective `ROOT` or a ref that
+is an inbound target of any link unless `--force` is given.
 
 Freshness:
 
@@ -346,10 +342,9 @@ bd export dot --view REF --out FILE [--render svg|png|pdf ...]
 bd export svg --view REF --out FILE
 ```
 
-`bd export graph` is the read-only topology projection: the band layout (derived
-relative bands, or absolute stages) with one generated `INDEX.md` per folder.
-`context` is the fresh-node agent pack; `dot` and `svg` render the flat graph
-with Graphviz.
+`bd export graph` is the read-only component projection: flat node files plus
+one ring-section `INDEX.md`. `context` is the fresh-node agent pack; `dot` and
+`svg` render the flat graph with Graphviz.
 
 ```sh
 bd export dot --view 1-1 --out graph.dot --render svg   # graph.dot + graph.svg
@@ -358,7 +353,7 @@ bd export svg --view 1-1 --out graph.svg                # rendered only
 
 `--render` repeats for `svg`, `png`, or `pdf`; each file sits next to the `.dot`
 unless `--render-out` names the one rendered path. `bd graph --svg` remains the
-band-clustered visual.
+ring visual.
 
 Full syntax: [`docs/CHEATSHEET.md`](docs/CHEATSHEET.md) or `bd <command> --help`.
 
@@ -367,14 +362,14 @@ Full syntax: [`docs/CHEATSHEET.md`](docs/CHEATSHEET.md) or `bd <command> --help`
 ```
 pyproject.toml             packaging metadata and the `bd` console script
 src/bd_tree/               Python package
-  loader.py                filename grammar, store index, view resolution
-  model.py                 Node, Store, View, Edge, Issue
+  loader.py                filename grammar, store index, component view
+  model.py                 Node, Store, View, Neighbor, Edge, Issue
   checker.py               structural validation, including contains-removed
-  graph.py                 adjacency, band layout, audit, graph export
+  graph.py                 components, rings, audit, flat graph export
   exporter.py              graph/context/dot projections
   freshness.py             pins, stale edges, reconcile
   navigate.py              show/find/path renderers
-  work.py                  single work area, current/views/edit, status, writeback
+  work.py                  single flat work area, current/views/edit, status, writeback
   solutions.py             git worktree wrapper
   ops.py                   init, new, structural edits, versions, delete, diff, migrate
   cli.py, api.py           command line and public API
@@ -386,24 +381,27 @@ docs/breakdown/            product breakdown: bd store (.bd_tree/) + ignored bd_
 
 ## Status
 
-- The committed example project `examples/` is a relative-band graph:
-  `.bd_tree/nodes/` holds twelve `<id>-<version>.md` files with declared `links`
-  and relative `band`/`subpath` values, `.bd_tree/ROOT` names `1-1`, and
-  `bd_work/` is gitignored; `bd audit` is clean.
+- The committed example project `examples/` is a twelve-node graph:
+  `.bd_tree/nodes/` holds `<id>-<version>.md` files with declared `links`,
+  `.bd_tree/ROOT` names `1-1`, and `bd_work/` is gitignored; `bd audit` is clean.
+  From `1-1` the rings are `0: 1-1`, `1: 2-1 3-1`, `2: 4-1 5-1 6-1 7-1`,
+  `3: 8-1 12-1`, `4: 9-1 10-1 11-1`.
 - One topology. `contains` is rejected by `bd check` (`contains-removed`);
   `bd migrate` converts an older store. Symmetric links author one master and
-  derive the opposite at load; structural links alone define closure and layout.
+  derive the opposite at load.
 - No JSON, TOML, lock, or state data files; the only exceptions are a
   store-level `ROOT` file with one ref line and a folder-level `.bd_root`
-  pointer with one store path. Derived output is gitignored.
-- Structural edits, the git-aware single work area, and the `bd solution` wrapper
-  are in place.
+  pointer with one store path. The work-area view is in its generated `REFS.md`.
+  Derived output is gitignored.
+- Structural edits, the flat ring work area, and the `bd solution` wrapper are
+  in place.
 
 ## Known limits
 
 - Node versions do not sync across branches. Use git merges for solutions;
   versions are for alternatives inside one branch.
 - No three-way merge between versions. Synthesis is manual.
+- Distance is graph nearness, not semantic importance or reading order.
 - One worktree per solution. Switching branches inside one worktree can leave a
   layout pointing at paths absent from the new branch; rebuild with
   `bd work REF --clean` and run `bd work --status`.

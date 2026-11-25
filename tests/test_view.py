@@ -24,11 +24,18 @@ def _tree(write, tmp_path):
     return nodes
 
 
-def test_view_is_link_closure(write, tmp_path):
+def test_view_is_the_whole_connected_component(write, tmp_path):
     _tree(write, tmp_path)
-    assert set(load_view(tmp_path, "1-1").nodes) == {"1-1", "2-1", "3-1", "4-1"}
-    assert set(load_view(tmp_path, "2-1").nodes) == {"2-1", "4-1"}
-    assert set(load_view(tmp_path, "4-1").nodes) == {"4-1"}
+    tree = {"1-1", "2-1", "3-1", "4-1"}
+    assert set(load_view(tmp_path, "1-1").nodes) == tree
+    assert set(load_view(tmp_path, "2-1").nodes) == tree
+    assert set(load_view(tmp_path, "4-1").nodes) == tree
+
+
+def test_view_distance_is_undirected_bfs(write, tmp_path):
+    _tree(write, tmp_path)
+    view = load_view(tmp_path, "2-1")
+    assert view.distance == {"2-1": 0, "1-1": 1, "4-1": 1, "3-1": 2}
 
 
 def test_a_multi_parent_node_appears_once_in_the_view(write, tmp_path):
@@ -38,7 +45,7 @@ def test_a_multi_parent_node_appears_once_in_the_view(write, tmp_path):
     write(nodes, 2, band="b", order=0)
     view = load_view(tmp_path, "1-1")
     assert list(view.nodes).count("2-1") == 1
-    assert set(view.nodes) == {"1-1", "2-1"}
+    assert set(view.nodes) == {"1-1", "2-1", "3-1"}
     assert check(tmp_path).ok
 
 
@@ -57,22 +64,24 @@ def test_every_version_declares_its_own_links(write, tmp_path):
     write(nodes, 2, version=2, band="b", order=0, body="no list means leaf\n")
     write(nodes, 2, version=3, band="b", order=0, links=[], body="closed\n")
 
-    assert set(load_view(tmp_path, "1-1").nodes) == {"1-1", "2-1", "3-1"}
-    versioned = load_view(tmp_path, "2-1")
-    assert set(versioned.nodes) == {"2-1", "3-1"}
-    assert "3-1" in versioned.nodes
+    connected = {"1-1", "2-1", "3-1"}
+    assert set(load_view(tmp_path, "1-1").nodes) == connected
+    assert set(load_view(tmp_path, "2-1").nodes) == connected
+    assert "3-1" in load_view(tmp_path, "2-1").nodes
     assert set(load_view(tmp_path, "2-2").nodes) == {"2-2"}
     assert set(load_view(tmp_path, "2-3").nodes) == {"2-3"}
     assert check(tmp_path, "1-1").ok
 
 
-def test_graph_cycle_is_reported(write, tmp_path):
+def test_graph_cycle_loads_once_and_is_not_an_error(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, band="a", order=0, links=[{"to": "2", "type": "x"}])
     write(nodes, 2, band="b", order=0, links=[{"to": "1", "type": "x"}])
     view = load_view(tmp_path, "1-1")
     assert set(view.nodes) == {"1-1", "2-1"}
-    assert any(issue.code == "graph-cycle" for issue in check(tmp_path).errors)
+    assert view.distance == {"1-1": 0, "2-1": 1}
+    assert check(tmp_path).ok
+    assert not any(issue.code == "graph-cycle" for issue in check(tmp_path).errors)
 
 
 def test_missing_link_target(write, tmp_path):
@@ -167,3 +176,43 @@ def test_default_root_and_current_ref_follow_the_view(write, tmp_path):
     assert resolve_ref(tmp_path, "2-1", view_ref="1-2") == "2-1"
     with pytest.raises(BreakdownError, match="not in view"):
         resolve_ref(tmp_path, "2", view_ref="3-1")
+
+
+def test_neighbors_lists_both_directions_with_kind(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2", "type": "breaks_down"}])
+    write(nodes, 2)
+    from bd_tree.loader import load
+
+    store = load(tmp_path)
+    assert [(n.ref, n.kind, n.link.type) for n in store.neighbors("1-1")] == [
+        ("2-1", "child", "breaks_down")
+    ]
+    assert [(n.ref, n.kind, n.link.type) for n in store.neighbors("2-1")] == [
+        ("1-1", "parent", "breaks_down")
+    ]
+
+
+def test_components_are_one_per_weak_component(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2", "type": "x"}])
+    write(nodes, 2, links=[{"to": "1", "type": "x"}])
+    write(nodes, 5)
+    from bd_tree.loader import load
+
+    store = load(tmp_path)
+    assert store.components() == [["1-1", "2-1"], ["5-1"]]
+    assert [node.ref for node in store.topology_roots()] == ["1-1", "5-1"]
+    assert store.root_ref == "1-1"
+
+
+def test_declared_root_still_wins_over_components(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1)
+    write(nodes, 5)
+    (tmp_path / "ROOT").write_text("5-1\n", encoding="utf-8")
+    from bd_tree.loader import load
+
+    store = load(tmp_path)
+    assert store.root_ref == "5-1"
+    assert load_view(tmp_path, "1-1").distance == {"1-1": 0}

@@ -9,6 +9,7 @@ from bd_tree import api
 
 
 def _tree(write, tmp_path):
+    """1 -> 2, 3; 2 -> 4.  The component is flat-ringed from 1-1."""
     nodes = tmp_path / "nodes"
     write(
         nodes,
@@ -17,12 +18,27 @@ def _tree(write, tmp_path):
             {"to": "2-1", "type": "breaks_down"},
             {"to": "3-1", "type": "breaks_down"},
         ],
-        band="intent",
-        band_layout="flat",
     )
-    write(nodes, 2, links=[{"to": "4-1", "type": "breaks_down"}], band="claims")
-    write(nodes, 3, band="review")
-    write(nodes, 4, band="evidence")
+    write(nodes, 2, links=[{"to": "4-1", "type": "breaks_down"}])
+    write(nodes, 3)
+    write(nodes, 4)
+    return nodes
+
+
+def _cycle(write, tmp_path):
+    """1 -> 2 -> 3 -> 1 plus 3 -> 4: a cycle must not duplicate a node."""
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2, links=[{"to": "3-1", "type": "supports"}])
+    write(
+        nodes,
+        3,
+        links=[
+            {"to": "1-1", "type": "verifies"},
+            {"to": "4-1", "type": "supports"},
+        ],
+    )
+    write(nodes, 4)
     return nodes
 
 
@@ -44,6 +60,7 @@ def test_work_links_every_node_and_writes_generated_files(write, tmp_path):
     assert set(by_ref) == set(store.nodes)
     for node in store.nodes.values():
         dest = out / by_ref[node.ref]
+        assert dest.parent == out
         assert dest.is_symlink()
         assert dest.resolve() == node.path.resolve()
         assert not os.path.isabs(os.readlink(dest))
@@ -53,30 +70,51 @@ def test_work_links_every_node_and_writes_generated_files(write, tmp_path):
     agents = (out / "AGENTS.md").read_text(encoding="utf-8")
     assert "symlink" in agents and "--writeback" in agents
     refs = (out / "REFS.md").read_text(encoding="utf-8")
-    assert "| Path | Ref | Title |" in refs
-    assert "`01-claims/2-1.md` | 2-1 |" in refs
+    assert "| Path | Ref | Kind | Distance | Title |" in refs
+    assert "`2-1.md` | 2-1 | child | 1 |" in refs
 
 
-def test_work_indexes_link_the_real_node_folder(write, tmp_path):
+def test_work_index_uses_ring_sections(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
 
     index = (out / "INDEX.md").read_text(encoding="utf-8")
     assert index.startswith("---\nnodes: ../nodes\n---\n")
+    assert "# View 1-1" in index
     assert "[nodes/](../nodes/)" in index
-    assert (out / "../nodes").resolve() == (tmp_path / "nodes").resolve()
-    intent_index = (out / "00-intent" / "INDEX.md").read_text(encoding="utf-8")
-    assert "[real file](../../nodes/1-1.md)" in intent_index
+    assert "## Active" in index
+    assert "## Distance 1 — children" in index
+    assert "## Distance 2" in index
+    assert index.index("## Active") < index.index("## Distance 1 — children")
+    assert index.index("## Distance 1 — children") < index.index("## Distance 2")
+    assert "[Title of 1-1](1-1.md)" in index
+    assert "[real file](../nodes/1-1.md)" in index
+    assert "[Title of 4-1](4-1.md)" in index
 
-    claims = (out / "01-claims" / "INDEX.md").read_text(encoding="utf-8")
-    assert claims.startswith("---\nnodes: ../../nodes\n---\n")
-    assert "[nodes/](../../nodes/)" in claims
-    assert "[real file](../../nodes/2-1.md)" in claims
-    assert (out / "01-claims" / "../../nodes").resolve() == (tmp_path / "nodes").resolve()
+    refs = (out / "REFS.md").read_text(encoding="utf-8")
+    assert refs.startswith("<!-- GENERATED FILE")
+    assert "# References — view 1-1" in refs
+    assert "`1-1.md` | 1-1 | active | 0 |" in refs
+    assert "`4-1.md` | 4-1 | - | 2 |" in refs
 
-    agents = (out / "AGENTS.md").read_text(encoding="utf-8")
-    assert "[nodes/](../nodes/)" in agents
+
+def test_work_cycle_appears_once_at_minimum_distance(write, tmp_path):
+    _cycle(write, tmp_path)
+    out = tmp_path / "work"
+    result = api.work(tmp_path, "1-1", out)
+
+    assert result.nodes == 4
+    assert result.symlinks == 4
+    refs = (out / "REFS.md").read_text(encoding="utf-8")
+    assert refs.count("| 3-1 |") == 1
+    # 3-1 is a neighbour of the anchor (3 -> 1), so it stays at distance 1.
+    assert "| 3-1 | parent | 1 |" in refs
+    assert "| 4-1 | - | 2 |" in refs
+    index = (out / "INDEX.md").read_text(encoding="utf-8")
+    assert index.count("[Title of 3-1]") == 1
+    assert "## Distance 1 — parents" in index
+    assert api.work(tmp_path, "1-1", out, status=True).ok
 
 
 def test_work_cli_builds_the_same_tree(write, tmp_path, capsys):
@@ -87,14 +125,14 @@ def test_work_cli_builds_the_same_tree(write, tmp_path, capsys):
     assert main(["work", "1-1", "--root", str(tmp_path)]) == 0
     output = capsys.readouterr().out
     assert "4 nodes, 4 symlinks" in output
-    assert (out / "01-claims" / "2-1.md").is_symlink()
+    assert (out / "2-1.md").is_symlink()
 
 
 def test_write_through_edits_the_store_file(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
-    dest = out / "01-claims" / "2-1.md"
+    dest = out / "2-1.md"
     dest.write_text("edited through the link\n", encoding="utf-8")
     assert (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8") == (
         "edited through the link\n"
@@ -112,15 +150,8 @@ def test_status_is_clean_after_build(write, tmp_path):
 
 def test_status_inspects_the_areas_view_not_the_requested_ref(write, tmp_path):
     nodes = _tree(write, tmp_path)
-    write(
-        nodes,
-        1,
-        version=2,
-        links=[{"to": "2-2", "type": "breaks_down"}],
-        band="intent",
-        band_layout="flat",
-    )
-    write(nodes, 2, version=2, band="claims")
+    write(nodes, 1, version=2, links=[{"to": "2-2", "type": "breaks_down"}])
+    write(nodes, 2, version=2)
     (tmp_path / "ROOT").write_text("1-1\n", encoding="utf-8")
 
     built = api.work(tmp_path, "1-1")
@@ -157,7 +188,7 @@ def test_area_and_edit_path_are_read_only(write, tmp_path):
         out / "INDEX.md",
         out / "REFS.md",
         out / "AGENTS.md",
-        out / "01-claims" / "2-1.md",
+        out / "2-1.md",
     ]
     before = {
         path: (path.stat().st_mtime_ns, path.read_bytes()) for path in watched
@@ -166,7 +197,7 @@ def test_area_and_edit_path_are_read_only(write, tmp_path):
     current = area(tmp_path)
     assert current.out == out
     assert current.ref == "1-1"
-    assert edit_path(tmp_path, "2") == out / "01-claims" / "2-1.md"
+    assert edit_path(tmp_path, "2") == out / "2-1.md"
 
     after = {
         path: (path.stat().st_mtime_ns, path.read_bytes()) for path in watched
@@ -178,7 +209,7 @@ def test_edit_path_returns_the_expected_path_without_building(write, tmp_path):
     _tree(write, tmp_path)
     api.work(tmp_path, "1-1")
     out = (tmp_path / "bd_work").resolve()
-    dest = out / "01-claims" / "2-1.md"
+    dest = out / "2-1.md"
     dest.unlink()
     from bd_tree.work import edit_path
 
@@ -191,15 +222,9 @@ def test_edit_path_rejects_an_out_of_view_ref(write, tmp_path):
     from bd_tree.work import edit_path
 
     nodes = tmp_path / "nodes"
-    write(
-        nodes,
-        1,
-        links=[{"to": "2-1", "type": "breaks_down"}],
-        band="intent",
-        band_layout="flat",
-    )
-    write(nodes, 2, band="claims")
-    write(nodes, 9, band="outside")
+    write(nodes, 1, links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2)
+    write(nodes, 9)
     api.work(tmp_path, "1-1")
 
     with pytest.raises(NavigationError) as caught:
@@ -222,23 +247,23 @@ def test_status_reports_a_detached_file(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
-    dest = out / "01-claims" / "2-1.md"
+    dest = out / "2-1.md"
     original = (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8")
     dest.unlink()
     dest.write_text(original + "\nlocal note\n", encoding="utf-8")
 
     status = api.work(tmp_path, "1-1", out, status=True)
     assert not status.ok
-    assert _entry(status, "01-claims/2-1.md").status == "detached"
-    assert _entry(status, "01-claims/2-1.md").ref == "2-1"
-    assert _entry(status, "00-intent/1-1.md").status == "ok"
+    assert _entry(status, "2-1.md").status == "detached"
+    assert _entry(status, "2-1.md").ref == "2-1"
+    assert _entry(status, "1-1.md").status == "ok"
 
 
 def test_writeback_restores_store_and_relinks(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
-    dest = out / "01-claims" / "2-1.md"
+    dest = out / "2-1.md"
     edited = (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8") + "\nlocal note\n"
     dest.unlink()
     dest.write_text(edited, encoding="utf-8")
@@ -282,7 +307,6 @@ def test_clean_rebuilds_without_touching_store_files(write, tmp_path):
     )
     assert result.symlinks == 4
     assert (out / "1-1.md").is_symlink()
-    assert not (out / "00-intent" / "1-1.md").exists()
     store_after = {
         path.name: path.read_bytes() for path in (tmp_path / "nodes").glob("*.md")
     }
@@ -295,73 +319,56 @@ def test_default_out_is_the_single_project_work_area(write, tmp_path):
     expected = (tmp_path / "bd_work").resolve()
     assert result.out == expected
     assert expected.is_dir()
-    assert (expected / "01-claims" / "2-1.md").is_symlink()
+    assert (expected / "2-1.md").is_symlink()
 
 
 def test_default_out_for_hidden_store_is_project_bd_work(write, tmp_path):
     store = tmp_path / ".bd_tree" / "nodes"
-    write(
-        store,
-        1,
-        links=[{"to": "2-1", "type": "breaks_down"}],
-        band="intent",
-        band_layout="flat",
-    )
-    write(store, 2, band="claims")
+    write(store, 1, links=[{"to": "2-1", "type": "breaks_down"}])
+    write(store, 2)
     result = api.work(tmp_path, "1-1")
     expected = (tmp_path / "bd_work").resolve()
     assert result.out == expected
-    assert (expected / "00-intent" / "1-1.md").is_symlink()
-    assert (expected / "00-intent" / "1-1.md").resolve() == (store / "1-1.md").resolve()
+    assert (expected / "1-1.md").is_symlink()
+    assert (expected / "1-1.md").resolve() == (store / "1-1.md").resolve()
 
 
 def test_ref_switch_replaces_the_same_work_area(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(
-        nodes,
-        1,
-        version=1,
-        links=[{"to": "2-1", "type": "breaks_down"}],
-        band="intent",
-        band_layout="flat",
-    )
-    write(nodes, 2, version=1, band="claims")
-    write(
-        nodes,
-        1,
-        version=2,
-        links=[{"to": "2-2", "type": "breaks_down"}],
-        band="intent",
-    )
-    write(nodes, 2, version=2, band="claims")
+    write(nodes, 1, version=1, links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2, version=1)
+    write(nodes, 1, version=2, links=[{"to": "2-2", "type": "breaks_down"}])
+    write(nodes, 2, version=2)
 
     first = api.work(tmp_path, "1-1")
     out = first.out
     assert out == (tmp_path / "bd_work").resolve()
-    old_link = out / "00-intent" / "1-1.md"
+    old_link = out / "1-1.md"
     assert old_link.is_symlink()
     assert old_link.resolve() == (nodes / "1-1.md").resolve()
 
     second = api.work(tmp_path, "1-2")
 
     assert second.out == out
-    assert not (out / "00-intent" / "1-1.md").is_symlink()
-    assert not (out / "00-intent" / "1-1.md").exists()
-    assert not (out / "01-claims" / "2-1.md").is_symlink()
-    assert (out / "00-intent" / "1-2.md").resolve() == (nodes / "1-2.md").resolve()
-    assert (out / "01-claims" / "2-2.md").resolve() == (nodes / "2-2.md").resolve()
+    assert not (out / "1-1.md").is_symlink()
+    assert not (out / "1-1.md").exists()
+    assert not (out / "2-1.md").is_symlink()
+    assert (out / "1-2.md").resolve() == (nodes / "1-2.md").resolve()
+    assert (out / "2-2.md").resolve() == (nodes / "2-2.md").resolve()
     refs = (out / "REFS.md").read_text(encoding="utf-8")
     index = (out / "INDEX.md").read_text(encoding="utf-8")
     agents = (out / "AGENTS.md").read_text(encoding="utf-8")
     assert "view 1-2" in refs and "1-1" not in refs
-    assert "# View 1-2" in index and "1-1" not in index
+    refs_body = refs.split("# References", 1)[1]
+    assert "1-1" not in refs_body
+    assert "# View 1-2" in index
     assert "view `1-2`" in agents
     assert api.work(tmp_path, "1-2", status=True).ok
 
 
 def test_unexpected_store_symlink_is_cleaned_without_refs_manifest(write, tmp_path):
     _tree(write, tmp_path)
-    write(tmp_path / "nodes", 5, band="outside")
+    write(tmp_path / "nodes", 5)
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
     (out / "REFS.md").unlink()
@@ -381,27 +388,14 @@ def test_detached_file_blocks_a_ref_switch_until_clean(write, tmp_path):
     from bd_tree.errors import ExportError
 
     nodes = tmp_path / "nodes"
-    write(
-        nodes,
-        1,
-        version=1,
-        links=[{"to": "2-1", "type": "breaks_down"}],
-        band="intent",
-        band_layout="flat",
-    )
-    write(nodes, 2, version=1, band="claims")
-    write(
-        nodes,
-        1,
-        version=2,
-        links=[{"to": "2-2", "type": "breaks_down"}],
-        band="intent",
-    )
-    write(nodes, 2, version=2, band="claims")
+    write(nodes, 1, version=1, links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2, version=1)
+    write(nodes, 1, version=2, links=[{"to": "2-2", "type": "breaks_down"}])
+    write(nodes, 2, version=2)
 
     api.work(tmp_path, "1-1")
     out = tmp_path / "bd_work"
-    dest = out / "00-intent" / "1-1.md"
+    dest = out / "1-1.md"
     dest.unlink()
     dest.write_text("detached\n", encoding="utf-8")
 
@@ -412,155 +406,41 @@ def test_detached_file_blocks_a_ref_switch_until_clean(write, tmp_path):
     assert dest.read_text(encoding="utf-8") == "detached\n"
 
     api.work(tmp_path, "1-2", clean=True)
-    assert not (out / "00-intent" / "1-1.md").exists()
-    assert (out / "00-intent" / "1-2.md").is_symlink()
+    assert not (out / "1-1.md").exists()
+    assert (out / "1-2.md").is_symlink()
 
 
-def test_path_template_still_applies(write, tmp_path):
+def test_path_template_uses_distance_and_ref(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "templated"
-    api.work(tmp_path, "1-1", out, path_template="{band}/{ref}.md")
-    assert (out / "intent" / "1-1.md").is_symlink()
-    assert (out / "claims" / "2-1.md").is_symlink()
-    assert (out / "evidence" / "4-1.md").is_symlink()
-    assert "`claims/2-1.md`" in (out / "REFS.md").read_text(encoding="utf-8")
-
-
-def test_changing_name_removes_the_old_link_in_one_rebuild(write, tmp_path):
-    nodes = tmp_path / "nodes"
-    write(
-        nodes,
-        1,
-        links=[{"to": "2-1", "type": "breaks_down"}],
-        band="dir",
-        band_layout="flat",
-        name="a",
+    api.work(
+        tmp_path, "1-1", out, path_template="{distance}-{ref}.md"
     )
-    write(nodes, 2, band="claims", name="2-1")
+    assert (out / "0-1-1.md").is_symlink()
+    assert (out / "1-2-1.md").is_symlink()
+    assert (out / "1-3-1.md").is_symlink()
+    assert (out / "2-4-1.md").is_symlink()
+    assert "`1-2-1.md`" in (out / "REFS.md").read_text(encoding="utf-8")
+
+
+def test_front_matter_name_does_not_change_the_link(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2-1", "type": "breaks_down"}], name="a")
+    write(nodes, 2, name="b")
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
-    assert (out / "00-dir" / "a.md").is_symlink()
 
-    write(
-        nodes,
-        1,
-        links=[{"to": "2-1", "type": "breaks_down"}],
-        band="dir",
-        band_layout="flat",
-        name="b",
-    )
-    api.work(tmp_path, "1-1", out)
-
-    assert (out / "00-dir" / "b.md").is_symlink()
-    assert not (out / "00-dir" / "a.md").is_symlink()
-    assert not (out / "00-dir" / "a.md").exists()
-    assert api.work(tmp_path, "1-1", out, status=True).ok
+    assert (out / "1-1.md").is_symlink()
+    assert (out / "2-1.md").is_symlink()
+    assert not (out / "a.md").exists()
+    assert not (out / "b.md").exists()
 
 
-def test_mixed_placement_produces_mixed_paths_and_rebuild_idempotently(write, tmp_path):
-    nodes = tmp_path / "nodes"
-    write(
-        nodes,
-        1,
-        links=[
-            {"to": "2-1", "type": "breaks_down"},
-            {"to": "3-1", "type": "breaks_down"},
-        ],
-        band="intent",
-        band_layout="flat",
-    )
-    write(nodes, 2, band="claims", name=None)  # no name -> title slug
-    write(
-        nodes,
-        3,
-        band="review",
-        name=None,
-        home="deep/review/3.md",
-        title="Deep Review",
-    )
-    out = tmp_path / "work"
-
-    result = api.work(tmp_path, "1-1", out)
-
-    assert result.symlinks == 3
-    expected = {
-        "00-intent/1-1.md": nodes / "1-1.md",
-        "01-claims/2-1-title-of-2-1.md": nodes / "2-1.md",
-        "02-review/3-1-deep-review.md": nodes / "3-1.md",
-    }
-    for rel, source in expected.items():
-        dest = out / rel
-        assert dest.is_symlink()
-        assert dest.resolve() == source.resolve()
-        assert not os.path.isabs(os.readlink(dest))
-    assert api.work(tmp_path, "1-1", out, status=True).ok
-
-    before = _link_count(out)
-    again = api.work(tmp_path, "1-1", out)
-
-    assert again.symlinks == 3
-    assert _link_count(out) == before
-    assert api.work(tmp_path, "1-1", out, status=True).ok
-
-
-def test_band_subpath_builds_nested_named_work_area(write, tmp_path):
-    nodes = tmp_path / "nodes"
-    write(
-        nodes,
-        1,
-        links=[{"to": "2-1", "type": "breaks_down"}],
-        band="intent",
-        band_layout="flat",
-        title="Root Intent",
-        name="root-intent",
-    )
-    write(
-        nodes,
-        2,
-        band="intent",
-        subpath="suggested",
-        order=1,
-        title="New Idea",
-        name="new-idea",
-    )
-    out = tmp_path / "work"
-
-    result = api.work(tmp_path, "1-1", out)
-
-    assert result.symlinks == 2
-    root_link = out / "00-intent" / "root-intent.md"
-    idea_link = out / "00-intent" / "suggested" / "new-idea.md"
-    assert root_link.is_symlink() and root_link.resolve() == (nodes / "1-1.md").resolve()
-    assert idea_link.is_symlink() and idea_link.resolve() == (nodes / "2-1.md").resolve()
-    assert api.work(tmp_path, "1-1", out, status=True).ok
-
-    before = _link_count(out)
-    api.work(tmp_path, "1-1", out)
-    assert _link_count(out) == before
-    assert api.work(tmp_path, "1-1", out, status=True).ok
-
-    from bd_tree.work import edit_path
-
-    assert edit_path(tmp_path, "2", out) == idea_link
-    index = (out / "INDEX.md").read_text(encoding="utf-8")
-    band_index = (out / "00-intent" / "INDEX.md").read_text(encoding="utf-8")
-    nested_index = (out / "00-intent" / "suggested" / "INDEX.md").read_text(
-        encoding="utf-8"
-    )
-    refs = (out / "REFS.md").read_text(encoding="utf-8")
-    assert "[intent](00-intent/INDEX.md)" in index
-    assert "[Root Intent](root-intent.md)" in band_index
-    assert "[New Idea](new-idea.md)" in nested_index
-    assert "`00-intent/suggested/new-idea.md` | 2-1 |" in refs
-
-
-def test_status_and_writeback_use_refs_manifest_when_placement_changes(
-    write, tmp_path
-):
+def test_status_and_writeback_use_refs_manifest_when_ref_changes(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
-    dest = out / "01-claims" / "2-1.md"
+    dest = out / "2-1.md"
     dest.unlink()
     dest.write_text(
         "---\n"
@@ -568,8 +448,6 @@ def test_status_and_writeback_use_refs_manifest_when_placement_changes(
         "name: renamed\n"
         "title: Moved\n"
         "summary: s\n"
-        "band: claims\n"
-        "order: 0\n"
         "links: [{to: 4-1, type: breaks_down}]\n"
         "---\n"
         "new body\n",
@@ -577,7 +455,7 @@ def test_status_and_writeback_use_refs_manifest_when_placement_changes(
     )
 
     status = api.work(tmp_path, "1-1", out, status=True)
-    entry = _entry(status, "01-claims/2-1.md")
+    entry = _entry(status, "2-1.md")
     assert entry.ref == "2-1"
     assert entry.status == "detached"
     assert not status.ok
@@ -602,8 +480,8 @@ def test_two_work_dirs_share_the_same_nodes(write, tmp_path):
     api.work(tmp_path, "1-1", a)
     api.work(tmp_path, "2-1", b)
 
-    through_b = b / "01-claims" / "2-1.md"
-    through_a = a / "01-claims" / "2-1.md"
+    through_b = b / "2-1.md"
+    through_a = a / "2-1.md"
     assert through_b.is_symlink() and through_a.is_symlink()
     through_b.write_text("edited through b\n", encoding="utf-8")
 
@@ -631,40 +509,39 @@ def test_refresh_repairs_missing_and_wrong_target_links(write, tmp_path):
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
 
-    (out / "01-claims" / "2-1.md").unlink()
-    wrong = out / "02-evidence" / "4-1.md"
+    (out / "2-1.md").unlink()
+    wrong = out / "4-1.md"
     wrong.unlink()
-    wrong.symlink_to(os.path.relpath(tmp_path / "nodes" / "3-1.md", wrong.parent))
+    wrong.symlink_to(os.path.relpath(tmp_path / "nodes" / "3-1.md", out))
 
     result = api.work(tmp_path, "1-1", out)
 
     assert result.symlinks == 4
-    assert (out / "01-claims" / "2-1.md").is_symlink()
-    assert (out / "02-evidence" / "4-1.md").resolve() == (
-        tmp_path / "nodes" / "4-1.md"
-    ).resolve()
+    assert (out / "2-1.md").is_symlink()
+    assert (out / "4-1.md").resolve() == (tmp_path / "nodes" / "4-1.md").resolve()
     assert api.work(tmp_path, "1-1", out, status=True).ok
 
 
 def test_refresh_removes_stale_ref_links(write, tmp_path):
     _tree(write, tmp_path)
+    write(tmp_path / "nodes", 5)
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
 
-    result = api.work(tmp_path, "2-1", out)
+    result = api.work(tmp_path, "5-1", out)
 
-    assert result.ref == "2-1"
-    assert not (out / "00-intent" / "1-1.md").exists()
-    assert not (out / "03-review" / "3-1.md").exists()
-    assert (out / "01-claims" / "2-1.md").is_symlink()
-    assert api.work(tmp_path, "2-1", out, status=True).ok
+    assert result.ref == "5-1"
+    assert not (out / "1-1.md").exists()
+    assert not (out / "3-1.md").exists()
+    assert (out / "5-1.md").is_symlink()
+    assert api.work(tmp_path, "5-1", out, status=True).ok
 
 
 def test_detached_file_blocks_refresh_until_writeback(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "bd_work"
     api.work(tmp_path, "1-1")
-    dest = out / "01-claims" / "2-1.md"
+    dest = out / "2-1.md"
     original = dest.read_text(encoding="utf-8")
     dest.unlink()
     dest.write_text(original + "detached edit\n", encoding="utf-8")
@@ -752,7 +629,7 @@ def test_force_overwrites_a_detached_file(write, tmp_path):
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
     store_before = (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8")
-    dest = out / "01-claims" / "2-1.md"
+    dest = out / "2-1.md"
     dest.unlink()
     dest.write_text("detached edit\n", encoding="utf-8")
 
@@ -768,7 +645,7 @@ def test_writeback_refuses_a_detached_file_without_frontmatter(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
-    dest = out / "01-claims" / "2-1.md"
+    dest = out / "2-1.md"
     dest.unlink()
     dest.write_text("body only\n", encoding="utf-8")
     before = (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8")
@@ -776,7 +653,7 @@ def test_writeback_refuses_a_detached_file_without_frontmatter(write, tmp_path):
     result = api.work(tmp_path, "1-1", out, writeback=True)
 
     assert result.written == 0
-    assert result.invalid == ["01-claims/2-1.md"]
+    assert result.invalid == ["2-1.md"]
     assert (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8") == before
     assert not dest.is_symlink()
 
@@ -795,14 +672,8 @@ def _run_git(cwd, *args):
 
 def _git_repo(write, tmp_path):
     repo = tmp_path / "repo"
-    write(
-        repo / "nodes",
-        1,
-        links=[{"to": "2-1", "type": "breaks_down"}],
-        band="intent",
-        band_layout="flat",
-    )
-    write(repo / "nodes", 2, band="claims")
+    write(repo / "nodes", 1, links=[{"to": "2-1", "type": "breaks_down"}])
+    write(repo / "nodes", 2)
     _run_git(repo, "init", "-q")
     _run_git(repo, "config", "user.name", "Test User")
     _run_git(repo, "config", "user.email", "test@example.com")
@@ -868,24 +739,24 @@ def test_write_through_is_visible_to_git_status(write, tmp_path):
     out = tmp_path / "work"
     api.work(repo, "1-1", out)
 
-    (out / "01-claims" / "2-1.md").write_text("edited through the link\n", encoding="utf-8")
+    (out / "2-1.md").write_text("edited through the link\n", encoding="utf-8")
 
     porcelain = _run_git(repo, "status", "--porcelain")
     assert "nodes/2-1.md" in porcelain
     assert "work/" not in porcelain
 
 
-def test_depth_limited_work_materializes_only_the_prefix(write, tmp_path):
+def test_depth_limited_work_materializes_only_the_rings(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "work"
     result = api.work(tmp_path, "1-1", out, depth=1)
 
     assert result.depth == 1 and result.view_ref == "1-1+1"
     assert result.nodes == 3 and result.symlinks == 3
-    assert (out / "00-intent" / "1-1.md").is_symlink()
-    assert (out / "01-claims" / "2-1.md").is_symlink()
-    assert (out / "03-review" / "3-1.md").is_symlink()
-    assert not (out / "02-evidence" / "4-1.md").exists()
+    assert (out / "1-1.md").is_symlink()
+    assert (out / "2-1.md").is_symlink()
+    assert (out / "3-1.md").is_symlink()
+    assert not (out / "4-1.md").exists()
     for name in ("REFS.md", "INDEX.md", "AGENTS.md"):
         text = (out / name).read_text(encoding="utf-8")
         assert "1-1+1" in text
@@ -908,12 +779,12 @@ def test_depth_limited_work_edit_path_hides_excluded_refs(write, tmp_path):
     current = area(tmp_path)
     assert current.ref == "1-1" and current.depth == 1
     assert current.view_ref == "1-1+1"
-    assert edit_path(tmp_path, "2") == out / "01-claims" / "2-1.md"
+    assert edit_path(tmp_path, "2") == out / "2-1.md"
     with pytest.raises(ExportError, match=r"current view 1-1\+1"):
         edit_path(tmp_path, "4")
 
 
-def test_full_work_restores_the_closure_and_drops_the_suffix(write, tmp_path):
+def test_full_work_restores_the_component_and_drops_the_suffix(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out, depth=1)
@@ -922,7 +793,7 @@ def test_full_work_restores_the_closure_and_drops_the_suffix(write, tmp_path):
 
     assert result.depth is None and result.view_ref == "1-1"
     assert result.nodes == 4
-    assert (out / "02-evidence" / "4-1.md").is_symlink()
+    assert (out / "4-1.md").is_symlink()
     refs = (out / "REFS.md").read_text(encoding="utf-8")
     index = (out / "INDEX.md").read_text(encoding="utf-8")
     agents = (out / "AGENTS.md").read_text(encoding="utf-8")
@@ -952,12 +823,12 @@ def test_switching_depth_removes_and_restores_stale_links(write, tmp_path):
 
     api.work(tmp_path, "1-1", out, depth=1)
     assert _link_count(out) == 3
-    assert not (out / "02-evidence" / "4-1.md").exists()
+    assert not (out / "4-1.md").exists()
     assert api.work(tmp_path, "1-1", out, status=True).ok
 
     api.work(tmp_path, "1-1", out)
     assert _link_count(out) == 4
-    assert (out / "02-evidence" / "4-1.md").is_symlink()
+    assert (out / "4-1.md").is_symlink()
     assert api.work(tmp_path, "1-1", out, status=True).ok
 
 
@@ -968,48 +839,24 @@ def test_depth_zero_materializes_the_root_only(write, tmp_path):
 
     assert result.view_ref == "1-1+0" and result.nodes == 1
     assert _link_count(out) == 1
-    assert (out / "00-intent" / "1-1.md").is_symlink()
-    assert not (out / "01-claims" / "2-1.md").exists()
+    assert (out / "1-1.md").is_symlink()
+    assert not (out / "2-1.md").exists()
 
 
-def test_depth_limited_work_keeps_band_subpath_folders(write, tmp_path):
-    nodes = tmp_path / "nodes"
-    write(
-        nodes,
-        1,
-        links=[{"to": "2-1", "type": "breaks_down"}],
-        band="a",
-        band_layout="flat",
-        title="Root",
-        name="root",
-    )
-    write(
-        nodes,
-        2,
-        links=[{"to": "3-1", "type": "breaks_down"}],
-        band="a",
-        subpath="b",
-        order=1,
-        title="Middle",
-        name="middle",
-    )
-    write(nodes, 3, band="a", subpath="b", order=2, title="Leaf")
+def test_depth_limited_cycle_keeps_minimum_distance(write, tmp_path):
+    _cycle(write, tmp_path)
     out = tmp_path / "work"
 
     result = api.work(tmp_path, "1-1", out, depth=1)
 
     assert result.view_ref == "1-1+1"
-    assert (out / "00-a" / "root.md").is_symlink()
-    assert (out / "00-a" / "b" / "middle.md").is_symlink()
-    assert not (out / "00-a" / "b" / "3-1-leaf.md").exists()
-    assert api.work(tmp_path, out=out, status=True).ok
-
-    from bd_tree.work import edit_path
-
-    assert edit_path(tmp_path, "2", out) == out / "00-a" / "b" / "middle.md"
+    assert _link_count(out) == 3
+    assert (out / "3-1.md").is_symlink()
+    assert not (out / "4-1.md").exists()
+    assert api.work(tmp_path, "1-1", out, status=True).ok
 
 
-def test_export_and_work_agree_on_band_paths(write, tmp_path):
+def test_export_and_work_agree_on_flat_paths(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(
         nodes,
@@ -1018,12 +865,10 @@ def test_export_and_work_agree_on_band_paths(write, tmp_path):
             {"to": "2-1", "type": "breaks_down"},
             {"to": "3-1", "type": "breaks_down"},
         ],
-        band="intent",
-        band_layout="flat",
         title="Root",
     )
-    write(nodes, 2, band="claims", name="named")
-    write(nodes, 3, band="review", title="Plain", name=None)
+    write(nodes, 2, name="named")
+    write(nodes, 3, title="Plain")
     graph = tmp_path / "graph"
     work = tmp_path / "work"
 
@@ -1040,100 +885,71 @@ def test_export_and_work_agree_on_band_paths(write, tmp_path):
         }
 
     assert relpaths(graph) == relpaths(work)
-    assert "01-claims/named.md" in relpaths(work)
-    assert "02-review/3-1-plain.md" in relpaths(work)
+    assert relpaths(work) == {"1-1.md", "2-1.md", "3-1.md"}
 
 
-def test_work_writes_nested_indexes_and_reports_a_subdir_stray(write, tmp_path):
+def test_work_writes_only_the_root_index(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
 
-    for rel in (
-        "INDEX.md",
-        "00-intent/INDEX.md",
-        "01-claims/INDEX.md",
-        "03-review/INDEX.md",
-        "02-evidence/INDEX.md",
-    ):
-        path = out / rel
-        assert path.is_file() and not path.is_symlink()
-    index = (out / "01-claims" / "INDEX.md").read_text(encoding="utf-8")
-    assert "# 01-claims/" in index
-    assert "[Title of 2-1](2-1.md)" in index
+    indexes = sorted(out.rglob("INDEX.md"))
+    assert indexes == [out / "INDEX.md"]
+    assert (out / "INDEX.md").is_file() and not (out / "INDEX.md").is_symlink()
     assert api.work(tmp_path, "1-1", out, status=True).ok
 
-    stray = out / "01-claims" / "stray.md"
+    stray = out / "stray.md"
     stray.write_text("not a view node\n", encoding="utf-8")
     status = api.work(tmp_path, "1-1", out, status=True)
     assert not status.ok
-    assert _entry(status, "01-claims/stray.md").status == "stray"
+    assert _entry(status, "stray.md").status == "stray"
 
     stray.unlink()
     assert api.work(tmp_path, "1-1", out, status=True).ok
 
 
-def test_work_nested_index_name_collision_is_refused(write, tmp_path):
+def test_work_index_name_collision_is_refused(write, tmp_path):
     from bd_tree.errors import ExportError
 
-    nodes = tmp_path / "nodes"
-    write(
-        nodes,
-        1,
-        links=[{"to": "2-1", "type": "breaks_down"}],
-        band="intent",
-        band_layout="flat",
-    )
-    write(nodes, 2, band="claims", name="INDEX", title="Clash")
+    _tree(write, tmp_path)
     out = tmp_path / "work"
     with pytest.raises(ExportError, match="collides with generated"):
-        api.work(tmp_path, "1-1", out)
+        api.work(tmp_path, "1-1", out, path_template="INDEX.md")
 
 
-def test_work_rebuild_is_byte_identical_for_every_index(write, tmp_path):
+def test_work_rebuild_is_byte_identical_for_generated_files(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
     before = {
         path.relative_to(out).as_posix(): path.read_bytes()
-        for path in out.rglob("INDEX.md")
+        for path in (out / "INDEX.md", out / "REFS.md", out / "AGENTS.md")
     }
 
     api.work(tmp_path, "1-1", out)
 
     after = {
         path.relative_to(out).as_posix(): path.read_bytes()
-        for path in out.rglob("INDEX.md")
+        for path in (out / "INDEX.md", out / "REFS.md", out / "AGENTS.md")
     }
     assert after == before
 
 
-def test_switching_views_removes_indexes_for_old_directories(write, tmp_path):
+def test_switching_components_removes_old_links_and_keeps_one_index(write, tmp_path):
     nodes = tmp_path / "nodes"
-    write(
-        nodes,
-        1,
-        version=1,
-        links=[{"to": "2-1", "type": "breaks_down"}],
-        band="intent",
-        band_layout="flat",
-    )
-    write(nodes, 2, version=1, band="claims")
-    write(
-        nodes,
-        1,
-        version=2,
-        links=[{"to": "2-2", "type": "breaks_down"}],
-        band="intent",
-    )
-    write(nodes, 2, version=2, band="evidence")
+    write(nodes, 1, version=1, links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2, version=1)
+    write(nodes, 1, version=2, links=[{"to": "2-2", "type": "breaks_down"}])
+    write(nodes, 2, version=2)
+    write(nodes, 7)
 
     api.work(tmp_path, "1-1")
     out = (tmp_path / "bd_work").resolve()
-    assert (out / "01-claims" / "INDEX.md").is_file()
 
-    api.work(tmp_path, "1-2")
+    api.work(tmp_path, "7-1")
 
-    assert not (out / "01-claims").exists()
-    assert (out / "02-evidence" / "INDEX.md").is_file()
-    assert api.work(tmp_path, "1-2", status=True).ok
+    assert not (out / "1-1.md").exists()
+    assert not (out / "2-1.md").exists()
+    assert (out / "7-1.md").is_symlink()
+    assert sorted(out.rglob("INDEX.md")) == [out / "INDEX.md"]
+    assert api.work(tmp_path, "7-1", status=True).ok

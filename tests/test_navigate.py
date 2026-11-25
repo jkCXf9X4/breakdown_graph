@@ -81,13 +81,39 @@ def test_show_root_only_by_default(write, tmp_path):
     assert "child body" not in out
 
 
-def test_show_depth_two_includes_grandchildren_in_order(write, tmp_path):
+def test_show_depth_two_uses_undirected_bfs_rings(write, tmp_path):
     store = _tree(write, tmp_path)
     out = render_show(store, "1-1", depth=2)
-    assert out.index("## 2-1  Child") < out.index("### 4-1  Grandchild")
-    assert out.index("### 4-1  Grandchild") < out.index("## 3-1  Sibling")
+    # Ring 1 is the two children, ring 2 the grandchild.
+    assert out.index("## 2-1  Child") < out.index("## 3-1  Sibling")
+    assert out.index("## 3-1  Sibling") < out.index("### 4-1  Grandchild")
     assert "child body" in out
     assert "grandchild body" in out
+
+
+def test_show_direction_labels(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, title="Root", links=[{"to": "2", "type": "breaks_down"}])
+    write(nodes, 3, title="Parent", links=[{"to": "1", "type": "supports"}])
+    write(
+        nodes,
+        4,
+        title="Peer",
+        links=[
+            {
+                "to": "1",
+                "type": "verifies",
+                "symmetric": True,
+                "inverse": "verified_by",
+            }
+        ],
+    )
+    write(nodes, 2, title="Child")
+    store = load(tmp_path)
+    out = render_show(store, "1-1", depth=1)
+    assert "## 2-1  Child  →" in out
+    assert "## 3-1  Parent  ←" in out
+    assert "## 4-1  Peer  ↔" in out
 
 
 def test_show_no_body_and_max_chars_and_fields(write, tmp_path):
@@ -136,11 +162,11 @@ def test_show_auto_cap_by_depth(write, tmp_path):
     assert "xxxxxxxxxx ... [truncated; bd show 1-1]" in explicit_cap
 
 
-def test_path_command_prints_breadcrumb(write, tmp_path, capsys):
+def test_path_command_prints_shortest_path_with_arrows(write, tmp_path, capsys):
     _tree(write, tmp_path)
     assert main(["path", "4", "--root", str(tmp_path)]) == 0
     assert capsys.readouterr().out == (
-        "1-1  Root\n2-1  Child\n4-1  Grandchild\n"
+        "1-1  Root\n→ 2-1  Child\n→ 4-1  Grandchild\n"
     )
 
 
@@ -152,13 +178,13 @@ def _linked_tree(write, tmp_path):
     return load(tmp_path)
 
 
-def test_show_links_footer_lists_authored_and_derived_edges(write, tmp_path):
+def test_show_links_footer_labels_direction(write, tmp_path):
     store = _linked_tree(write, tmp_path)
     assert "links:" not in render_show(store, "1-1", depth=1)
     out = render_show(store, "1-1", depth=1, links=True)
-    assert "- 1-1 -> 2-1  Child  (breaks_down)" in out
-    assert "- 2-1 -> 10-1  Decisions  (history)" in out
-    assert "- 2-1 <- 1-1  Root  (breaks_down)  [derived]" in out
+    assert "- 1-1 → 2-1  Child  (breaks_down)" in out
+    assert "- 2-1 → 10-1  Decisions  (history)" in out
+    assert "- 2-1 ← 1-1  Root  (breaks_down)" in out
 
 
 def test_show_links_footer_uses_the_target_type_for_a_scalar_link(write, tmp_path):
@@ -168,7 +194,7 @@ def test_show_links_footer_uses_the_target_type_for_a_scalar_link(write, tmp_pat
     write(nodes, 10, title="Decisions", type="decision")
     store = load(tmp_path)
     out = render_show(store, "1-1", depth=1, links=True)
-    assert "- 2-1 -> 10-1  Decisions  (decision)" in out
+    assert "- 2-1 → 10-1  Decisions  (decision)" in out
 
 
 def test_cli_show_links_flag(write, tmp_path, capsys):
@@ -178,19 +204,21 @@ def test_cli_show_links_flag(write, tmp_path, capsys):
     )
     out = capsys.readouterr().out
     assert "links:" in out
-    assert "- 2-1 -> 10-1  Decisions  (history)" in out
+    assert "- 2-1 → 10-1  Decisions  (history)" in out
 
 
 def test_graph_default_uses_root_file(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(nodes, 1, band="a", order=0, links=[{"to": "2", "type": "x"}])
-    write(nodes, 2, band="b", order=0)
-    write(nodes, 5, band="a", order=1, links=[{"to": "2", "type": "x"}])
+    write(nodes, 1, links=[{"to": "2", "type": "x"}])
+    write(nodes, 2)
+    write(nodes, 5, links=[{"to": "2", "type": "x"}])
     (tmp_path / "ROOT").write_text("5-1\n", encoding="utf-8")
     assert main(["graph", "--root", str(tmp_path)]) == 0
     out = capsys.readouterr().out
-    assert "[5-1]" in out
-    assert "[1-1]" not in out
+    assert "## 0 — 5-1" in out
+    assert "## 0 — 1-1" not in out
+    assert "[1-1]" in out
+    assert "## 2" in out
 
 
 def test_root_command_show_set_clear(write, tmp_path, capsys):
@@ -326,7 +354,7 @@ def test_find_regex_flag_uses_regex(write, tmp_path, capsys):
 
 def test_path_root_to_leaf(write, tmp_path):
     store = _tree(write, tmp_path)
-    assert render_path(store, "4-1") == "1-1  Root\n2-1  Child\n4-1  Grandchild"
+    assert render_path(store, "4-1") == "1-1  Root\n→ 2-1  Child\n→ 4-1  Grandchild"
 
 
 def test_path_version_ref(write, tmp_path):
@@ -342,10 +370,44 @@ def test_path_version_ref(write, tmp_path):
         body="root body\n",
     )
     store = load(tmp_path)
-    assert render_path(store, "2-2") == "1-1  Root\n2-2  Child v2"
+    assert render_path(store, "2-2") == "1-1  Root\n→ 2-2  Child v2"
 
 
-def test_symmetric_master_does_not_define_path_or_view_roots(write, tmp_path):
+def test_path_follows_undirected_neighbours_and_peers(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(
+        nodes,
+        1,
+        title="Root",
+        links=[
+            {
+                "to": "2",
+                "type": "verifies",
+                "symmetric": True,
+                "inverse": "verified_by",
+            }
+        ],
+    )
+    write(nodes, 2, title="Claim", links=[{"to": "3", "type": "supports"}])
+    write(nodes, 3, title="Evidence")
+    store = load(tmp_path)
+
+    assert render_path(store, "2-1") == "1-1  Root\n↔ 2-1  Claim"
+    assert render_path(store, "3-1") == (
+        "1-1  Root\n↔ 2-1  Claim\n→ 3-1  Evidence"
+    )
+
+
+def test_path_rejects_a_ref_in_another_component(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, title="Root")
+    write(nodes, 5, title="Elsewhere")
+    store = load(tmp_path)
+    with pytest.raises(NavigationError, match="no undirected path"):
+        render_path(store, "5-1")
+
+
+def test_symmetric_master_is_a_peer_not_an_ancestry_edge(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(
         nodes,
@@ -363,16 +425,16 @@ def test_symmetric_master_does_not_define_path_or_view_roots(write, tmp_path):
     write(nodes, 2, title="Claim")
     store = load(tmp_path)
 
-    assert render_path(store, "2-1") == "2-1  Claim"
-    assert [node.ref for node in view_roots(store)] == ["1-1", "2-1"]
+    assert render_path(store, "2-1") == "1-1  Root\n↔ 2-1  Claim"
+    assert [node.ref for node in view_roots(store)] == ["1-1"]
     footer = render_show(store, "2-1", links=True)
-    assert "- 2-1 -> 1-1  Root  (verified_by)  [derived]" in footer
+    assert "- 2-1 ↔ 1-1  Root  (verifies)" in footer
 
 
 # -- views -------------------------------------------------------------------
 
 
-def test_view_roots_lists_each_link_root(write, tmp_path):
+def test_view_roots_lists_one_representative_per_component(write, tmp_path):
     store = _two_trees(write, tmp_path)
     assert [node.ref for node in view_roots(store)] == ["1-1", "5-1"]
 
@@ -384,4 +446,13 @@ def test_view_roots_lists_each_link_root(write, tmp_path):
         links=[{"to": "6", "type": "breaks_down"}],
     )
     store = load(tmp_path)
-    assert [node.ref for node in view_roots(store)] == ["1-1", "5-1", "5-2"]
+    # 5-1 and 5-2 are peers of the same component through 6-1.
+    assert [node.ref for node in view_roots(store)] == ["1-1", "5-1"]
+
+
+def test_view_roots_survive_a_cycle(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2", "type": "x"}])
+    write(nodes, 2, links=[{"to": "1", "type": "x"}])
+    store = load(tmp_path)
+    assert [node.ref for node in view_roots(store)] == ["1-1"]

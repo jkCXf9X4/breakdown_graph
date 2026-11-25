@@ -1,9 +1,9 @@
 """Structural validation over the full store and one link-closure view.
 
 Only structure is checked: filename grammar, id/filename agreement, duplicate
-refs, ref syntax in data, graph edges and bands, dangling links and size, plus
-the retired ``contains`` key.  Front-matter fields, link types and layers are
-never validated unless asked for with ``require``.
+refs, ref syntax in data, graph edges, dangling links and size, plus the retired
+``contains`` key.  Front-matter fields and link types are never
+validated unless asked for with ``require``.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ def path_problem(path: str) -> str | None:
 
 
 def default_root_ref(store: Store) -> str:
-    """Declared ``ROOT``, else the lowest topology root; ``1-1`` when empty."""
+    """Declared ``ROOT``, else the first component's representative; ``1-1``."""
     return store.root_ref or "1-1"
 
 
@@ -114,27 +114,6 @@ def _check_symmetric_links(store: Store, issues: list[Issue]) -> None:
                 node=key[0],
             )
         )
-
-
-def _check_band_order(store: Store, issues: list[Issue]) -> None:
-    """A ROOT ``band_order`` must be a YAML list; unknown band names are fine."""
-    root = store.root_ref
-    node = store.nodes.get(root) if root is not None else None
-    if node is None or "band_order" not in node.meta:
-        return
-    value = node.meta.get("band_order")
-    if isinstance(value, list):
-        return
-    issues.append(
-        Issue(
-            "error",
-            "invalid-band-order",
-            f"node '{node.ref}' has non-list 'band_order' {value!r}; expected a "
-            "list of band names",
-            node=node.ref,
-            path=str(node.path.relative_to(store.root)),
-        )
-    )
 
 
 def _check_freshness(view: View, issues: list[Issue]) -> None:
@@ -263,7 +242,6 @@ def check(
     issues: list[Issue] = list(store.issues)
     _check_contains_removed(store, issues)
     _check_symmetric_links(store, issues)
-    _check_band_order(store, issues)
 
     from .graph import audit as graph_audit
     from .graph import build_graph

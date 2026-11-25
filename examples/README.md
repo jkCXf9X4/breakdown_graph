@@ -2,53 +2,51 @@
 
 This folder is a complete `bd` project and the default store (`.bd_tree/`,
 `ROOT` `1-1`). The store has twelve nodes and no `contains`: `links` is the one
-child relation. Every node declares its outgoing edges as full
-refs in `links`, and every node carries a `band` plus an optional `subpath`;
-no node declares `stage`, so the store is in relative mode and the band order
-is derived from the cross-band edges. Here the bands are `intent`, `breakdown`,
-`claims`, `verification`, and `operation`; the subpaths add `structural`,
-`verification`, `fan-in`, and `fan-in2` below their bands, so the links order
-the bands `intent` → `breakdown` → `claims` → `verification` → `operation`.
-Out-edges are authored on the parent, while in-edges are derived by reversing
-them, so a node such as `4-1` can have two parents and still appear once. See
-[`docs/GRAPH.md`](../docs/GRAPH.md) for the model and
-[`docs/GRAPH-LAYOUT.md`](../docs/GRAPH-LAYOUT.md) for the layout algorithm.
+edge relation. Every node declares its outgoing edges as full refs in `links`,
+and in-edges are derived by reversing them. There is no placement key: the view
+is the weakly connected component of the anchor, and ordering is the undirected
+BFS hop count from that anchor.
 
-Relative mode requires a non-empty `band` on every node (`layer: band/subpath`
-is the older shorthand); a missing or invalid one is `graph-layer-missing` /
-`graph-layer-invalid`. The `<NN>` folder prefix is the derived top-level band
-position, so inserting a band before others renumbers the later folder paths
-without renumbering any node.
+The store is one component. From `1-1` the rings are:
 
-The example has no `group` key. Subfolders come from `subpath`:
-`4-1` has `band: claims` plus `subpath: structural` and lands in
-`02-claims/structural/`; `7-1` adds `subpath: verification`; `8-1` adds
-`subpath: fan-in`; `11-1` adds `subpath: fan-in2`. `12-1` declares only
-`band: verification` and sits in `03-verification/` itself as the core: the
-claim sub-bands feed it and it fans out to the two check subfolders. A node
-labels itself, so nothing is inherited; `4-1` has two parents and still lives only under
-`02-claims/structural/`, which is the point of the example. Within the
-verification band, `order` 0, 1, 2 positions the core, `fan-in`, and `fan-in2`
-across their different folders. `group` and `section` are ordinary metadata and
-never place a node.
+| Ring | Members |
+| --- | --- |
+| 0 | `1-1` |
+| 1 | `2-1`, `3-1` |
+| 2 | `4-1`, `5-1`, `6-1`, `7-1` |
+| 3 | `8-1`, `12-1` |
+| 4 | `9-1`, `10-1`, `11-1` |
+
+`4-1` has two parents (`2-1` and `3-1`) and still appears once, in ring 2.
+`8-1` has several inbound edges and still appears once, in ring 3. `12-1`
+reaches `11-1` one hop later, which is why `11-1` is ring 4 while `12-1` is ring
+3. Direction is a label: ring 1 is split into children, parents, and peers, but
+membership is the whole component.
 
 ```sh
 bd audit                                  # 0 errors, 0 warnings
-bd graph                                  # text render from 1-1, band headings
+bd graph                                  # ring sections from 1-1
+bd graph 1-1 --depth 1                    # rings 0 and 1
+bd graph 1-1 --distance 2:3               # ring 0 plus rings 2 and 3
 bd graph --svg --out /tmp/bd-graph.svg    # rendered SVG (needs Graphviz)
 bd out 1-1                                # authored out-edges, sorted
 bd in 4-1                                 # derived in-edges for a two-parent node
-bd work 1-1                               # single work area, derived band layout
+bd path 10-1                              # shortest undirected chain from 1-1
+bd views                                  # one line per component
+bd work 1-1                               # single flat work area
 bd edit 4-1                               # path of 4-1 in the active view
 bd export graph --view 1-1 --out /tmp/bd-graph
 ```
 
-The `/tmp` output holds `00-intent/` through `04-operation/`, the subpath
-folders `02-claims/structural/`, `02-claims/verification/`,
-`03-verification/fan-in/`, and `03-verification/fan-in2/`, one `INDEX.md` per
-directory, and a root index; it is a read-only snapshot, never a work area.
-`bd_work/` is ignored by `examples/.gitignore`. `bd graph` labels each band
-`layer N — <name>`; the band number is the derived ordinal, not data.
+`bd work 1-1` writes `examples/bd_work/` as a flat directory: one symlink per
+node at its store basename (`1-1.md`, `2-1.md`, …), plus generated `INDEX.md`,
+`REFS.md`, and `AGENTS.md`. `INDEX.md` has `## Active`, `## Distance 1 — children`, then `## Distance 2`
+through `## Distance 4`. `REFS.md` is the
+path/ref/kind/distance/title table and its header names the active view.
+
+The `/tmp/bd-graph` export holds the same twelve node files plus one root
+`INDEX.md` with the same ring sections. It is a read-only snapshot, never a work
+area. `bd_work/` is ignored by `examples/.gitignore`.
 
 The commands assume the package is installed (`pip install -e '.[test]'` from
 the clone). From the repository root, `bd` finds this store through the committed

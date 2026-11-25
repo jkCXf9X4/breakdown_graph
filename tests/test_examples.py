@@ -1,4 +1,4 @@
-"""The committed example store is a clean graph example with the documented shape."""
+"""The committed example store is a clean undirected graph example."""
 
 from __future__ import annotations
 
@@ -16,36 +16,10 @@ from bd_tree.graph import (
 )
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
-BANDS = {
-    "1-1": "intent",
-    "2-1": "breakdown",
-    "3-1": "breakdown",
-    "4-1": "claims",
-    "5-1": "claims",
-    "6-1": "claims",
-    "7-1": "claims",
-    "8-1": "verification",
-    "9-1": "operation",
-    "10-1": "operation",
-    "11-1": "verification",
-    "12-1": "verification",
-}
-SUBPATHS = {
-    "4-1": "structural",
-    "5-1": "structural",
-    "6-1": "structural",
-    "7-1": "verification",
-    "8-1": "fan-in",
-    "11-1": "fan-in2",
-}
-GROUPED_PATHS = {
-    "02-claims/structural/4-1-two-parents-one-node.md",
-    "02-claims/structural/5-1-forward-closure.md",
-    "02-claims/structural/6-1-stage-monotonicity.md",
-    "02-claims/verification/7-1-derived-in-edges.md",
-    "03-verification/fan-in/8-1-verification-fan-in.md",
-    "03-verification/fan-in2/11-1-verification-fan-in-2.md",
-}
+DOCS_BREAKDOWN = Path(__file__).resolve().parents[1] / "docs" / "breakdown"
+REFS = {f"{node}-1" for node in range(1, 13)}
+PLACEMENT_KEYS = ("band", "subpath", "layer", "stage", "order")
+ROOT_HINTS = ("band_layout", "band_order")
 
 
 def _example_store(tmp_path: Path) -> Path:
@@ -69,11 +43,10 @@ def test_example_store_is_a_clean_graph():
     assert store.root == hidden.root
     assert store.root_ref == "1-1"
     assert len(store.nodes) == 12
-    assert set(store.nodes) == {f"{node}-1" for node in range(1, 13)}
+    assert set(store.nodes) == REFS
 
     for node in store.nodes.values():
-        assert isinstance(node.meta.get("band"), str) and node.meta["band"].strip()
-        assert "layer" not in node.meta
+        assert not (set(PLACEMENT_KEYS) & set(node.meta))
         assert "contains" not in node.meta
         assert "section" not in node.meta
 
@@ -82,11 +55,13 @@ def test_example_store_is_a_clean_graph():
     assert audit(graph) == []
 
 
-def test_forward_closure_reaches_every_node():
+def test_undirected_component_reaches_every_node():
     graph = build_graph(EXAMPLES)
     refs = graph_view(graph, "1-1")
     assert len(refs) == 12
-    assert set(refs) == {f"{node}-1" for node in range(1, 13)}
+    assert set(refs) == REFS
+    assert graph.distance["1-1"] == 0
+    assert graph.distance["11-1"] == 4
 
 
 def test_two_parent_node_has_two_derived_in_edges():
@@ -97,12 +72,11 @@ def test_two_parent_node_has_two_derived_in_edges():
     assert "3-1 -> 4-1 (supports)  [derived]" in incoming
 
 
-def test_verification_core_is_the_band_entry_and_fanout_basis():
+def test_verification_core_is_a_distance_three_fanout():
     graph = build_graph(EXAMPLES)
     core = graph.store.nodes["12-1"]
-    assert core.meta["band"] == "verification"
-    assert "subpath" not in core.meta
-    assert core.meta["order"] == 0
+    assert not (set(PLACEMENT_KEYS) & set(core.meta))
+    assert graph.distance["12-1"] == 3
     assert render_out(graph, "12-1").splitlines() == [
         "12-1 -> 8-1 (breaks_down)",
         "12-1 -> 11-1 (breaks_down)",
@@ -113,13 +87,13 @@ def test_verification_core_is_the_band_entry_and_fanout_basis():
     assert "8-1 -> 11-1 (breaks_down)  [derived]" in incoming
     assert "12-1 -> 11-1 (breaks_down)  [derived]" in incoming
 
-    paths = layout_paths(graph, graph_view(graph, "1-1"))
-    assert paths["12-1"] == "03-verification/12-1-verification-core.md"
-    assert paths["8-1"].startswith("03-verification/fan-in/")
-    assert paths["11-1"].startswith("03-verification/fan-in2/")
+    paths = layout_paths(graph)
+    assert paths["12-1"].as_posix() == "12-1.md"
+    assert paths["8-1"].as_posix() == "8-1.md"
+    assert paths["11-1"].as_posix() == "11-1.md"
 
 
-def test_example_graph_export_writes_stages_and_indexes(tmp_path):
+def test_example_graph_export_writes_one_flat_ring_index(tmp_path):
     out = (tmp_path / "graph").resolve()
     result = api.export_view("graph", EXAMPLES, "1-1", out)
     assert result.nodes == 12
@@ -129,89 +103,52 @@ def test_example_graph_export_writes_stages_and_indexes(tmp_path):
         for path in result.files
         if path.name == "INDEX.md"
     }
-    assert generated == {
-        "INDEX.md",
-        "00-intent/INDEX.md",
-        "01-breakdown/INDEX.md",
-        "02-claims/INDEX.md",
-        "02-claims/structural/INDEX.md",
-        "02-claims/verification/INDEX.md",
-        "03-verification/INDEX.md",
-        "03-verification/fan-in/INDEX.md",
-        "03-verification/fan-in2/INDEX.md",
-        "04-operation/INDEX.md",
-    }
+    assert generated == {"INDEX.md"}
 
     root = (out / "INDEX.md").read_text(encoding="utf-8")
-    assert "[layer 0 — intent](00-intent/INDEX.md) — 1 node" in root
-    assert "[layer 3 — verification](03-verification/INDEX.md) — 3 nodes" in root
-    assert "[layer 4 — operation](04-operation/INDEX.md) — 2 nodes" in root
-    operation = (out / "04-operation" / "INDEX.md").read_text(encoding="utf-8")
-    assert "[9-1 Operate the graph](9-1-operate-the-graph.md)" in operation
-    assert "[10-1 Require sorted links](10-1-require-sorted-links.md)" in operation
-
-    verification = (out / "03-verification" / "INDEX.md").read_text(encoding="utf-8")
-    assert "[12-1 Verification core](12-1-verification-core.md)" in verification
-    assert "[fan-in/](fan-in/INDEX.md)" in verification
-    assert "[fan-in2/](fan-in2/INDEX.md)" in verification
-    assert "→ [8-1 Verification fan-in](fan-in/8-1-verification-fan-in.md)" in verification
-
-    claims = (out / "02-claims" / "INDEX.md").read_text(encoding="utf-8")
-    assert "[structural/](structural/INDEX.md)" in claims
-    assert "[verification/](verification/INDEX.md)" in claims
-    structural = (out / "02-claims" / "structural" / "INDEX.md").read_text(
-        encoding="utf-8"
-    )
-    assert "[4-1 Two parents, one node](4-1-two-parents-one-node.md)" in structural
-    assert "→ [8-1 Verification fan-in]" in structural
-    assert "← [2-1 Structural claims]" in structural
+    assert "## 0 — 1-1" in root
+    assert "## 1 — children" in root
+    assert "## 2" in root
+    assert "## 3" in root
+    assert "## 4" in root
+    assert "[12-1 Verification core](12-1.md)" in root
+    assert "[8-1 Verification fan-in](8-1.md)" in root
 
 
-def test_example_nodes_declare_bands_and_subpaths_and_no_group():
+def test_example_nodes_declare_no_placement_keys():
     graph = build_graph(EXAMPLES)
-    bands = {ref: node.meta["band"] for ref, node in graph.store.nodes.items()}
-    assert bands == BANDS
-    declared = {
-        ref: node.meta["subpath"]
-        for ref, node in graph.store.nodes.items()
-        if "subpath" in node.meta
+    for node in graph.store.nodes.values():
+        assert not (set(PLACEMENT_KEYS) & set(node.meta))
+        assert "group" not in node.meta
+    paths = layout_paths(graph)
+    assert {path.as_posix() for path in paths.values()} == {
+        f"{ref}.md" for ref in REFS
     }
-    assert declared == SUBPATHS
-    assert all("layer" not in node.meta for node in graph.store.nodes.values())
-    assert all("group" not in node.meta for node in graph.store.nodes.values())
-    paths = layout_paths(graph, graph_view(graph, "1-1"))
-    assert {path for path in paths.values() if path.count("/") > 1} == GROUPED_PATHS
-    # 4-1 has two parents and still lands in exactly one subpath.
-    assert paths["4-1"] == "02-claims/structural/4-1-two-parents-one-node.md"
 
 
-def test_example_work_places_grouped_nodes_and_edit_resolves(tmp_path):
+def test_example_work_is_flat_and_edit_resolves(tmp_path):
     root = _example_store(tmp_path)
     out = root / "bd_work"
     result = api.work(root, "1-1")
 
     assert result.nodes == 12 and result.symlinks == 12
-    assert api.edit_path(root, "5-1") == (
-        out / "02-claims" / "structural" / "5-1-forward-closure.md"
-    )
-    assert api.edit_path(root, "7-1") == (
-        out / "02-claims" / "verification" / "7-1-derived-in-edges.md"
-    )
-    assert api.edit_path(root, "8-1") == (
-        out / "03-verification" / "fan-in" / "8-1-verification-fan-in.md"
-    )
-    assert api.edit_path(root, "12-1") == (
-        out / "03-verification" / "12-1-verification-core.md"
-    )
-    for directory in (
-        out / "02-claims" / "structural",
-        out / "02-claims" / "verification",
-        out / "03-verification",
-        out / "03-verification" / "fan-in",
-        out / "03-verification" / "fan-in2",
-    ):
-        index = directory / "INDEX.md"
-        assert index.is_file() and not index.is_symlink()
+    for ref in REFS:
+        assert (out / f"{ref}.md").is_symlink()
+    for name in ("INDEX.md", "REFS.md", "AGENTS.md"):
+        assert (out / name).is_file() and not (out / name).is_symlink()
+
+    assert api.edit_path(root, "5-1") == out / "5-1.md"
+    assert api.edit_path(root, "7-1") == out / "7-1.md"
+    assert api.edit_path(root, "8-1") == out / "8-1.md"
+    assert api.edit_path(root, "12-1") == out / "12-1.md"
+
+    index = (out / "INDEX.md").read_text(encoding="utf-8")
+    assert "## Active" in index
+    assert "## Distance 1 — children" in index
+    assert "## Distance 2" in index
+    refs = (out / "REFS.md").read_text(encoding="utf-8")
+    assert "| Distance |" in refs
+    assert "| `1-1.md` | 1-1 | active | 0 |" in refs
 
     status = api.work(root, status=True)
     assert status.ok
@@ -219,63 +156,87 @@ def test_example_work_places_grouped_nodes_and_edit_resolves(tmp_path):
     assert {entry.status for entry in status.entries} == {"ok"}
 
 
-def test_example_graph_export_uses_the_grouped_file_set(tmp_path):
+def test_example_graph_export_uses_the_flat_file_set(tmp_path):
     root = _example_store(tmp_path)
     graph = tmp_path / "graph"
     api.export_view("graph", root, "1-1", graph)
 
-    graph_files = _relative_files(graph)
-    assert GROUPED_PATHS <= graph_files
-    assert {
-        "02-claims/structural/INDEX.md",
-        "02-claims/verification/INDEX.md",
-        "03-verification/fan-in/INDEX.md",
-        "03-verification/fan-in2/INDEX.md",
-    } <= graph_files
-
-    stage = (graph / "02-claims" / "INDEX.md").read_text(encoding="utf-8")
-    assert "structural/INDEX.md" in stage
-    assert "verification/INDEX.md" in stage
+    assert _relative_files(graph) == {f"{ref}.md" for ref in REFS} | {"INDEX.md"}
 
 
-DOCS_BREAKDOWN = Path(__file__).resolve().parents[1] / "docs" / "breakdown"
-SECTION_BANDS = {
-    "2-1": "intent",
-    "3-1": "product",
-    "4-1": "architecture",
-    "5-1": "implementation",
-    "6-1": "verification",
-    "7-1": "operation",
-    "8-1": "evolution",
-    "10-1": "decisions",
-    "11-1": "suggested",
-}
+def test_cycles_are_legal_in_one_component(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2", "type": "supports"}])
+    write(nodes, 2, links=[{"to": "3", "type": "supports"}])
+    write(nodes, 3, links=[{"to": "1", "type": "supports"}])
+
+    result = api.check(tmp_path)
+    assert result.ok
+    assert not result.warnings
+
+    graph = build_graph(tmp_path)
+    assert graph.roots == ["1-1"]
+    assert set(graph_view(graph, "1-1")) == {"1-1", "2-1", "3-1"}
+    assert graph.distance == {"1-1": 0, "2-1": 1, "3-1": 1}
+    assert audit(graph) == []
 
 
-def test_converted_breakdown_store_checks_clean_with_band_order(tmp_path):
-    shutil.copytree(DOCS_BREAKDOWN / ".bd_tree", tmp_path / ".bd_tree")
-    api.migrate(
-        tmp_path,
-        symmetric_types=["realizes", "implements", "verifies", "operates", "changes"],
-        inverse_types={
-            "realizes": "realized_by",
-            "implements": "implemented_by",
-            "verifies": "verified_by",
-            "operates": "operated_by",
-            "changes": "changed_by",
-        },
-        band_order=True,
+def test_migration_strips_placement_keys_and_keeps_the_graph(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(
+        nodes,
+        1,
+        band="root",
+        order=0,
+        band_layout="flat",
+        band_order=["root", "child"],
+        links=[{"to": "2", "type": "breaks_down"}],
+        body="root body\n",
     )
+    write(
+        nodes,
+        2,
+        band="child",
+        subpath="sub",
+        layer="older",
+        stage=2,
+        order=3,
+        body="child body\n",
+    )
+    (tmp_path / "ROOT").write_text("1-1\n", encoding="utf-8")
+    before = api.load(tmp_path)
+
+    api.migrate(tmp_path)
+
+    store = api.load(tmp_path)
+    assert set(store.nodes) == set(before.nodes)
+    for ref, node in store.nodes.items():
+        assert not (set(PLACEMENT_KEYS) & set(node.meta))
+        assert node.body == before.nodes[ref].body
+        assert node.title == before.nodes[ref].title
+        assert [(link.to, link.type) for link in node.links] == [
+            (link.to, link.type) for link in before.nodes[ref].links
+        ]
+    assert not (set(ROOT_HINTS) & set(store.nodes["1-1"].meta))
+    assert api.check(tmp_path).ok
+
+
+def test_breakdown_store_checks_clean_after_migration(tmp_path):
+    shutil.copytree(DOCS_BREAKDOWN / ".bd_tree", tmp_path / ".bd_tree")
+    api.migrate(tmp_path)
 
     result = api.check(tmp_path)
     assert result.ok
     assert not result.warnings
 
     store = api.load(tmp_path)
+    assert store.model == "graph"
+    assert store.root_ref == "1-1"
     assert len(store.nodes) == 59
-    root = store.nodes[store.root_ref]
-    assert root.meta["band_order"][:3] == ["root", "intent", "product"]
-    assert root.meta["band_layout"] == "flat"
+    for node in store.nodes.values():
+        assert not (set(PLACEMENT_KEYS) & set(node.meta))
+    assert not (set(ROOT_HINTS) & set(store.nodes["1-1"].meta))
+
     signature = {
         link.type
         for node in store.nodes.values()
@@ -290,21 +251,7 @@ def test_converted_breakdown_store_checks_clean_with_band_order(tmp_path):
         "changes",
     }
 
-
-def test_migrated_breakdown_store_is_a_clean_graph(tmp_path):
-    shutil.copytree(DOCS_BREAKDOWN / ".bd_tree", tmp_path / ".bd_tree")
-    api.migrate(tmp_path)
-
-    store = api.load(tmp_path)
-    assert store.model == "graph"
-    assert store.root_ref == "1-1"
-    assert len(store.nodes) == 59
-    assert all("contains" not in node.meta for node in store.nodes.values())
-
     graph = build_graph(tmp_path)
     assert graph.roots == ["1-1"]
     assert set(graph_view(graph, "1-1")) == set(store.nodes)
-    assert {
-        ref: graph.store.nodes[ref].meta["band"] for ref in SECTION_BANDS
-    } == SECTION_BANDS
-    assert api.check(tmp_path).ok
+    assert audit(graph) == []

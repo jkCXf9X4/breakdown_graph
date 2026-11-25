@@ -1,558 +1,460 @@
-# Graph band layout
+# Graph views and ring layout
 
-This document is the reference for how a graph store turns `band` values, an
-optional `subpath`, and forward *structural* `links` into directories. It covers the exact algorithm, the tie-breaks,
-the diagnostics, the commands that consume the projection, and the tests that
-pin it.
+This document is the reference for how a graph store turns one anchor and its
+authored `links` into a view, a ring ordering, and a flat work area. It covers
+component membership, BFS rings, direction labels, the tie-break rules, the
+generated `INDEX.md` and `REFS.md`, a worked example on the committed store,
+cycles, and the limits of using distance as layout.
 
 [`DESIGN.md`](DESIGN.md) owns the model and [`GRAPH.md`](GRAPH.md) owns the
-topology and commands. This document owns one question: **given a graph view,
-which folder does each node land in?** Bands are the only layout; `section` and
-`group` place nothing.
+topology and commands. This document owns one question: **given an anchor, which
+nodes are in the view, and in what order do they appear?**
 
 ## 1. Data versus projection
 
-The source of truth is the node files. For layout, only two pieces of authored
+The source of truth is the node files. For a view, only two pieces of authored
 data matter:
 
-- `band`: the band name, plus an optional `subpath` such as `structural`;
-  `layer: band/subpath` is the older single-string shorthand.
-- `links`: forward parent-to-child structural edges carrying full target refs.
-  A symmetric link (`symmetric: true`) is a master whose opposite is derived;
-  it adds no band edge and orders no band.
+- the anchor: an explicit ref, else the store `ROOT`, else the lowest member of
+  the first component;
+- `links`: typed edges with full target refs. A link with `symmetric: true` is
+  authored on one node; its opposite is derived at load and is never stored.
 
-Nothing else is stored. There is no layout file, no ordinal field, no state
-file, and no cached plan. Band ordinals, inferred nesting, and folders are
-recomputed from the store on every command. The projection is disposable:
-inserting a band renumbers later folders without touching a node file.
+Nothing else is stored for layout. There is no placement field, ordinal,
+position key, layout file, or cache. Components, distances, ring sections, and
+the work area are recomputed from the store on every command, and the output is
+disposable.
 
-`order` is authored data too, but it orders nodes inside a band; it does not
-choose bands or folders. `group` is ordinary metadata and never places a node
-(see §5).
+Direction survives in the data as parent -> child, but it does not decide
+membership, order, or validation. It is a label on a neighbour and a traversal
+rule for explicit directional commands.
 
 ## 2. Terms
 
 | Term | Meaning |
 | --- | --- |
-| band | The node's `band` string, or the `layer` path's first segment. It is the unit of inference. |
-| subpath | The optional placement folder below the band folder. |
-| layer | The older shorthand `layer: band/subpath`, normalized to band plus subpath. |
-| layer path | A parsed band plus optional subpath. |
-| band graph | The directed graph whose nodes are bands and whose edges come from structural links crossing bands. |
-| top-level band | A band that gets its own `NN-<slug>` root folder. |
-| nested band | A band placed below a top-level band folder by inference. |
-| effective folder | The full directory a node's file uses. |
-| band ordinal | The zero-based position of a node's top-level band; it is the value `--stage` filters on. |
-| order | The integer `order` used inside a band and inside a folder. |
+| component | A weakly connected component of the store over authored links. |
+| anchor | The ref a view is focused on; it is always ring 0. |
+| distance | The undirected BFS hop count from the anchor. |
+| ring | All view members with one distance value. |
+| neighbour | One ref reachable over one authored edge in either direction. |
+| kind | The direction of a neighbour from the queried ref: `child`, `parent`, or `peer`. |
+| view | The whole component of the anchor, ordered by distance. |
+| materialized depth | The largest ring written into the work area (`REF+N`). |
 
-A node belongs to exactly one band (its `band`) and exactly one effective
-folder (band folder plus optional `subpath`).
+A node belongs to exactly one component and appears once in a view, at its
+minimum distance.
 
-## 3. Detection and modes
+## 3. Membership and the anchor
 
-`relative_store` (`src/bd_tree/graph.py:315`) checks whether **any** node
-declares `stage`.
+`Store.neighbors(ref)` returns every authored neighbour in both directions, one
+entry per neighbour ref:
 
-- **Absolute mode**: at least one node has `stage`. Bands are the integer
-  stages. `band`/`layer` is only a label source. `group` is inert. See §6.12.
-- **Relative mode**: no node declares `stage`. Bands come from `band`/`layer`
-  and the band graph. This is the mode described below and used by `examples/`.
+- `child`: the queried ref authors a structural link to the neighbour;
+- `parent`: another node authors a structural link to the queried ref;
+- `peer`: a symmetric master connects the two refs in either direction.
 
-The modes are per store, never per node. Do not mix `stage` and relative
-inference in one store. Relative mode does not require `stage`, and a store with
-no `stage` key is not invalid.
+Kind precedence is `child > parent > peer`. A reciprocal structural pair is a
+`child` from each side; a symmetric master is a `peer` from each side. The
+representative link is always an authored link, never a derived opposite.
 
-## 4. The algorithm
+`Store.components()` walks those neighbours and returns every weak component.
+Members are sorted by `(id, version)`, and components are sorted by their first
+member. `Store.topology_roots()` returns one representative per component: its
+lowest member by `(id, version)`. The name is historical; a cycle no longer
+leaves a component without a representative.
 
-The implementation is `_relative_plan` (`src/bd_tree/graph.py:598`), with helpers
-listed in §8.1. The steps are:
+The default anchor is the declared `ROOT` when present, else the first
+component's representative. An explicit ref where a command takes one wins over
+both. A declared but missing ref is an error (`root-ref-missing`); the view is
+not silently re-anchored.
 
-### 4.1 Parse and validate bands
-
-For each node, `layer_path` (`:216`) normalizes either form:
-
-```text
-band = "claims"
-subpath = "structural/fan-in"
+```sh
+bd views                    # one line per component: representative, size, title
+bd graph 2-1                # the same component, focused on 2-1
+bd work 4-1                 # the same component, materialized around 4-1
 ```
 
-```text
-layer = "claims/structural/fan-in"   # shorthand: same band and subpath
-```
+`bd views` marks the store default with `*` and the active work-area anchor with
+`anchor REF`.
 
-A node declares exactly one form. `band` is a single segment; `subpath` is a
-slash-separated relative path. Both are valid when a string whose stripped form
-is non-empty, with no backslash and no empty, `.`, `..`, reserved generated
-(`INDEX.md`, `AGENTS.md`, `REFS.md`), or `.md` segment. A `subpath` without
-`band`, a `band` containing `/`, or a node mixing `layer` with
-`band`/`subpath` is `graph-layer-invalid`. A node with neither is
-`graph-layer-missing`. Neither creates a band.
+## 4. Distance and rings
 
-### 4.2 Build the band graph
+`ring_distances(store, anchor)` is an undirected breadth-first search over
+`Store.neighbors`. It maps every reachable ref to its minimum hop count and
+returns an empty map when the anchor is missing. Because a ref is enqueued at
+most once, cycles need no special handling.
 
-`_band_edges` (`:402`) scans every authored *structural* link. When source and
-target are both valid and their bands differ, add `band(source) ->
-band(target)`. Links inside one band add no edge, even when they cross subpaths.
-A symmetric link contributes no band edge. A link to a missing
-node, or one with an invalid band, adds no edge.
+A view is the anchor's whole component, not a depth prefix. `bd work REF+N` and
+`bd graph --depth N` materialize or traverse rings `0..N`; the view behind them
+is still the full component.
 
-Cycles in this graph are reported by `_layer_cycles` (`:484`) as
-`graph-layer-cycle`; strong components of size greater than one are sorted.
-
-### 4.3 Choose top-level bands
-
-`_top_level_bands` (`:581`) works per weakly connected component of the band
-graph (`_band_components`, `:536`):
-
-1. Compute indegree and outdegree inside the component.
-2. If the component has no edge, every band in it is top-level, kind `2`
-   ("isolated"), distance `0`.
-3. Otherwise, if the component has no root (indegree `0`) or no sink
-   (outdegree `0`), every band is top-level, kind `1` ("cycle-only"),
-   distance `0`.
-4. Otherwise, let `from_roots` be the unweighted multi-source BFS distance from
-   all roots (`_distances`, `:563`), and let `to_sinks` be the same distance to
-   all sinks over reversed edges.
-5. Let `L = min(from_roots[sink])` over sinks: the shortest root-to-sink
-   distance in the component.
-6. A band is top-level iff `from_roots[band] + to_sinks[band] == L`.
-7. Rank top-level bands by `(kind, distance, band)` where kind is `0` for an
-   acyclic connected component, `1` for a cycle-only component, and `2` for an
-   isolated component; distance is `from_roots`; the final tie-break is the
-   band name in lexicographic order. The rank position is the ordinal `NN`.
-   `band_order` does not change this ranking; it only breaks ties in the
-   topological order (§4.5) and orders flat top-level folders.
-
-This is the **shortest-path rule**. A band that lies only on a longer detour is
-not top-level; a band that lies on at least one shortest root-to-sink path is.
-The rule is a convention for producing a readable tree. It is not a proof about
-the project's semantics, and the graph itself does not distinguish a detour from
-a main line.
-
-If no band satisfies the equality (defensive fallback), the roots become
-top-level.
-
-**Flat bands.** Set `band_layout: flat` on the store's `ROOT` node to skip the
-shortest-path rule. Every band then becomes top-level, ordered by `_layer_order`
-(`:446`); explicit `subpath` values still nest below their band folder. A ROOT
-`band_order` list composes: the flat top-level folders are ordered by the hint. This is
-a per-store projection convention, not a change to link semantics.
-
-### 4.4 Build top-level folders
-
-For each top-level band, in rank order:
+Ring 0 is the anchor. Ring 1 is split by direction. Rings 2 and deeper are not
+split: they are numbered sections, each sorted by `(id, version)`.
 
 ```text
-folder = f"{ordinal:02d}-{slugify(band) or 'band'}"
+## 0 — 1-1
+## 1 — children
+## 1 — parents
+## 1 — peers
+## 2
+## 3
 ```
 
-`slugify` (`src/bd_tree/model.py:26`) lowercases, folds non-ASCII, and collapses
-runs outside `[a-z0-9]` into `-`. The ordinal is zero-based and padded to at
-least two digits.
+A node reached through several routes stays in its minimum ring. That is why a
+cycle that closes back to the anchor can put a nominally distant node in ring 1.
 
-### 4.5 Nest the remaining bands
+## 5. Ordering and tie-breaks
 
-`_layer_order` (`:446`) produces a deterministic topological order, lexicographic
-on ready bands unless the ROOT `band_order` hint reranks them; bands left out by
-a cycle are appended sorted by name.
-
-Then, in that order, for each band not already placed:
-
-1. Candidates are incoming band-graph parents that are already placed.
-2. If none, defer the band to the fallback list.
-3. Otherwise choose the candidate with the greatest `from_roots` distance, and
-   break a tie by the lexicographically smallest band name.
-4. Set `folder = parent_folder + "/" + slugify(band)`, and inherit the parent's
-   top-level band as the band ordinal's ancestor.
-
-Deferred bands are appended after all existing top-level bands, sorted by band
-name, each with its own `NN-<slug>` folder and ordinal. This keeps an
-unattachable band renderable without inventing an edge.
-
-### 4.6 Attach explicit subpaths and node files
-
-Each node's effective folder is its band's folder, plus `/<subpath>` verbatim
-when the node declares one (or its `layer` shorthand has more than one
-segment). An explicit subpath always nests below its band folder; it never
-changes band inference and does not force the band to be nested.
-
-The file stem is unchanged by layout: explicit `name`, else
-`<ref>-<title-slug>`, else `<ref>`, with `.md` appended. `layout_paths`
-(`:1561`) joins folder and stem and rejects collisions or a file/directory path
-conflict.
-
-### 4.7 Ordinals and `--stage`
-
-Every ref maps to the ordinal of its top-level band. A nested band inherits the
-ordinal of the top-level band it was placed under. `--stage A:B` filters on that
-ordinal, inclusive; the anchor is always included.
-
-### 4.8 Ordering inside a band and folder
-
-`graph_layout` (`:1010`) groups refs by band and sorts by effective folder, then
-`(order, id, version)`. Inside one folder the effective sort is
-`(order, id, version)`.
-
-A link whose endpoints share one band must satisfy
-`order(source) < order(target)`. This applies across different subpaths of the
-same band; otherwise the audit reports `graph-order-back-edge`. Band-wide order
-is intentional: a band is one unit even when its nodes live in several folders.
-
-### 4.9 Invalid data still renders
-
-If a node's band is missing or invalid, the node cannot enter the band graph.
-The plan collects those refs, sorted by `(id, version)`, and places them in one
-trailing `NN-unlayered` band (`UNLAYERED`). This is a rendering fallback only:
-it is not a band assignment, not an ordering claim, and it is not a substitute
-for the audit errors. The audit still reports `graph-layer-missing` or
-`graph-layer-invalid`.
-
-## 5. Diagnostics
-
-| Code | Level | Cause | Effect |
-| --- | --- | --- | --- |
-| `graph-layer-missing` | error | relative store, node has no `band` or `layer` | node goes to `unlayered` for rendering |
-| `graph-layer-invalid` | error | invalid `band`, `subpath`, or `layer` (type, empty, bad segment, backslash, `.md`, reserved name), a `subpath` without `band`, or both forms at once | node goes to `unlayered` for rendering |
-| `graph-layer-cycle` | error | strong component of the band graph with more than one band | deterministic cycle fallback; audit fails |
-| `graph-order-back-edge` | error | same-band link has `order(source) >= order(target)` | audit fails; layout still renders |
-| `invalid-band-order` | error | the ROOT `band_order` value is not a YAML list | hint ignored; layout still renders |
-| `graph-group-ignored` | warning | graph node declares `group` | none; `group` never places a node |
-
-Absolute mode, for contrast: `graph-stage-missing` and `graph-stage-invalid`
-replace the layer errors; `graph-back-edge` replaces the layer-cycle and order
-rules (`stage(source) < stage(target)`); `graph-order-invalid` applies in both
-modes. `graph-dangling-link` and `graph-cycle` are shared. There is no
-`graph-group-invalid`: `group` is not validated because it has no placement
-meaning in a graph store.
-
-## 6. Worked examples
-
-Each example names the test in `tests/test_layer_paths.py` that pins it. Band
-edges are written `source -> target`.
-
-### 6.1 Single chain: the example store
-
-Bands: `intent`, `breakdown`, `claims`, `verification`, `operation`;
-subpaths `structural`, `verification`, `fan-in`, and `fan-in2`.
-
-Band edges: `intent -> breakdown`, `breakdown -> claims`,
-`claims -> verification`, `verification -> operation`.
-
-Every band lies on the one root-to-sink path, so all are top-level and kind
-`0`:
-
-| Ordinal | Band | Folder |
-| --- | --- | --- |
-| 0 | intent | `00-intent` |
-| 1 | breakdown | `01-breakdown` |
-| 2 | claims | `02-claims` |
-| 3 | verification | `03-verification` |
-| 4 | operation | `04-operation` |
-
-Explicit subpaths produce `02-claims/structural`, `02-claims/verification`,
-`03-verification/fan-in`, and `03-verification/fan-in2`; `12-1` declares only
-`band: verification` and sits directly in `03-verification`. Example paths:
-`02-claims/structural/4-1-two-parents-one-node.md`,
-`02-claims/verification/7-1-derived-in-edges.md`,
-`03-verification/12-1-verification-core.md`,
-`03-verification/fan-in/8-1-verification-fan-in.md`,
-`03-verification/fan-in2/11-1-verification-fan-in-2.md`.
-
-Test: `test_single_chain_example_is_all_top_level_with_identical_paths`.
-
-### 6.2 Fork with parallel detours
-
-Layers: `intent` (1-1), `breakdown` (2-1), `sub-a` (3-1), `sub-b` (4-1),
-`claims` (5-1). Edges: `1 -> 2`, `2 -> 3`, `2 -> 4`, `2 -> 5`, `3 -> 5`,
-`4 -> 5`.
-
-Band edges: `intent -> breakdown`, `breakdown -> sub-a`,
-`breakdown -> sub-b`, `breakdown -> claims`, `sub-a -> claims`,
-`sub-b -> claims`.
-
-Shortest root-to-sink distance `L = 2` (`intent -> breakdown -> claims`).
-Top-level: `intent` (0+2), `breakdown` (1+1), `claims` (2+0). `sub-a` and
-`sub-b` are 2+1=3 and not top-level. Nesting chooses `breakdown` as their
-placed parent with distance 1.
-
-| Band | Ordinal | Folder |
-| --- | --- | --- |
-| intent | 0 | `00-intent` |
-| breakdown | 1 | `01-breakdown` |
-| claims | 2 | `02-claims` |
-| sub-a | 1 | `01-breakdown/sub-a` |
-| sub-b | 1 | `01-breakdown/sub-b` |
-
-Test: `test_parallel_detours_nest_under_their_shortest_path_parent`.
-
-### 6.3 Nested detour
-
-Same as 6.2, but `sub-a -> sub-sub` and `sub-sub -> claims` instead of
-`sub-a -> claims`. Band edges add `sub-a -> sub-sub`,
-`sub-sub -> claims`.
-
-`L` is still 2. Top-level is still `intent`, `breakdown`, `claims`. Placement
-order visits `sub-a`, then `sub-b`, then `sub-sub`; `sub-sub`'s only placed
-parent is `sub-a`, so it stacks:
-
-| Band | Ordinal | Folder |
-| --- | --- | --- |
-| intent | 0 | `00-intent` |
-| breakdown | 1 | `01-breakdown` |
-| claims | 2 | `02-claims` |
-| sub-a | 1 | `01-breakdown/sub-a` |
-| sub-b | 1 | `01-breakdown/sub-b` |
-| sub-sub | 1 | `01-breakdown/sub-a/sub-sub` |
-
-Test: `test_nested_detour_stacks_under_the_placed_child`.
-
-### 6.4 Equal-length parallel branches
-
-Layers: `intent` (1-1), `alpha` (2-1), `beta` (3-1), `sink` (4-1). Edges:
-`1 -> 2`, `1 -> 3`, `2 -> 4`, `3 -> 4`.
-
-Band edges: `intent -> alpha`, `intent -> beta`, `alpha -> sink`,
-`beta -> sink`. `L = 2`. Both branches are shortest, so both are top-level:
-`intent` distance 0, `alpha` and `beta` distance 1, `sink` distance 2. Ties by
-band name give `alpha` before `beta`.
-
-| Band | Ordinal | Folder |
-| --- | --- | --- |
-| intent | 0 | `00-intent` |
-| alpha | 1 | `01-alpha` |
-| beta | 2 | `02-beta` |
-| sink | 3 | `03-sink` |
-
-Test: `test_equal_length_parallel_branches_are_both_top_level`.
-
-### 6.5 Explicit path override
-
-Layers: `intent` (1-1), `breakdown/sub-a` (2-1), `claims` (3-1). Edges:
-`1 -> 2`, `2 -> 3`.
-
-Band edges: `intent -> breakdown`, `breakdown -> claims`. All three bands are
-top-level. Node 2-1 carries an explicit subpath, so its folder becomes:
+Every emitted list is sorted by an explicit key. The canonical global key is:
 
 ```text
-01-breakdown/sub-a/2-1.md
+(distance, kind_rank, link type, id, version)
 ```
 
-The explicit subpath does not force `breakdown` to nest again. Test:
-`test_explicit_layer_path_wins_over_inference`.
+where `kind_rank` is `child: 0`, `parent: 1`, `peer: 2`. The parts apply as
+follows:
 
-### 6.6 Multi-segment explicit subpath
+- components: members by `(id, version)`, components by their first member;
+- text rings: ring 1 within each kind by `(link type, id, version)`; deeper rings
+  by `(id, version)`;
+- `show`: rings by distance, then arrival kind rank, then link type, then
+  `(id, version)`;
+- `REFS.md`: rows by `(distance, kind_rank, id, version)`;
+- `bd graph --dot`: nodes by `(distance, id, version)`.
 
-Layers: `intent` (1-1), `claims/structural/fan-in` (2-1). Edge: `1 -> 2`.
-Bands: `intent` ordinal 0, `claims` ordinal 1, both top-level. The subpath is
-kept verbatim:
+No ordering depends on file order, filesystem order, or a YAML mapping order.
+
+## 6. Direction labels
+
+Direction is presentation and an explicit traversal choice; it is never a
+membership filter.
+
+| Label | Meaning |
+| --- | --- |
+| `→` | child: the current node authors the edge to the next node |
+| `←` | parent: the next node authors the edge back to the current node |
+| `↔` | peer: a symmetric master connects the two nodes |
+
+`bd show REF+N` labels each node with the direction of the step that reached it
+from the previous ring. `bd show --links` prints one row per undirected
+neighbour, deduped, with the arrow on the queried node's side. `bd path REF`
+labels every step of the shortest undirected path from the anchor. `bd out` and
+`bd in` remain explicitly directional: authored out-edges and derived in-edges.
+
+```sh
+bd show 1-1+2 --no-body --links
+bd path 10-1
+bd out 3-1
+bd in 4-1
+```
+
+## 7. Filters
+
+`bd graph` accepts three independent controls:
+
+- `--depth N` stops traversal after `N` link hops;
+- `--type T` follows only edges with that type (repeatable);
+- `--distance A:B` shows only nodes whose ring is in the inclusive range
+  `A:B`.
+
+`--distance` is display-only: out-of-range nodes are omitted from the output,
+but traversal continues through them, so a later in-range ring remains
+reachable. The anchor is always included, even when it is
+outside the requested range.
+
+```sh
+bd graph 1-1 --depth 1           # rings 0 and 1
+bd graph 1-1 --distance 2:3      # ring 0 plus rings 2 and 3
+bd graph 1-1 --type supports     # only supports edges are traversed
+```
+
+## 8. The flat work area
+
+`bd work REF[+N]` writes the project's single work area, `<project>/bd_work/`.
+It is flat: one relative symlink per materialized ref, using the store file's
+basename. There are no node directories and no nested folder layout.
 
 ```text
-01-claims/structural/fan-in/2-1.md
+bd_work/
+├── 1-1.md        -> ../.bd_tree/nodes/1-1.md
+├── 2-1.md        -> ../.bd_tree/nodes/2-1.md
+├── 3-1.md        -> ../.bd_tree/nodes/3-1.md
+├── 4-1.md        -> ../.bd_tree/nodes/4-1.md
+├── INDEX.md      generated
+├── REFS.md       generated
+└── AGENTS.md     generated
 ```
 
-Test: `test_multi_segment_explicit_subpath_is_kept_verbatim`.
+If two node files share a basename (possible only with `--path-template`), the
+ref is appended to the stem. `INDEX.md`, `AGENTS.md`, and `REFS.md` are
+reserved names in every directory.
 
-### 6.7 Band cycle
+`REF+N` materializes rings `0..N`; `REF` alone materializes the whole component.
+The view recorded in the generated headers stays the full component, with the
+materialized depth as a suffix.
 
-Layers: `a` (1-1), `b` (2-1). Edges: `1 -> 2`, `2 -> 1`. Band edges:
-`a -> b`, `b -> a`. The component has edges but no root and no sink, so it is
-cycle-only: all bands are top-level, kind `1`, sorted by name. The plan reports
-`graph-layer-cycle`; rendering is deterministic:
+### 8.1 INDEX.md
 
-| Ordinal | Band | Folder |
-| --- | --- | --- |
-| 0 | a | `00-a` |
-| 1 | b | `01-b` |
+`INDEX.md` is one file at the work-area root. It carries a `nodes:` front-matter
+path to the store's real `nodes/` directory, a banner, the view label, a link to
+the real node folder, and ring sections:
 
-Test: `test_band_cycle_is_reported_and_rendering_is_deterministic`.
+```markdown
+# View 1-1
 
-### 6.8 Missing or invalid band
+## Active
 
-Nodes 2-1 (`intent`) links to 1-1 (`a//b`, invalid) and 3-1 (no `band`).
-Only `intent` is a valid band, so it is top-level ordinal 0. The two bad refs
-are sorted and placed in the trailing fallback:
+- [<title>](1-1.md) — [real file](../.bd_tree/nodes/1-1.md)
+
+## Distance 1 — children
+
+- [<title>](2-1.md) — [real file](../.bd_tree/nodes/2-1.md)
+- [<title>](3-1.md) — [real file](../.bd_tree/nodes/3-1.md)
+
+## Distance 2
+
+- [<title>](4-1.md) — [real file](../.bd_tree/nodes/4-1.md)
+```
+
+Ring 1 is split into `children`, `parents`, and `peers`; deeper rings are
+`Distance N` sections. Every node entry also links to its real store file, so a
+reader can open, copy, or delete the source instead of the symlink.
+
+### 8.2 REFS.md
+
+`REFS.md` is the navigation table and the active-view marker:
+
+```markdown
+# References — view 1-1
+
+| Path | Ref | Kind | Distance | Title |
+| --- | --- | --- | --- | --- |
+| `1-1.md` | 1-1 | active | 0 | <title> |
+| `2-1.md` | 2-1 | child | 1 | <title> |
+| `3-1.md` | 3-1 | child | 1 | <title> |
+| `4-1.md` | 4-1 | - | 2 | <title> |
+```
+
+Rows are sorted by `(distance, kind, ref)`. The header
+`# References — view REF[+N]` is the active node of the work area: `bd current`,
+`bd edit`, `--status`, and `--writeback` read it. There is no separate state
+file and no per-node pointer.
+
+### 8.3 AGENTS.md
+
+`AGENTS.md` explains that every node `.md` is a symlink, that `INDEX.md`,
+`REFS.md`, and itself are generated, that this is the only writable area, and
+that `--status`/`--writeback` are the repair path. Inside git it also records
+the branch, short commit, and worktree. Outside git those lines are omitted and
+the layout is unchanged.
+
+## 9. Worked example: the committed store
+
+`examples/` has twelve nodes (`1-1`..`12-1`), one component, and `ROOT` `1-1`.
+The authored structural edges produce this distance map from `1-1`:
+
+| Ring | Members |
+| --- | --- |
+| 0 | `1-1` |
+| 1 | `2-1`, `3-1` |
+| 2 | `4-1`, `5-1`, `6-1`, `7-1` |
+| 3 | `8-1`, `12-1` |
+| 4 | `9-1`, `10-1`, `11-1` |
+
+Why `12-1` is ring 3 while `11-1` is ring 4: `12-1` is reached from `4-1`, and
+`11-1` is reached from either `8-1` or `12-1`, one hop later. `9-1` and `10-1`
+are reached only from `8-1`.
+
+The text render is:
 
 ```text
-01-unlayered/1-1.md
-01-unlayered/3-1.md
+## 0 — 1-1
+[1-1] <title>
+  → out: 2-1 (breaks_down), 3-1 (breaks_down)
+
+## 1 — children
+[2-1] <title>
+  ← in: 1-1 (breaks_down)
+  → out: 4-1 (breaks_down), 5-1 (breaks_down), 6-1 (breaks_down)
+[3-1] <title>
+  ← in: 1-1 (breaks_down)
+  → out: 4-1 (supports), 7-1 (supports)
+
+## 2
+...
+## 3
+[8-1] ...  [12-1] ...
+## 4
+[9-1] ...  [10-1] ...  [11-1] ...
 ```
 
-Audit reports one `graph-layer-invalid` and one `graph-layer-missing`. This is
-not a synthetic band assignment. Test:
-`test_missing_and_invalid_layers_fall_back_to_one_trailing_band`.
+`4-1` has two parents (`2-1` and `3-1`) and still appears once, in ring 2.
+`8-1` has five inbound edges (`4-1`, `5-1`, `6-1`, `7-1`, `12-1`) and still
+appears once, in ring 3.
 
-### 6.9 Same-band order back-edge
-
-Layers: `build/x` (1-1, `order: 2`) links to `build/y` (2-1, `order: 1`). The
-link stays inside band `build`, so it adds no band edge. `build` is top-level
-ordinal 0; effective folders are `00-build/x` and `00-build/y`. The audit
-reports `graph-order-back-edge` because `2 >= 1`, including across subpaths.
-
-Test: `test_same_band_order_back_edge_is_reported_across_subpaths`.
-
-### 6.10 Disconnected bands
-
-Nodes: 1-1 `intent -> 2-1 sink`, 3-1 `zebra`, 4-1 `alpha`. Components:
-`{intent, sink}` (kind 0), `{alpha}` (kind 2), `{zebra}` (kind 2). Rank:
-
-| Ordinal | Band | Rank key | Folder |
-| --- | --- | --- | --- |
-| 0 | intent | `(0, 0, intent)` | `00-intent` |
-| 1 | sink | `(0, 1, sink)` | `01-sink` |
-| 2 | alpha | `(2, 0, alpha)` | `02-alpha` |
-| 3 | zebra | `(2, 0, zebra)` | `03-zebra` |
-
-Connected components come before isolated bands; isolated bands sort by name.
-Test: `test_disconnected_bands_are_top_level_after_connected_ones`.
-
-### 6.11 `group` is inert
-
-Node 2-1 has `band: claims`, `subpath: structural`, and `group: ignored`. The
-effective folder comes only from the band and subpath:
-`01-claims/structural/2-1.md`. The audit warns `graph-group-ignored` and
-suggests `band` plus `subpath` instead.
-Text and DOT rendering never print `group`. The example store has no `group`
-key at all. Test:
-`test_group_is_ordinary_metadata_and_warns_in_graph_mode`.
-
-### 6.12 Absolute stage mode is unchanged
-
-Nodes 1-1 (`stage: 0`) links to 2-1 (`stage: 1`, `group: structural`) and
-3-1 (`stage: 1`, `group: verification`, `order: 1`). Because a `stage` exists,
-relative inference is off. Stage 1's label is the dominant non-empty
-`band`/`layer` label
-in that stage (`claims`), both nodes land in `01-claims`, and `group` changes
-nothing:
+`bd path 10-1` prints the shortest undirected chain from the anchor:
 
 ```text
-01-claims/2-1.md
-01-claims/3-1.md
+1-1  <title>
+→ 2-1  <title>
+→ 4-1  <title>
+→ 8-1  <title>
+→ 10-1  <title>
 ```
 
-DOT labels the cluster `stage 1 — claims`. Test:
-`test_absolute_stage_mode_is_unchanged_and_ignores_group`.
+Every step happens to be an authored child edge here, so every arrow is `→`.
+With a peer or a back-edge in the chain, the corresponding step is `↔` or `←`.
 
-The link guard and materialization paths are also pinned by
-`test_link_refuses_band_cycle_and_same_band_order_and_new_accepts_paths` and
-`test_materialization_tree_work_and_exports_use_nested_folders`.
+The work area for `bd work 1-1` is flat:
 
-## 7. Command map
+```text
+1-1.md  2-1.md  3-1.md  4-1.md  5-1.md  6-1.md
+7-1.md  8-1.md  9-1.md  10-1.md 11-1.md 12-1.md
+INDEX.md  REFS.md  AGENTS.md
+```
 
-Every command that needs a path builds the same plan. None reads a layout file.
+`bd work 1-1+2` writes only `1-1.md`, `2-1.md`, `3-1.md`, `4-1.md`, `5-1.md`,
+`6-1.md`, and `7-1.md`; `bd current --view` then prints `1-1+2`.
+
+## 10. Cycles and back-edges
+
+Cycles and back-edges are legal. The edge guards are a self-loop on one ref and
+a duplicate edge to the same target with the same type. A reciprocal pair, a
+longer cycle, and an edge that points against the authored direction all load
+normally.
+
+Take `1-1 -> 2-1 -> 3-1 -> 1-1`. The component is `{1-1, 2-1, 3-1}`. From
+`1-1`, the direct edge to `2-1` and the closing edge from `3-1` both matter, so
+the distance map is:
+
+```text
+1-1  0
+2-1  1
+3-1  1
+```
+
+`3-1` is ring 1 because it links back to the anchor; it is a `parent` of `1-1`.
+No cycle error is emitted, no node is visited twice, and the work area writes
+each ref once. A cycle with no anchor-side closing edge simply raises distances
+along the path until every node is reached.
+
+## 11. Command map
+
+Every command that needs a view rebuilds the same component and distance map.
+None reads a layout file.
 
 | Command | What it consumes |
 | --- | --- |
-| `bd graph [REF]` | `graph_view` then the band/folder layout; the text renderer. `--depth` bounds link hops, not bands. |
-| `bd graph [REF] --stage A:B` | Filters on the top-level ordinal. |
-| `bd graph --dot` | One cluster per effective band folder; label `layer N — band[/subpath]`. |
-| `bd graph --svg --out PATH` | Same DOT fed to Graphviz `dot`. |
-| `bd work REF` | `layout_paths`: symlink tree at `<project>/bd_work/`. |
-| `bd work REF --status` | Reads the existing symlink tree; no layout change. |
-| `bd current [--path\|--view]` | Reports the area and its view; does not rebuild. |
+| `bd graph [REF]` | The component as ring sections; `--depth`, `--distance`, and `--type` narrow traversal or display. |
+| `bd graph --dot` / `--svg` | The same view as a flat Graphviz graph, nodes ordered by distance. |
+| `bd show REF[+N]` | BFS rings `0..N`, each node once, with direction arrows. |
+| `bd path REF` | Shortest undirected path from the anchor. |
+| `bd find QUERY` | The anchor's component by default; `--view` picks another, `--all` searches the store. |
+| `bd views` | One representative and size per component. |
+| `bd work REF[+N]` | Flat symlinks plus ring-sorted `INDEX.md` and `REFS.md`. |
+| `bd work REF --status` | Reads the existing area and its declared view; no rebuild. |
+| `bd work REF --writeback` | Re-links detached files after validating their front matter. |
+| `bd current [--path\|--view]` | Reports the area and its view; read-only. |
 | `bd edit REF` | Path of the ref in the active view. |
-| `bd export graph --view REF --out DIR` | Regular-file copy of `layout_paths`, plus per-folder `INDEX.md`. |
-| `bd export dot --view REF --out FILE` | Flat DOT, no band clusters, labels from the same plan. |
-| `bd export svg --view REF --out FILE` | Rendered flat DOT. |
+| `bd export graph --view REF --out DIR` | Regular-file copy of the flat view plus one ring-section `INDEX.md`. |
+| `bd export context --view REF --out DIR` | Fresh nodes only, plus `STALE.md` and `AGENTS.md`. |
+| `bd export dot` / `bd export svg` | Flat DOT or rendered SVG; no clusters. |
+| `bd clone REF --subtree [--depth N]` | Copies the undirected neighbourhood (rings `0..N`) and rewires cloned edges. |
 
-## 8. Extension guide
+## 12. Extension guide
 
-### 8.1 Code map
+### 12.1 Code map
 
 | Piece | Location |
 | --- | --- |
-| `LayerPath` | `src/bd_tree/graph.py:105` |
-| `parse_layer`, `require_layer`, `layer_path` | `:138`, `:292`, `:216` |
-| `relative_store` | `:312` |
-| `flat_bands` | `:317` |
-| `band_order_hint` | `:382` |
-| `BandPlan` | `:364` |
-| `_band_edges` | `:402` |
-| `layer_reaches` | `:425` |
-| `_layer_order` | `:446` |
-| `_layer_cycles` | `:484` |
-| `_band_components` | `:536` |
-| `_distances` | `:563` |
-| `_top_level_bands` | `:581` |
-| `_relative_plan` | `:652` |
-| `_absolute_plan` | `:780` |
-| `build_graph` | `:829` |
-| `graph_layout` | `:1010` |
-| `layout_paths` | `:1561` |
-| `audit` | `:1387` |
+| `Store.neighbors`, `Store.components`, `Store.topology_roots` | `src/bd_tree/model.py` |
+| `View`, including `distance` | `src/bd_tree/model.py` |
+| `ring_distances`, `build_graph` | `src/bd_tree/graph.py` |
+| `graph_view` (traversal and filters) | `src/bd_tree/graph.py` |
+| `_ring_sections`, `render_graph` | `src/bd_tree/graph.py` |
+| `layout_paths`, `export_graph` | `src/bd_tree/graph.py` |
+| `_load_graph_view` | `src/bd_tree/loader.py` |
+| `walk_neighbors`, `render_show`, `render_path` | `src/bd_tree/navigate.py` |
+| `_ring_layout`, `_build`, `_refs_text`, `_agents_text`, `area` | `src/bd_tree/work.py` |
+| `_directory_indexes`, `_graph_index_text` | `src/bd_tree/exporter.py` |
 
-### 8.2 Invariants to preserve
+### 12.2 Invariants to preserve
 
-- One band per node: from `band` (or the `layer` shorthand); no node is counted twice.
-- One effective folder per node: band folder plus optional explicit subpath.
-- Deterministic output: sort every set before iterating; keep the documented
-  tie-breaks.
-- Projection only: no node file is rewritten, no state file appears, and
-  `bd work` does not become a second source of truth.
-- Full-ref edges: band edges are derived from authored full-ref *structural*
-  links; no bare id is written to data, and symmetric links add none.
-- One bug class per seam: inference in `_relative_plan`, rendering in
-  `graph_layout`/`layout_paths`, diagnostics in `audit`.
+- One member once: every component walk uses a seen-set.
+- One view per anchor: membership is the whole weak component, not one direction.
+- Distance is the only ordering primitive; direction is a label.
+- Deterministic output: sort every set by the documented keys before emitting.
+- Projection only: no node file is rewritten by browsing, export, or `bd work`.
+- Full-ref edges: neighbours come from authored full-ref `links`; derived
+  opposites are computed, never stored.
+- One work area: `bd work` replaces the contents of `<project>/bd_work/`.
+- The active node is the `REFS.md` header, not an extra file.
 
-### 8.3 Adding an inference rule
+### 12.3 Adding a ring-aware command
 
-1. Decide whether it changes bands, nesting, or only display. Put band and
-   nesting rules in `_relative_plan`; put file naming in `_node_path`.
-2. Compute over the parsed plan, not over raw strings, so invalid nodes stay in
-   `unlayered`.
-3. Make every tie deterministic. If two bands or parents compare equal, add a
-   final name or ref tie-break.
-4. Make it a projection: never add a field, never require a new key, never
-   mutate a node.
-5. Add a temporary-store test with the smallest graph that distinguishes the new
-   rule; add a worked example and a test-map row here.
-6. Re-run the examples: `bd check`, `bd audit`, `bd work 1-1`, and both exports.
+1. Load with `load_view(store, anchor)` when the whole component is enough, or
+   `build_graph(store, anchor=...)` when you need `distance`, `components`, or
+   `roots`.
+2. Read order from the graph's `distance` map and the documented tie-break. Do
+   not re-walk neighbours independently.
+3. If the command materializes files, reuse `layout_paths` and `_ring_layout`
+   rather than constructing names.
+4. Make every tie deterministic; add `(id, version)` as the final key.
+5. If it filters, decide explicitly whether the filter stops traversal
+   (`--depth`) or only hides output (`--distance`).
+6. Add a temporary-store test with the smallest graph that distinguishes the
+   behavior, and update this document and `docs/CHEATSHEET.md`.
 
-### 8.4 What must not change
+### 12.4 What must not change
 
-- Absolute mode: integer `stage` bands, forward edges, `band`/`layer` only as a label,
-  `group` inert.
-- Bands are the only layout: `section` and `group` never place a node.
+- Membership is undirected; cycles are ordinary edges.
+- No authored placement field returns.
 - Full-ref data edges and sorted `links`.
-- The reserved generated names in a layer path.
+- The three generated names stay reserved.
+- `bd_work/` stays flat.
 
-## 9. Known limits
+## 13. Known limits
 
-- **Convention, not proof.** The shortest-path rule picks a readable main line.
-  It cannot know which detour is semantically optional.
-- **Equal-length branches.** Parallel branches of the same length all become
-  top-level; the tool does not guess an owner.
-- **Mandatory detours.** A band on every root-to-sink path stays top-level even
-  if it is conceptually a sub-step.
-- **Cycles.** Rendering is deterministic but meaningless as order; fix the
-  cycle with `bd unlink`/`bd link`.
-- **Disconnected components.** They are ordered by kind and name, not by
-  project intent.
-- **Renumbering.** Inserting a band before existing top-level bands shifts later
-  `NN-` prefixes. Paths churn; node data does not.
-- **`unlayered`.** A rendering fallback only; it never repairs validation.
-- **Slug collisions.** Different band names can slugify to one folder (for
-  example `A B` and `a-b`). `layout_paths` rejects file and directory
-  collisions with `ExportError`; rename the band.
-- **Explicit subpaths are verbatim.** They can collide with an inferred folder
-  or another subpath; the collision is an export error, not a merge.
-- **Nesting is not guaranteed.** A band can be unattachable and is then appended
-  as an extra top-level band.
+- **Distance is not semantic order.** A hop count measures graph nearness, not
+  importance, authority, or reading order. A long chain of important nodes can
+  sit in ring 9 while a minor aside sits in ring 1.
+- **Ring 1 is not always "children".** It is split by direction so the labels
+  stay honest, but the graph may author a back-edge or a peer; read the arrow,
+  not the ring number.
+- **Cycles shorten distances.** A closing edge can put a distant node in ring 1.
+  The order is still deterministic; it is just not a topological order.
+- **Multiple shortest paths.** `bd path` prints one shortest path, chosen by the
+  deterministic neighbour order. Other equally short paths exist.
+- **Disconnected stores.** Removing the last edge between two groups creates two
+  components. `bd views` lists both; the default anchor stays in one.
+- **No authored hierarchy.** If a project needs a declared parent/child reading
+  order, encode it with structural links and direction, not with positional
+  fields.
+- **Template collisions.** Two nodes can resolve to one path only through
+  `--path-template`; the layout appends the ref to keep them distinct.
 
-## 10. Test map
+## 14. Test map
 
 | Case | Test | What it pins |
 | --- | --- | --- |
-| Example chain | `test_single_chain_example_is_all_top_level_with_identical_paths` | five top-level bands, identical paths, subpaths |
-| Parallel detours | `test_parallel_detours_nest_under_their_shortest_path_parent` | `L` rule, nesting parent, ordinals |
-| Nested detour | `test_nested_detour_stacks_under_the_placed_child` | recursive folder stacking, text indentation |
-| Equal branches | `test_equal_length_parallel_branches_are_both_top_level` | both branches top-level, name tie-break |
-| Explicit path | `test_explicit_layer_path_wins_over_inference` | subpath below the band, no double nesting |
-| Multi-segment path | `test_multi_segment_explicit_subpath_is_kept_verbatim` | verbatim subpath |
-| Band cycle | `test_band_cycle_is_reported_and_rendering_is_deterministic` | `graph-layer-cycle`, deterministic fallback |
-| Invalid layers | `test_missing_and_invalid_layers_fall_back_to_one_trailing_band` | both codes, one trailing `unlayered` |
-| Same-band order | `test_same_band_order_back_edge_is_reported_across_subpaths` | band-wide order, subpath crossing |
-| Disconnected | `test_disconnected_bands_are_top_level_after_connected_ones` | kind ordering, name ordering |
-| `group` | `test_group_is_ordinary_metadata_and_warns_in_graph_mode` | warning, path unaffected, example has none |
-| Absolute mode | `test_absolute_stage_mode_is_unchanged_and_ignores_group` | stage labels, inert `group` |
-| Link guard | `test_link_refuses_band_cycle_and_same_band_order_and_new_accepts_paths` | cycle and order refusal, `--band`/`--subpath` paths |
-| Materialization | `test_materialization_tree_work_and_exports_use_nested_folders` | `bd work`, `bd edit`, exports, DOT/SVG |
+| Component view | `test_view_is_the_whole_connected_component` | membership is undirected |
+| Distance map | `test_view_distance_is_undirected_bfs` | BFS hop counts |
+| Multi-parent | `test_a_multi_parent_node_appears_once_in_the_view` | one entry per node |
+| Cycle loads | `test_graph_cycle_loads_once_and_is_not_an_error` | cycles are legal |
+| Neighbour kinds | `test_neighbors_lists_both_directions_with_kind` | child/parent/peer |
+| Components | `test_components_are_one_per_weak_component` | component partition |
+| Ring map | `test_ring_distances_maps_every_reachable_ref` | minimum rings |
+| Cycle distance | `test_a_cycle_loads_and_rings_use_the_minimum_distance` | closing edge shortens |
+| Reciprocal pair | `test_a_reciprocal_pair_is_legal_and_not_a_back_edge` | both sides are children |
+| Ring headings | `test_render_graph_ring_headings_split_ring_one` | ring 1 split order |
+| Text filters | `test_type_and_distance_filters` | `--type`, `--distance`, `--depth` |
+| Flat paths | `test_layout_paths_is_flat_and_uses_store_basenames` | basename layout |
+| Template fields | `test_layout_paths_template_placeholders_and_front_matter` | `{distance}` and fields |
+| Work rings | `test_work_index_uses_ring_sections` | `Active`, `Distance N` |
+| Work cycle | `test_work_cycle_appears_once_at_minimum_distance` | one symlink per ref |
+| Show rings | `test_show_depth_two_uses_undirected_bfs_rings` | `show REF+N` |
+| Path arrows | `test_path_command_prints_shortest_path_with_arrows` | shortest path labels |
+| Example store | `test_example_graph_renders_rings_and_audits_clean` | rings 0..4, clean audit |
+| Export | `test_graph_export_is_flat_with_ring_sections_and_byte_stable` | one flat index |
+| Views CLI | `test_graph_roots_lists_one_representative_per_component` | one line per component |

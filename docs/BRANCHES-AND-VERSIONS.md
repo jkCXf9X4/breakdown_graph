@@ -10,8 +10,9 @@ them.
 - A **version** is an alternative file for one node, inside whichever branch is
   checked out. Every node file is `<id>-<version>.md`; `5-1` and `5-2` are peer
   versions of logical node `5`.
-- A **view** is a closure rooted at one full ref over forward structural `links`.
-  It is derived, disposable, and never crosses a branch.
+- A **view** is the weakly connected component of one full ref over authored
+  `links`, walked in both directions. It is derived, disposable, and never
+  crosses a branch.
 - The **flat store** is the merge unit. One file per node version keeps a
   conflict local to the version that changed.
 
@@ -71,13 +72,13 @@ Ask what must move.
 
 - If the alternative must be **isolated, reviewed, or merged as a unit**, it is a
   branch; several nodes and history move together, and git decides when it lands.
-- If it changes **one node and the closure beneath it**, it is a version. It
+- If it changes **one node and the component around it**, it is a version. It
   stays in the same store, shares the checkout, and costs one extra file.
 - If the alternative is only a **different reading order over the same files**,
   it is a view. Nothing moves at all.
 
 The closest a version comes to a branch is a root (intent) version with its own
-out-links: an alternative closure over the same files. Make it the default
+out-links: an alternative component over the same files. Make it the default
 with `bd root 1-2`, open it in the work area with `bd work 1-2`, or pass the ref
 to one command; it is still a lens on one checkout, with no isolation and no
 separate history.
@@ -88,8 +89,9 @@ separate history.
   `bd root REF` for the default root, run `bd work REF` for the work-area view,
   or repoint inbound edges with `bd replace OLD NEW`.
 - `bd clone REF` copies the source file, so the new peer keeps its declared
-  `links`. `bd clone REF --subtree` clones the whole structural forward closure and
-  rewires the copies to each other, leaving the original untouched.
+  `links`. `bd clone REF --subtree` clones the whole weakly connected component
+  (or rings `0..N` with `--depth N`) and rewires the copies to each other,
+  leaving the original untouched.
   `bd replace OLD NEW` is the separate wiring step: it repoints every inbound
   link, or repoints `ROOT` when OLD is the store root; OLD's file stays as a
   peer. Clone and swap in one logical flow with `bd clone REF --subtree` then
@@ -105,9 +107,9 @@ separate history.
   branches diverge silently.
 - Deleting a worktree never deletes a version; deleting a version never touches
   git history.
-- The invariant "every node is reachable from a graph root" is evaluated per
-  checkout, through forward structural links. Another branch's nodes are not
-  missing; they are simply not present.
+- The invariant "every node is reachable from the anchor" is evaluated per
+  checkout, over authored links in either direction. Another branch's nodes are
+  not missing; they are simply not present.
 
 ## Why not one mechanism
 
