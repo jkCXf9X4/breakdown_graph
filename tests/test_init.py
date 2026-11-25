@@ -121,7 +121,7 @@ def test_init_default_graph_end_to_end(tmp_path, capsys):
 
     assert main(["graph", "--root", str(project)]) == 0
     assert "## 0 — 1-1" in capsys.readouterr().out
-    assert main(["audit", "--root", str(project)]) == 0
+    assert main(["check", "--root", str(project)]) == 0
     assert "0 errors, 0 warnings" in capsys.readouterr().out
     result = check(project)
     assert result.ok

@@ -80,7 +80,7 @@ def test_render_svg_returns_svg_with_titles_and_edges():
 @needs_dot
 def test_graph_svg_prints_to_stdout(monkeypatch, capsys):
     monkeypatch.chdir(EXAMPLES)
-    assert main(["graph", "--svg"]) == 0
+    assert main(["graph", "--format", "svg"]) == 0
     out = capsys.readouterr().out
     assert out.startswith(("<?xml", "<svg"))
 
@@ -89,7 +89,7 @@ def test_graph_svg_prints_to_stdout(monkeypatch, capsys):
 def test_graph_svg_out_writes_file(monkeypatch, capsys, tmp_path):
     monkeypatch.chdir(EXAMPLES)
     target = tmp_path / "graph.svg"
-    assert main(["graph", "--svg", "--out", str(target)]) == 0
+    assert main(["graph", "--format", "svg", "--out", str(target)]) == 0
     assert f"svg -> {target}" in capsys.readouterr().out
     text = target.read_text(encoding="utf-8")
     assert "<svg" in text and "Two parents, one node" in text
@@ -98,7 +98,7 @@ def test_graph_svg_out_writes_file(monkeypatch, capsys, tmp_path):
 def test_graph_dot_out_writes_file(monkeypatch, capsys, tmp_path):
     monkeypatch.chdir(EXAMPLES)
     target = tmp_path / "graph.dot"
-    assert main(["graph", "--dot", "--out", str(target)]) == 0
+    assert main(["graph", "--format", "dot", "--out", str(target)]) == 0
     assert f"dot -> {target}" in capsys.readouterr().out
     text = target.read_text(encoding="utf-8")
     assert text.startswith("digraph bd_graph {")
@@ -114,10 +114,10 @@ def test_graph_text_out_writes_file(monkeypatch, capsys, tmp_path):
     assert "## 0 — 1-1" in target.read_text(encoding="utf-8")
 
 
-def test_graph_dot_and_svg_are_mutually_exclusive(monkeypatch):
+def test_graph_rejects_unknown_format(monkeypatch):
     monkeypatch.chdir(EXAMPLES)
     with pytest.raises(SystemExit) as exc:
-        main(["graph", "--dot", "--svg"])
+        main(["graph", "--format", "png"])
     assert exc.value.code == 2
 
 
@@ -126,13 +126,13 @@ def test_visual_filters_narrow_the_render(monkeypatch, capsys, tmp_path):
 
     def render(*argv: str) -> str:
         target = tmp_path / f"{len(list(tmp_path.iterdir()))}.dot"
-        assert main(["graph", "--dot", "--out", str(target), *argv]) == 0
+        assert main(["graph", "--format", "dot", "--out", str(target), *argv]) == 0
         capsys.readouterr()
         return target.read_text(encoding="utf-8")
 
     full = _node_lines(render())
     depth = _node_lines(render("--depth", "1"))
-    window = _node_lines(render("--distance", "0:1"))
+    window = _node_lines(render("--rings", "0:1"))
     typed = _node_lines(render("--type", "breaks_down"))
 
     assert len(full) == 12

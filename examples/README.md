@@ -28,19 +28,20 @@ reaches `11-1` one hop later, which is why `11-1` is ring 4 while `12-1` is ring
 membership is the whole component.
 
 ```sh
-bd audit                                  # 0 errors, 0 warnings
+bd check                                  # 0 errors, 0 warnings
+bd stale                                  # 0 stale edges
 bd retitle --dry-run                      # would retitle 0 tokens in 0 nodes
 bd graph                                  # ring sections from 1-1
 bd graph 1-1 --depth 1                    # rings 0 and 1
-bd graph 1-1 --distance 2:3               # ring 0 plus rings 2 and 3
-bd graph --svg --out /tmp/bd-graph.svg    # rendered SVG (needs Graphviz)
+bd graph 1-1 --rings 2:3                  # ring 0 plus rings 2 and 3
+bd graph --format svg --out /tmp/bd-graph.svg  # rendered SVG (needs Graphviz)
 bd out 1-1                                # authored out-edges, sorted
 bd in 4-1                                 # derived in-edges for a two-parent node
 bd path 10-1                              # shortest undirected chain from 1-1
 bd views                                  # one line per component
 bd work 1-1                               # single flat work area
 bd edit 4-1                               # path of 4-1 in the active view
-bd export graph --view 1-1 --out /tmp/bd-graph
+bd pack 1-1 --out /tmp/bd-graph
 ```
 
 `bd work 1-1` writes `examples/bd_work/` as a flat directory: one symlink per
@@ -49,8 +50,8 @@ node at its store basename (`1-1.md`, `2-1.md`, …), plus generated `INDEX.md`,
 through `## Distance 4`. `REFS.md` is the
 path/ref/kind/distance/title table and its header names the active view.
 
-The `/tmp/bd-graph` export holds the same twelve node files plus one root
-`INDEX.md` with the same ring sections. It is a read-only snapshot, never a work
+The `/tmp/bd-graph` pack holds the same twelve node files plus one root
+`INDEX.md` with the same ring sections. It is a disposable copy, never a work
 area. `bd_work/` is ignored by `examples/.gitignore`.
 
 The commands assume the package is installed (`pip install -e '.[test]'` from

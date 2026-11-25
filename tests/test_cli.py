@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+
 import pytest
 
 from bd_tree.cli import main
@@ -12,18 +14,86 @@ def test_check_exit_status(write, tmp_path):
     assert main(["check", "--root", str(tmp_path)]) == 1
 
 
-def test_export_graph_writes_view_output_shape(write, tmp_path):
+def test_pack_default_writes_all_nodes_and_index(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, band="root", links=[{"to": "2", "type": "breaks_down"}])
     write(nodes, 2, band="claims")
     out = tmp_path / "out"
     assert (
-        main(["export", "graph", "--view", "1", "--root", str(tmp_path), "--out", str(out), "--clean"])
+        main(
+            [
+                "pack",
+                "1",
+                "--root",
+                str(tmp_path),
+                "--out",
+                str(out),
+                "--clean",
+            ]
+        )
         == 0
     )
     assert (out / "INDEX.md").is_file()
     assert (out / "1-1.md").is_file()
     assert (out / "2-1.md").is_file()
+    assert not (out / "AGENTS.md").exists()
+    assert not (out / "STALE.md").exists()
+
+
+def test_pack_fresh_writes_agents_and_stale_without_stale_bodies(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, band="root")
+    write(
+        nodes,
+        2,
+        band="claims",
+        body="stale secret body\n",
+        links=[{"to": "1-1", "type": "supports", "propagates": True}],
+    )
+    out = tmp_path / "out"
+    assert (
+        main(
+            [
+                "pack",
+                "1-1",
+                "--fresh",
+                "--root",
+                str(tmp_path),
+                "--out",
+                str(out),
+                "--clean",
+            ]
+        )
+        == 0
+    )
+    assert (out / "1-1.md").is_file()
+    assert (out / "AGENTS.md").is_file()
+    assert (out / "STALE.md").is_file()
+    assert not (out / "2-1.md").exists()
+    assert not (out / "INDEX.md").exists()
+    assert "stale secret body" not in (out / "STALE.md").read_text(encoding="utf-8")
+
+
+def test_graph_format_dot(write, tmp_path, capsys):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2", "type": "breaks_down"}])
+    write(nodes, 2)
+
+    assert main(["graph", "1", "--format", "dot", "--root", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "digraph bd_graph" in out
+    assert '"1-1" -> "2-1"' in out
+
+
+@pytest.mark.skipif(shutil.which("dot") is None, reason="graphviz not installed")
+def test_graph_format_svg(write, tmp_path, capsys):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2", "type": "breaks_down"}])
+    write(nodes, 2)
+
+    assert main(["graph", "1", "--format", "svg", "--root", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "<svg" in out
 
 
 def test_versions_and_delete_cli(write, tmp_path):
@@ -199,10 +269,9 @@ def test_check_require_flag_and_view_path_template(write, tmp_path):
     assert (
         main(
             [
-                "export",
-                "context",
-                "--view",
-                "1",
+                "pack",
+                "1-1",
+                "--fresh",
                 "--root",
                 str(tmp_path),
                 "--out",
@@ -296,11 +365,20 @@ def test_removed_subcommands_and_flags_exit_2(write, tmp_path):
         ["contain", "1-1", "2-1", *root],
         ["uncontain", "1-1", "2-1", *root],
         ["export", "tree", "1", "--out", str(tmp_path / "out"), *root],
+        ["audit", *root],
+        ["reconcile", "1-1", *root],
+        ["export", "graph", "--view", "1", "--out", str(tmp_path / "out"), *root],
         ["version", "1-1", *root],
         ["grep", "needle", *root],
         ["view", "1", "--out", str(tmp_path / "out"), *root],
         ["ls", *root],
         ["work", "1", "--print", *root],
+        ["work", "1-1", "--status", *root],
+        ["work", "1-1", "--writeback", *root],
+        ["graph", "--dot", *root],
+        ["graph", "--svg", *root],
+        ["graph", "--distance", "1:2", *root],
+        ["retitle", "--view", "1", *root],
         ["show", "1", "--path", *root],
         ["check", "--root-ref", "1", *root],
         ["fork", "1-1", *root],
@@ -355,7 +433,7 @@ def test_work_depth_suffix_reports_and_current_shows_it(write, tmp_path, capsys)
     assert main(["current", "--root", str(tmp_path)]) == 0
     assert "(view 1-1+1)" in capsys.readouterr().out
 
-    assert main(["work", "--status", "--root", str(tmp_path)]) == 0
+    assert main(["current", "--status", "--root", str(tmp_path)]) == 0
     assert "(view 1-1+1)" in capsys.readouterr().out
 
 
@@ -433,7 +511,9 @@ def test_help_texts_are_topology_neutral(capsys):
         ["clone", "--help"],
         ["replace", "--help"],
         ["new", "--help"],
-        ["audit", "--help"],
+        ["pack", "--help"],
+        ["stale", "--help"],
+        ["current", "--help"],
         ["out", "--help"],
         ["in", "--help"],
         ["check", "--help"],
@@ -445,6 +525,7 @@ def test_help_texts_are_topology_neutral(capsys):
         out = capsys.readouterr().out
         assert "prototype" not in out
         assert "containment" not in out
+
 
     with pytest.raises(SystemExit) as excinfo:
         main(["new", "--help"])
@@ -460,4 +541,5 @@ def test_help_texts_are_topology_neutral(capsys):
     assert excinfo.value.code == 0
     out = capsys.readouterr().out
     assert "undirected distance rings" in out
+    assert "component representatives" in out
     assert "containment views" not in out

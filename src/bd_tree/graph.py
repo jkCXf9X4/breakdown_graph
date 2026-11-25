@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .checker import path_problem
 from .errors import BreakdownError, ExportError
-from .exporter import BANNER, _prepare_out, exporter
+from .exporter import BANNER, _prepare_out
 from .frontmatter import render_document
 from .loader import load, parse_ref, parse_selector
 from .model import ExportResult, Issue, Link, Node, Store, View, slugify
@@ -376,6 +376,22 @@ _DOT_PALETTE = (
 )
 _DOT_TITLE_LIMIT = 48
 
+# Graphviz node shapes, cycled by value.  Fixed so the DOT is deterministic.
+_SHAPE_PALETTE = (
+    "box",
+    "ellipse",
+    "diamond",
+    "hexagon",
+    "octagon",
+    "note",
+    "tab",
+    "component",
+    "folder",
+    "box3d",
+    "cylinder",
+    "parallelogram",
+)
+
 
 def _short_title(title: str, limit: int = _DOT_TITLE_LIMIT) -> str:
     """Collapse whitespace and truncate so a DOT box stays readable."""
@@ -391,12 +407,17 @@ def _dot_value(node: Node, color_by: str) -> str:
 
 
 def render_dot(
-    graph: Graph, refs: Iterable[str], *, color_by: str = "type"
+    graph: Graph,
+    refs: Iterable[str],
+    *,
+    color_by: str = "type",
+    shape_by: str | None = None,
 ) -> str:
-    """Graphviz DOT: flat nodes coloured by front-matter key (default ``type``).
+    """Graphviz DOT: flat nodes coloured and shaped by front-matter keys.
 
     Nodes are drawn flat, with no clusters inferred.  Only authored out-edges
-    inside the view are rendered, each labelled with its link type.
+    inside the view are rendered, each labelled with its link type.  ``color_by``
+    defaults to ``type``; ``shape_by`` is opt-in and defaults to a box.
     """
     selected = [ref for ref in refs if ref in graph.store.nodes]
     selected.sort(
@@ -407,6 +428,16 @@ def render_dot(
     )
     values = sorted({_dot_value(graph.store.nodes[ref], color_by) for ref in selected})
     color_index = {value: index for index, value in enumerate(values)}
+    shape_index: dict[str, int] = {}
+    if shape_by:
+        shape_values = sorted(
+            {
+                value
+                for ref in selected
+                if (value := _dot_value(graph.store.nodes[ref], shape_by))
+            }
+        )
+        shape_index = {value: index for index, value in enumerate(shape_values)}
 
     lines = [
         "digraph bd_graph {",
@@ -431,8 +462,13 @@ def render_dot(
             color_index[_dot_value(node, color_by)] % len(_DOT_PALETTE)
         ]
         node_label = _dot_quote(f"{ref}\n{_short_title(node.title)}")
+        shape = "box"
+        if shape_by:
+            value = _dot_value(node, shape_by)
+            if value in shape_index:
+                shape = _SHAPE_PALETTE[shape_index[value] % len(_SHAPE_PALETTE)]
         lines.append(
-            f"    {_dot_quote(ref)} [label={node_label}, "
+            f"    {_dot_quote(ref)} [label={node_label}, shape={shape}, "
             f"fillcolor={_dot_quote(fill)}];"
         )
     wanted = set(selected)
@@ -453,7 +489,13 @@ def render_dot(
     return "\n".join(lines) + "\n"
 
 
-def render_svg(graph: Graph, refs: Iterable[str]) -> str:
+def render_svg(
+    graph: Graph,
+    refs: Iterable[str],
+    *,
+    color_by: str = "type",
+    shape_by: str | None = None,
+) -> str:
     """Render :func:`render_dot` to SVG through the Graphviz ``dot`` binary.
 
     No Python dependency: the DOT text is piped to ``dot -Tsvg``.  A missing
@@ -462,12 +504,12 @@ def render_svg(graph: Graph, refs: Iterable[str]) -> str:
     dot_path = shutil.which("dot")
     if dot_path is None:
         raise BreakdownError(
-            "Graphviz 'dot' not found; install Graphviz or use 'bd graph --dot'"
+            "Graphviz 'dot' not found; install Graphviz or use 'bd graph --format dot'"
         )
     try:
         completed = subprocess.run(
             [dot_path, "-Tsvg"],
-            input=render_dot(graph, refs),
+            input=render_dot(graph, refs, color_by=color_by, shape_by=shape_by),
             text=True,
             capture_output=True,
             check=False,
@@ -720,7 +762,7 @@ def layout_paths(graph: Graph, template: str | None = None) -> dict[str, Path]:
 def _ring_index(
     graph: Graph, anchor: str, refs: Iterable[str], paths: dict[str, Path]
 ) -> str:
-    lines = [BANNER.format(name="graph"), "", f"# Graph {anchor}", ""]
+    lines = [BANNER, "", f"# Graph {anchor}", ""]
     for heading, members in _ring_sections(graph, refs):
         lines.append(heading)
         for ref in members:
@@ -732,12 +774,12 @@ def _ring_index(
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
-@exporter("graph")
 def export_graph(
     graph: Graph | View,
     anchor: str | Path,
     out: Path | None = None,
     *,
+    path_template: str | None = None,
     force: bool = False,
     clean: bool = False,
 ) -> ExportResult:
@@ -757,7 +799,7 @@ def export_graph(
     refs = graph_view(built, target)
     _prepare_out(destination, force=force, clean=clean)
 
-    paths = layout_paths(built)
+    paths = layout_paths(built, path_template)
     files: list[Path] = []
     for ref in refs:
         node = built.store.nodes[ref]

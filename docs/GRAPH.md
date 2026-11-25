@@ -72,7 +72,7 @@ walked in both directions:
 - a node reached through many routes is included once, at its minimum distance;
 - `--type T` follows only links with that type (repeatable);
 - `--depth N` bounds traversal to `N` link hops;
-- `--distance A:B` keeps only nodes whose ring is in the inclusive range; the
+- `--rings A:B` keeps only nodes whose ring is in the inclusive range; the
   filter is display-only, so traversal continues through hidden nodes and the
   anchor is always included.
 
@@ -88,22 +88,22 @@ contains a cycle.
 bd graph                    # text render from the default anchor
 bd graph 1-1                # the same component, anchored at 1-1
 bd graph 1-1 --depth 1      # rings 0 and 1
-bd graph 1-1 --distance 2:3 # ring 0 plus rings 2 and 3
+bd graph 1-1 --rings 2:3    # ring 0 plus rings 2 and 3
 bd graph --type supports    # follow one edge kind
-bd graph --dot              # Graphviz DOT
-bd graph --svg --out graph.svg  # rendered SVG (needs Graphviz)
+bd graph --format dot       # Graphviz DOT
+bd graph --format svg --out graph.svg  # rendered SVG (needs Graphviz)
 bd show 4-1+1               # the node plus one link hop
 bd views                    # one representative per component
 ```
 
-`bd graph --svg` pipes the flat DOT through Graphviz `dot`, so it needs the
-`dot` binary on `PATH`; `bd graph --dot` is the dependency-free fallback. Both
-accept `--out PATH`; without it they print to stdout. `bd graph` is the only
-view renderer; there is no separate `bd tree` command.
+`bd graph --format svg` pipes the flat DOT through Graphviz `dot`, so it needs
+the `dot` binary on `PATH`; `bd graph --format dot` is the dependency-free
+fallback. Both accept `--out PATH`; without it they print to stdout. `bd graph`
+is the only view renderer; there is no separate `bd tree` command.
 
 ## Ring layout
 
-Text rendering, the work area, and export order refs by distance from the
+Text rendering, the work area, and pack order refs by distance from the
 anchor. Ring 0 is the anchor. Ring 1 is split into `children` and `parents`,
 each sorted by `(link type, id, version)`. Rings 2 and deeper are numbered
 sections sorted by `(id, version)`. The canonical global key is
@@ -114,12 +114,12 @@ sections sorted by `(id, version)`. The canonical global key is
 materialized ref, named after the store file, plus a root `INDEX.md` with ring
 sections and a `REFS.md` table sorted by `(distance, kind, ref)`. There are no
 node directories. `REF+N` materializes rings `0..N`; the view stays the full
-component. `bd export graph` writes the same flat view as regular files with one
-ring-section `INDEX.md`.
+component. `bd pack REF --out DIR` writes the same flat view as regular files
+with one ring-section `INDEX.md`.
 
 The active node of the work area is the view ref in the `REFS.md` header
-(`# References — view REF[+N]`). `bd current`, `bd edit`, `--status`, and
-`--writeback` read it; there is no separate state file.
+(`# References — view REF[+N]`). `bd current`, `bd edit`, `bd current --status`,
+and `bd work --repair` read it; there is no separate state file.
 
 ## Authored out-edges, derived in-edges
 
@@ -132,11 +132,11 @@ bd in 4-1       # computed parents of 4-1, every line marked derived
 `bd show --links` prints one undirected neighbour row per edge with an arrow:
 `→` child, `←` parent.
 
-## Audit
+## Checks
 
-`bd check` runs structural validation and the graph checks; `bd audit [REF]` is
-the explicit graph form. Both exit non-zero when any error is present. The
-default anchor is the same as `bd graph`.
+`bd check` runs structural validation and the graph checks; there is no separate
+`audit` command. It exits non-zero when any error is present. The default anchor
+is the same as `bd graph`.
 
 Cycles, back-edges, and reciprocal edges are never errors.
 `graph-orphan` now means a node outside the anchor's component, not a node
@@ -172,9 +172,9 @@ without an incoming edge.
 | `missing-nodes-dir` | error | neither `nodes/` nor `.bd_tree/nodes/` exists |
 | `view-root-missing` | error | the requested view ref does not exist |
 
-## Export
+## Pack
 
-`bd export graph` writes a read-only snapshot of one view:
+`bd pack REF --out DIR` writes a read-only copy of one view:
 
 - node files as regular files at their flat basename, using the store file's
   name;
@@ -183,16 +183,18 @@ without an incoming edge.
 
 `bd work` writes the same flat structure with symlinks instead of copies. The
 output is deterministic and byte-identical across runs. `--force` writes into a
-non-empty directory; `--clean` removes the output first.
+non-empty directory; `--clean` removes the output first. `--fresh` writes only
+fresh node bodies, plus `STALE.md` and `AGENTS.md`.
 
 ```sh
-bd export graph --view 1-1 --out /tmp/bd-graph
+bd pack 1-1 --out /tmp/bd-graph
+bd pack 1-1 --fresh --out /tmp/bd-context
 ```
 
-Three visual paths cover the same store: `bd graph --svg` draws the ring view;
-the `bd export dot --render svg` pair writes the flat DOT graph and renders it
-(the same DOT text fed to the file and to Graphviz); and `bd export svg` renders
-that flat graph without keeping the `.dot` source.
+Three visual paths cover the same store: the default `bd graph` text render
+draws ring sections; `bd graph --format dot --out graph.dot` writes the flat DOT
+graph; and `bd graph --format svg --out graph.svg` renders that flat graph
+through Graphviz without keeping the `.dot` source.
 
 ## Migration
 
@@ -231,7 +233,7 @@ bd retitle --root docs/breakdown
 - Keep a node's tokens in ascending target-ref order. Sorted declarations keep
   a merge local to the edge that changed.
 - When one node fans out too widely, insert an intermediate header instead of
-  adding hundreds of direct edges. Audit warns above 200 out-links.
+  adding hundreds of direct edges. The check warns above 200 out-links.
 - Sorting is numeric by `(id, version)`, matching the rest of the store.
 - Reachability is a query, not stored placement: adding a parent adds no file
   and no positional field. In-edges are derived, so no parent array is rewritten.
@@ -257,14 +259,13 @@ later. `4-1` and `8-1` each appear once despite their multiple neighbours.
 ```sh
 bd check
 bd graph                    # ring sections from 1-1
-bd graph --svg --out /tmp/bd-graph.svg
+bd graph --format svg --out /tmp/bd-graph.svg
 bd out 1-1
 bd in 4-1
 bd path 10-1
-bd audit
 bd work 1-1
 bd edit 4-1
-bd export graph --view 1-1 --out /tmp/bd-graph
+bd pack 1-1 --out /tmp/bd-graph
 ```
 
 The repository `.bd_root` pointer names `examples`, so plain `bd` finds it from

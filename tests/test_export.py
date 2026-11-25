@@ -4,8 +4,9 @@ import shutil
 
 import pytest
 
-from bd_tree.api import check, export_view
+from bd_tree.api import check, pack
 from bd_tree.errors import ExportError
+from bd_tree.graph import build_graph, graph_view, render_dot, render_svg
 
 
 def _chain(write, nodes):
@@ -27,7 +28,7 @@ def test_graph_view_writes_flat_nodes_and_one_ring_index(write, tmp_path):
     nodes = tmp_path / "nodes"
     _chain(write, nodes)
     out = tmp_path / "graph"
-    result = export_view("graph", tmp_path, "1-1", out)
+    result = pack(tmp_path, "1-1", out, fresh=False)
 
     assert result.nodes == 4
     assert len(result.files) == 5  # 4 nodes, 1 root index
@@ -51,7 +52,7 @@ def test_graph_index_splits_ring_one_by_direction(write, tmp_path):
     nodes = tmp_path / "nodes"
     _chain(write, nodes)
     out = tmp_path / "view"
-    export_view("graph", tmp_path, "2-1", out)
+    pack(tmp_path, "2-1", out, fresh=False)
 
     index = (out / "INDEX.md").read_text(encoding="utf-8")
     assert "## 0 — 2-1" in index
@@ -65,13 +66,13 @@ def test_graph_index_splits_ring_one_by_direction(write, tmp_path):
 def test_graph_refuses_non_empty_unless_force_or_clean(write, tmp_path):
     write(tmp_path / "nodes", 1)
     out = tmp_path / "graph"
-    export_view("graph", tmp_path, "1-1", out)
+    pack(tmp_path, "1-1", out, fresh=False)
     (out / "stray.txt").write_text("x", encoding="utf-8")
     with pytest.raises(ExportError, match="refusing"):
-        export_view("graph", tmp_path, "1-1", out)
-    export_view("graph", tmp_path, "1-1", out, force=True)
+        pack(tmp_path, "1-1", out, fresh=False)
+    pack(tmp_path, "1-1", out, fresh=False, force=True)
     assert (out / "stray.txt").exists()
-    export_view("graph", tmp_path, "1-1", out, clean=True)
+    pack(tmp_path, "1-1", out, fresh=False, clean=True)
     assert not (out / "stray.txt").exists()
 
 
@@ -79,7 +80,7 @@ def test_graph_view_exports_the_whole_component(write, tmp_path):
     nodes = tmp_path / "nodes"
     _chain(write, nodes)
     out = tmp_path / "view"
-    result = export_view("graph", tmp_path, "2-1", out)
+    result = pack(tmp_path, "2-1", out, fresh=False)
 
     assert result.nodes == 4
     assert (out / "1-1.md").is_file()
@@ -107,7 +108,7 @@ def test_context_excludes_stale_nodes(write, tmp_path, pin):
     )
     write(nodes, 2, body="v2\n")
     out = tmp_path / "context"
-    result = export_view("context", tmp_path, "1-1", out)
+    result = pack(tmp_path, "1-1", out, fresh=True)
     assert result.nodes == 2
     assert not list(out.rglob("3-1.md"))
     stale = (out / "STALE.md").read_text(encoding="utf-8")
@@ -119,11 +120,11 @@ def test_context_path_template_has_distance(write, tmp_path):
     nodes = tmp_path / "nodes"
     _chain(write, nodes)
     out = tmp_path / "context"
-    export_view(
-        "context",
+    pack(
         tmp_path,
         "1-1",
         out,
+        fresh=True,
         path_template="{distance}-{ref}.md",
     )
 
@@ -133,14 +134,14 @@ def test_context_path_template_has_distance(write, tmp_path):
     assert (out / "2-4-1.md").is_file()
 
 
-def test_dot_export(write, tmp_path):
+def test_dot_render(write, tmp_path):
     nodes = tmp_path / "nodes"
     _chain(write, nodes)
-    out = tmp_path / "graph.dot"
-    result = export_view("dot", tmp_path, "1-1", out)
-    assert result.nodes == 4
-    text = out.read_text(encoding="utf-8")
-    assert "digraph bd_tree" in text
+    graph = build_graph(tmp_path)
+    refs = graph_view(graph, "1-1")
+    text = render_dot(graph, refs)
+    assert len(refs) == 4
+    assert "digraph bd_graph" in text
     assert '"1-1" -> "2-1" [label="breaks_down"' in text
     assert 'label="1-1\\nTitle of 1-1"' in text
     assert "fillcolor" in text
@@ -177,11 +178,11 @@ def test_generic_store_path_template_and_fields(write, tmp_path):
     assert not any(issue.code == "missing-field" for issue in result.issues)
 
     out = tmp_path / "context"
-    exported = export_view(
-        "context",
+    exported = pack(
         tmp_path,
         "1-1",
         out,
+        fresh=True,
         path_template="{phase}/{ref}.md",
         title_field="phase",
         summary_field="audience",
@@ -212,7 +213,7 @@ def test_default_path_uses_the_store_basename(write, tmp_path):
     )
     write(nodes, 2, name="also-ignored", title="Some Method (Draft)")
     out = tmp_path / "fallback"
-    export_view("graph", tmp_path, "1-1", out)
+    pack(tmp_path, "1-1", out, fresh=False)
     assert (out / "1-1.md").is_file()
     assert (out / "2-1.md").is_file()
     assert not (out / "ignored-name.md").exists()
@@ -232,7 +233,7 @@ def test_template_collision_appends_the_ref(write, tmp_path):
     write(nodes, 2)
     write(nodes, 3)
     out = tmp_path / "view"
-    export_view("context", tmp_path, "1-1", out, path_template="same.md")
+    pack(tmp_path, "1-1", out, fresh=True, path_template="same.md")
 
     assert (out / "same.md").is_file()
     assert (out / "same-2-1.md").is_file()
@@ -244,9 +245,9 @@ def test_reserved_template_is_refused(write, tmp_path):
     _chain(write, nodes)
     out = tmp_path / "view"
     with pytest.raises(ExportError, match="collides with generated"):
-        export_view("context", tmp_path, "1-1", out, path_template="INDEX.md")
+        pack(tmp_path, "1-1", out, fresh=True, path_template="INDEX.md")
     with pytest.raises(ExportError, match="collides with generated"):
-        export_view("context", tmp_path, "1-1", out, path_template="AGENTS.md")
+        pack(tmp_path, "1-1", out, fresh=True, path_template="AGENTS.md")
 
 
 def test_dot_color_and_shape_by_arbitrary_fields(write, tmp_path):
@@ -266,14 +267,18 @@ def test_dot_color_and_shape_by_arbitrary_fields(write, tmp_path):
         audience="team",
     )
     write(nodes, 3, phase="build", audience="dev")
-    out = tmp_path / "graph.dot"
-    export_view("dot", tmp_path, "1-1", out, color_by="phase", shape_by="audience")
-    text = out.read_text(encoding="utf-8")
+    graph = build_graph(tmp_path)
+    text = render_dot(
+        graph,
+        graph_view(graph, "1-1"),
+        color_by="phase",
+        shape_by="audience",
+    )
     assert "shape=ellipse" in text and "shape=diamond" in text
     colours = [
         line.split("fillcolor=")[1].split(",")[0]
         for line in text.splitlines()
-        if "fillcolor=" in line
+        if "[label=" in line and "fillcolor=" in line
     ]
     assert len(colours) == 3
     assert colours[1] == colours[2]
@@ -284,7 +289,7 @@ def test_no_exported_path_ends_in_index_md(write, tmp_path):
     nodes = tmp_path / "nodes"
     _chain(write, nodes)
     out = tmp_path / "view"
-    result = export_view("graph", tmp_path, "1-1", out)
+    result = pack(tmp_path, "1-1", out, fresh=False)
     node_paths = [
         path.relative_to(out).as_posix()
         for path in result.files
@@ -294,9 +299,9 @@ def test_no_exported_path_ends_in_index_md(write, tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("dot") is None, reason="graphviz not installed")
-def test_svg_export(write, tmp_path):
+def test_svg_render(write, tmp_path):
     write(tmp_path / "nodes", 1)
-    out = tmp_path / "graph.svg"
-    result = export_view("svg", tmp_path, "1-1", out)
-    assert result.nodes == 1
-    assert out.read_text(encoding="utf-8").lstrip().startswith("<?xml")
+    graph = build_graph(tmp_path)
+    svg = render_svg(graph, graph_view(graph, "1-1"))
+    assert svg.lstrip().startswith("<?xml")
+    assert "<svg" in svg

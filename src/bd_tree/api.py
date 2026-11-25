@@ -7,7 +7,7 @@ from typing import Any
 
 from .checker import check as _check
 from .errors import BreakdownError, ExportError
-from .exporter import EXPORTERS
+from .exporter import export_context as _export_context
 from .freshness import reconcile as _reconcile
 from .freshness import stale as _stale
 from .frontmatter import body_hash
@@ -71,7 +71,6 @@ __all__ = [
     "BreakdownError",
     "CheckResult",
     "DiffEntry",
-    "EXPORT_CHOICES",
     "Edge",
     "ExportError",
     "ExportResult",
@@ -104,7 +103,6 @@ __all__ = [
     "diff",
     "edit_path",
     "export_graph",
-    "export_view",
     "graph_view",
     "init_store",
     "link",
@@ -113,6 +111,7 @@ __all__ = [
     "migrate",
     "new_node",
     "node_path",
+    "pack",
     "parse_filename",
     "parse_ref",
     "parse_selector",
@@ -202,32 +201,50 @@ def check(
     )
 
 
-EXPORT_CHOICES = ("context", "dot", "graph", "svg")
-
-
-def export_view(
-    name: str, root: str | Path, view: str | int, out: str | Path, **opts: Any
+def pack(
+    root: str | Path,
+    view: str | int,
+    out: str | Path,
+    *,
+    fresh: bool = False,
+    force: bool = False,
+    clean: bool = False,
+    path_template: str | None = None,
+    title_field: str = "title",
+    summary_field: str = "summary",
 ) -> ExportResult:
-    """Run one exporter: ``context``, ``dot``, ``graph`` or ``svg``."""
-    if name not in EXPORT_CHOICES:
-        raise BreakdownError(
-            f"unknown export '{name}' (available: {', '.join(EXPORT_CHOICES)})"
+    """Materialize one view into a directory.
+
+    Default: every node plus ``INDEX.md``, ordered by distance ring.
+    ``fresh=True``: only fresh nodes, plus ``AGENTS.md`` and ``STALE.md``.
+    """
+    if fresh:
+        resolved = _load_view(root, view)
+        errors = [issue for issue in resolved.issues if issue.level == "error"]
+        if errors:
+            raise BreakdownError(
+                f"view {resolved.ref} is invalid: "
+                + "; ".join(issue.message for issue in errors)
+            )
+        return _export_context(
+            resolved,
+            Path(out),
+            path_template=path_template,
+            title_field=title_field,
+            summary_field=summary_field,
+            force=force,
+            clean=clean,
         )
-    func = EXPORTERS.get(name)
-    if func is None:
-        raise BreakdownError(f"export '{name}' is not registered")
-    if name == "graph":
-        graph = build_graph(root)
-        anchor = resolve_graph_ref(graph, view)
-        return func(graph, anchor, Path(out), **opts)
-    resolved = _load_view(root, view)
-    errors = [issue for issue in resolved.issues if issue.level == "error"]
-    if errors:
-        raise BreakdownError(
-            f"view {resolved.ref} is invalid: "
-            + "; ".join(issue.message for issue in errors)
-        )
-    return func(resolved, Path(out), **opts)
+    built = build_graph(root)
+    anchor = resolve_graph_ref(built, view)
+    return export_graph(
+        built,
+        anchor,
+        Path(out),
+        path_template=path_template,
+        force=force,
+        clean=clean,
+    )
 
 
 def stale(root: str | Path, view: str | int | None = None) -> list[StaleEdge]:

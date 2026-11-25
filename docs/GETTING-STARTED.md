@@ -70,7 +70,7 @@ There is no second topology and no `contains` key. A node that still declares
 ```sh
 bd graph 1-1
 bd graph --depth 1
-bd graph 1-1 --distance 2:3
+bd graph 1-1 --rings 2:3
 bd show 2-1+1 --max-chars 400
 bd find closure --limit 3
 bd path 4-1
@@ -83,7 +83,7 @@ bd views
   derived `← in` edges. The anchor is ring 0; ring 1 is split into `children`
   and `parents`; deeper rings are numbered. `bd graph` is the only view
   renderer.
-- `--depth N` stops traversal after `N` hops. `--distance A:B` keeps an
+- `--depth N` stops traversal after `N` hops. `--rings A:B` keeps an
   inclusive ring range in the output but keeps traversing through hidden nodes;
   the anchor is always included.
 - `show REF+N` prints the node body plus rings `0..N`, each node once. Arrival
@@ -102,10 +102,9 @@ parents, cycles, and back-edges are legal.
 Exit codes: `bd check` returns 1 on errors and 0 on clean. Structural commands
 return 2 on refusal.
 
-## 3. Audit the graph
+## 3. Check the graph
 
 ```sh
-bd audit
 bd check
 ```
 
@@ -113,7 +112,7 @@ bd check
 0 errors, 0 warnings
 ```
 
-The graph audit checks the rules that make the undirected view meaningful:
+The graph checks make the undirected view meaningful:
 
 - tokens resolve to existing full refs and are kept in ascending target order;
 - a token that does not match `[[REF, TYPE]]` is `inline-malformed`, and the
@@ -203,23 +202,23 @@ regular generated files.
 ```
 
 The `# References — view REF[+N]` header is the active node of the area.
-`bd current`, `bd edit`, `--status`, and `--writeback` read it. There is no
-separate state file.
+`bd current`, `bd edit`, `bd current --status`, and `bd work --repair` read it.
+There is no separate state file.
 
 `bd edit REF` prints the ref's absolute path inside the active view and errors
 if the ref is not there. `bd current` is read-only; `--path` prints only the
 path and `--view` only the ref, and it errors if no area exists.
 
-`--status` reports `ok`, `missing`, `wrong-target`, `detached`, `stray`, or
-`stale-ref`. If an editor replaces a symlink with a regular file:
+`bd current --status` reports `ok`, `missing`, `wrong-target`, `detached`,
+`stray`, or `stale-ref`. If an editor replaces a symlink with a regular file:
 
 ```sh
-bd work --status
-bd work --writeback
+bd current --status
+bd work --repair
 ```
 
-`--writeback` writes the detached content to the original node, refuses files
-without valid front matter, and re-links them.
+`bd work --repair` writes the detached content to the original node, refuses
+files without valid front matter, and re-links them.
 
 There is exactly one writable work area. `bd work REF` switches it to another
 view by replacing its contents: stale links are removed, and `INDEX.md`,
@@ -239,10 +238,10 @@ bd current --view  # 1-1+1
 bd work 1-1        # restore the full component
 ```
 
-Read-only snapshots (`bd export graph`, `bd export context`, `bd export dot`)
-are separate disposable exports, not a second work area. `bd work` and
-`bd export graph` materialize the same flat view; the export writes regular
-files plus a ring-section `INDEX.md`.
+Read-only projections (`bd pack`, `bd graph --format dot|svg`) are separate
+disposable outputs, not a second work area. `bd work` and `bd pack`
+materialize the same flat view; `bd pack` writes regular files plus a
+ring-section `INDEX.md`, while `bd graph --format` writes a string render.
 
 ## 5. Create a store
 
@@ -303,16 +302,16 @@ top-level `freshness:` map; `bd stale` reports when the target moves.
 ignores token lines and the `## Links` heading, so adding an edge does not
 invalidate another edge's pin.
 
-Reconcile after reviewing the change:
+Repin after reviewing the change:
 
 ```sh
-bd reconcile REF           # or --all
+bd stale --fix REF         # or --all
 bd stale
 ```
 
 Cached link titles are tool-maintained in the same spirit: after a target is
 retitled, run `bd retitle` to regenerate every cache in the store (or narrow
-with `--view REF`); `bd retitle --dry-run` reports what would change.
+with `REF`); `bd retitle --dry-run` reports what would change.
 
 Remove an edge:
 
@@ -430,11 +429,11 @@ bd work 1-1
 bd current
 
 # read-only snapshot: fresh nodes, plus STALE.md and AGENTS.md
-bd export context --view 1-1 --out /tmp/bd-context-1-1
+bd pack 1-1 --fresh --out /tmp/bd-context-1-1
 ```
 
-`bd work` writes `<project>/bd_work/` and is the only work area; the export
-directory is a disposable snapshot, not a second area. Both contain an
+`bd work` writes `<project>/bd_work/` and is the only work area; the pack
+directory is a disposable copy, not a second area. Both contain an
 `AGENTS.md`; the work area also records the branch, commit, and worktree, and
 its `REFS.md` names the active view. Tell the agent to read exactly one
 directory and not to read outside it, and to use `bd edit REF` rather than
@@ -495,10 +494,10 @@ bodies, one component, rings 0 through 4 from `1-1`, and no `contains`.
 | `bare-ref` / `invalid-ref` in data | `ROOT` needs a full `id-version` ref; a bare ref inside a token is `inline-malformed`. Convert a classic bare-file store once with `bd migrate`. |
 | A cycle or back-edge is reported | It should not be. Update to the current version; only a self-loop is refused by `bd link`. |
 | `graph-orphan` | A node is outside the default component. Link it in, or anchor on its component with `bd graph REF` / `bd work REF`. |
-| `bd work` refuses to switch | `bd_work/` has detached or stray files. Run `--status`, then `--writeback` to keep them or `--clean` to discard them. |
+| `bd work` refuses to switch | `bd_work/` has detached or stray files. Run `bd current --status`, then `bd work --repair` to keep them or `--clean` to discard them. |
 | `bd current` errors | No work area exists. Build one with `bd work [REF]`. |
 | `bd edit REF` errors | The ref is not in the active view. Switch with `bd work REF` or use a ref that is present. |
-| Edit did not reach the node | The editor replaced the symlink. Run `--status`, then `--writeback`. |
+| Edit did not reach the node | The editor replaced the symlink. Run `bd current --status`, then `bd work --repair`. |
 | Want two work folders | Not supported. `bd_work/` is the single area; switch with `bd work REF`. |
 | `bd_work/` appears in git status | `bd init` adds it to `.gitignore`; add `bd_work/` if the project predates that. |
 | Work folder points at missing files | The branch changed under the layout. Rebuild with `bd work REF --clean`. |

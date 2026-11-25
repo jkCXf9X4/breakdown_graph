@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from bd_tree.api import load, reconcile, stale
+from bd_tree.cli import main
 from bd_tree.errors import BreakdownError
 from bd_tree.frontmatter import parse_document
 from conftest import add_token, set_freshness
@@ -172,3 +173,35 @@ def test_reconcile_ref_outside_view_fails(write, tmp_path):
     write(nodes, 9)
     with pytest.raises(BreakdownError, match="outside view"):
         reconcile(tmp_path, ["9-1"], "2-1")
+
+
+def _untracked_store(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2, links=[{"to": "1-1", "type": "supports", "propagates": True}])
+    return nodes
+
+
+def test_stale_fix_with_an_explicit_ref(write, tmp_path, capsys):
+    _untracked_store(write, tmp_path)
+    assert [edge.state for edge in stale(tmp_path, "1-1")] == ["untracked"]
+
+    assert main(["stale", "2-1", "--fix", "--root", str(tmp_path)]) == 0
+    assert "1 pins rewritten" in capsys.readouterr().out
+    assert stale(tmp_path, "1-1") == []
+
+
+def test_stale_fix_all(write, tmp_path, capsys):
+    _untracked_store(write, tmp_path)
+    assert len(stale(tmp_path, "1-1")) == 1
+
+    assert main(["stale", "--all", "--fix", "--root", str(tmp_path)]) == 0
+    assert "1 pins rewritten" in capsys.readouterr().out
+    assert stale(tmp_path, "1-1") == []
+
+
+def test_stale_fix_requires_a_ref_or_all(write, tmp_path, capsys):
+    _untracked_store(write, tmp_path)
+
+    assert main(["stale", "--fix", "--root", str(tmp_path)]) == 2
+    assert "give one or more REFs or --all" in capsys.readouterr().err

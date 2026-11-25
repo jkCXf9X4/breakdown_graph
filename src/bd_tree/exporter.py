@@ -1,17 +1,15 @@
-"""Export link-closure views.  Registry via ``@exporter``.
+"""Materialize one view into a directory.
 
 Everything display-related comes from front-matter fields chosen on the command
 line: paths from the flat ring layout or a template, titles and summaries from
-configurable keys, dot colours and shapes from arbitrary fields.  No folder or
-link-type names live here.
+configurable keys.  No folder or link-type names live here.
 """
 
 from __future__ import annotations
 
 import shutil
-import subprocess
 from collections import defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -20,60 +18,7 @@ from .freshness import stale_edge_list
 from .frontmatter import render_document
 from .model import ExportResult, Node, StaleEdge, View
 
-Exporter = Callable[..., ExportResult]
-EXPORTERS: dict[str, Exporter] = {}
-
-BANNER = "<!-- GENERATED FILE — do not edit. Regenerate with `bd export {name}`. -->"
-
-DEFAULT_COLOR = "#eeeeee"
-DEFAULT_EDGE = ("solid", "#555555", "1.0")
-
-# Stable palettes: index by the sorted distinct field values, never by name.
-COLOR_PALETTE: tuple[str, ...] = (
-    "#f3d9a4",
-    "#f4b6b6",
-    "#c9d7f0",
-    "#c7e6c7",
-    "#e2d4f0",
-    "#bfe4e4",
-    "#dcdcdc",
-    "#f0d0a0",
-    "#e6e0b0",
-    "#d4e6c7",
-    "#f5cfd8",
-    "#cfe0f5",
-)
-SHAPE_PALETTE: tuple[str, ...] = (
-    "box",
-    "ellipse",
-    "diamond",
-    "hexagon",
-    "octagon",
-    "note",
-    "tab",
-    "component",
-    "folder",
-    "box3d",
-    "cylinder",
-    "parallelogram",
-)
-EDGE_COLORS: tuple[str, ...] = (
-    "#333333",
-    "#1f5fa8",
-    "#7a4fa0",
-    "#b00020",
-    "#8a6d3b",
-    "#555555",
-)
-EDGE_LINESTYLES: tuple[str, ...] = ("solid", "dashed", "dotted")
-
-
-def exporter(name: str) -> Callable[[Exporter], Exporter]:
-    def register(func: Exporter) -> Exporter:
-        EXPORTERS[name] = func
-        return func
-
-    return register
+BANNER = "<!-- GENERATED FILE — do not edit. Regenerate with `bd pack`. -->"
 
 
 def _prepare_out(out: Path, *, force: bool, clean: bool) -> None:
@@ -371,7 +316,6 @@ def _stale_section(
     return lines
 
 
-@exporter("context")
 def export_context(
     view: View,
     out: Path,
@@ -404,7 +348,7 @@ def export_context(
         files.append(_write_node(out, view.nodes[ref], paths[ref]))
 
     stale_lines = [
-        BANNER.format(name="context"),
+        BANNER,
         "",
         "# Stale context — open questions",
         "",
@@ -449,168 +393,3 @@ def export_context(
     agents_path.write_text("\n".join(agents), encoding="utf-8", newline="")
     files.append(agents_path)
     return ExportResult("context", out, len(included), files)
-
-
-def _quote(text: str) -> str:
-    escaped = (
-        text.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
-    )
-    return '"' + escaped + '"'
-
-
-def _value_map(
-    nodes: Iterable[Node], field: str | None
-) -> dict[str, int]:
-    if not field:
-        return {}
-    values = {
-        _text(node.meta.get(field))
-        for node in nodes
-        if node.meta.get(field) not in (None, "")
-    }
-    return {value: index for index, value in enumerate(sorted(values))}
-
-
-def _dot_text(view: View, color_by: str | None, shape_by: str | None) -> str:
-    nodes = list(view.nodes.values())
-    if color_by is None:
-        color_by = "type"
-    color_index = _value_map(nodes, color_by)
-    shape_index = _value_map(nodes, shape_by)
-
-    edges = [edge for edge in view.edges if edge.target in view.nodes]
-    edge_types = sorted({edge.type for edge in edges})
-    edge_style = {name: index for index, name in enumerate(edge_types)}
-
-    lines = [
-        "digraph bd_tree {",
-        "  rankdir=LR;",
-        '  graph [fontname="Helvetica"];',
-        '  node [fontname="Helvetica", fontsize=10, style="filled"];',
-        '  edge [fontname="Helvetica", fontsize=8];',
-    ]
-    for node in sorted(nodes, key=lambda n: (n.id, n.version)):
-        if color_by:
-            index = color_index.get(_text(node.meta.get(color_by)))
-            colour = (
-                COLOR_PALETTE[index % len(COLOR_PALETTE)]
-                if index is not None
-                else DEFAULT_COLOR
-            )
-        else:
-            colour = DEFAULT_COLOR
-        if shape_by:
-            index = shape_index.get(_text(node.meta.get(shape_by)))
-            shape = (
-                SHAPE_PALETTE[index % len(SHAPE_PALETTE)]
-                if index is not None
-                else "box"
-            )
-        else:
-            shape = "box"
-        label = f"{node.ref}\n{node.title}"
-        if len(label) > 80:
-            label = label[:77] + "..."
-        lines.append(
-            f"  {_quote(node.ref)} [shape={shape}, fillcolor={_quote(colour)}, "
-            f"label={_quote(label)}];"
-        )
-    for edge in edges:
-        index = edge_style.get(edge.type, 0)
-        style = EDGE_LINESTYLES[index % len(EDGE_LINESTYLES)] if edge_types else DEFAULT_EDGE[0]
-        colour = (
-            EDGE_COLORS[index % len(EDGE_COLORS)] if edge_types else DEFAULT_EDGE[1]
-        )
-        width = DEFAULT_EDGE[2]
-        lines.append(
-            f"  {_quote(edge.source)} -> {_quote(edge.target)} "
-            f"[label={_quote(edge.type)}, style={style}, color={_quote(colour)}, "
-            f"penwidth={width}];"
-        )
-    lines.append("}")
-    lines.append("")
-    return "\n".join(lines)
-
-
-def _run_dot(dot_text: str, fmt: str) -> bytes:
-    dot_path = shutil.which("dot")
-    if dot_path is None:
-        raise ExportError(
-            f"Graphviz 'dot' not found; install Graphviz to render {fmt}"
-        )
-    try:
-        completed = subprocess.run(
-            [dot_path, f"-T{fmt}"],
-            input=dot_text.encode("utf-8"),
-            capture_output=True,
-            check=False,
-        )
-    except OSError as exc:
-        raise ExportError(f"failed to run Graphviz 'dot': {exc}") from exc
-    if completed.returncode != 0:
-        detail = completed.stderr.decode("utf-8", "replace").strip()
-        raise ExportError(
-            f"Graphviz 'dot' failed (exit {completed.returncode}): "
-            f"{detail or 'no diagnostic'}"
-        )
-    return completed.stdout
-
-
-@exporter("dot")
-def export_dot(
-    view: View,
-    out: Path,
-    *,
-    color_by: str | None = None,
-    shape_by: str | None = None,
-    render: list[str] | None = None,
-    render_out: str | None = None,
-    force: bool = False,
-    clean: bool = False,
-) -> ExportResult:
-    """Write a Graphviz graph, optionally rendering it with Graphviz."""
-    out = Path(out)
-    if out.exists() and out.is_dir():
-        raise ExportError(f"output '{out}' is a directory")
-    out.parent.mkdir(parents=True, exist_ok=True)
-
-    text = _dot_text(view, color_by, shape_by)
-    out.write_text(text, encoding="utf-8", newline="")
-    files = [out]
-
-    formats = list(render or [])
-    if render_out is not None and len(formats) != 1:
-        raise ExportError("--render-out requires exactly one --render format")
-    for fmt in formats:
-        destination = (
-            Path(render_out) if render_out is not None else out.with_suffix(f".{fmt}")
-        )
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(_run_dot(text, fmt))
-        files.append(destination)
-    return ExportResult("dot", out, len(view.nodes), files)
-
-
-@exporter("svg")
-def export_svg(
-    view: View,
-    out: Path,
-    *,
-    color_by: str | None = None,
-    shape_by: str | None = None,
-    force: bool = False,
-    clean: bool = False,
-) -> ExportResult:
-    """Render one view to SVG with Graphviz."""
-    out = Path(out)
-    if out.exists() and out.is_dir():
-        raise ExportError(f"output '{out}' is a directory")
-    out.parent.mkdir(parents=True, exist_ok=True)
-
-    text = _dot_text(view, color_by, shape_by)
-    out.write_bytes(_run_dot(text, "svg"))
-    return ExportResult("svg", out, len(view.nodes), [out])

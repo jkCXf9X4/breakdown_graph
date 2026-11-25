@@ -68,7 +68,7 @@ def test_work_links_every_node_and_writes_generated_files(write, tmp_path):
         assert (out / name).is_file()
         assert not (out / name).is_symlink()
     agents = (out / "AGENTS.md").read_text(encoding="utf-8")
-    assert "symlink" in agents and "--writeback" in agents
+    assert "symlink" in agents and "repair path" in agents
     refs = (out / "REFS.md").read_text(encoding="utf-8")
     assert "| Path | Ref | Kind | Distance | Title |" in refs
     assert "`2-1.md` | 2-1 | child | 1 |" in refs
@@ -259,6 +259,22 @@ def test_status_reports_a_detached_file(write, tmp_path):
     assert _entry(status, "1-1.md").status == "ok"
 
 
+def test_current_status_reports_drift_and_exits_non_zero(write, tmp_path, capsys):
+    _tree(write, tmp_path)
+    api.work(tmp_path, "1-1")
+    out = tmp_path / "bd_work"
+    dest = out / "2-1.md"
+    original = (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8")
+    dest.unlink()
+    dest.write_text(original + "\nlocal note\n", encoding="utf-8")
+    from bd_tree.cli import main
+
+    assert main(["current", "--status", "--root", str(tmp_path)]) == 1
+    captured = capsys.readouterr()
+    assert "detached: 2-1.md" in captured.out
+    assert "not ok" in captured.out
+
+
 def test_writeback_restores_store_and_relinks(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "work"
@@ -402,7 +418,7 @@ def test_detached_file_blocks_a_ref_switch_until_clean(write, tmp_path):
     with pytest.raises(ExportError) as caught:
         api.work(tmp_path, "1-2")
     message = str(caught.value)
-    assert "--writeback" in message and "--clean" in message
+    assert ("--repair" in message or "--writeback" in message) and "--clean" in message
     assert dest.read_text(encoding="utf-8") == "detached\n"
 
     api.work(tmp_path, "1-2", clean=True)
@@ -537,7 +553,7 @@ def test_refresh_removes_stale_ref_links(write, tmp_path):
     assert api.work(tmp_path, "5-1", out, status=True).ok
 
 
-def test_detached_file_blocks_refresh_until_writeback(write, tmp_path):
+def test_detached_file_blocks_refresh_until_repair(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "bd_work"
     api.work(tmp_path, "1-1")
@@ -558,7 +574,7 @@ def test_detached_file_blocks_refresh_until_writeback(write, tmp_path):
                 "1-1",
                 "--root",
                 str(tmp_path),
-                "--writeback",
+                "--repair",
             ]
         )
         == 0
@@ -856,7 +872,7 @@ def test_depth_limited_cycle_keeps_minimum_distance(write, tmp_path):
     assert api.work(tmp_path, "1-1", out, status=True).ok
 
 
-def test_export_and_work_agree_on_flat_paths(write, tmp_path):
+def test_pack_and_work_agree_on_flat_paths(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(
         nodes,
@@ -872,7 +888,7 @@ def test_export_and_work_agree_on_flat_paths(write, tmp_path):
     graph = tmp_path / "graph"
     work = tmp_path / "work"
 
-    api.export_view("graph", tmp_path, "1-1", graph)
+    api.pack(tmp_path, "1-1", graph)
     api.work(tmp_path, "1-1", work)
 
     generated = {"INDEX.md", "REFS.md", "AGENTS.md", "STALE.md"}

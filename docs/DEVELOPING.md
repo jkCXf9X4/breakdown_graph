@@ -10,10 +10,11 @@ git clone https://github.com/jkCXf9X4/breakdown-tree
 cd breakdown-tree
 pip install -e '.[test]'
 python3 -m pytest -q
-bd audit
+bd check
 ```
 
-Requirements: Python 3.10+, PyYAML, pytest. Graphviz `dot` only for dot export.
+Requirements: Python 3.10+, PyYAML, pytest. Graphviz `dot` only for graph
+rendering.
 Install once with `pip install -e '.[test]'` from the clone; without installing,
 run from the repo root with `PYTHONPATH=src python3 -m bd_tree`.
 
@@ -29,7 +30,7 @@ run from the repo root with `PYTHONPATH=src python3 -m bd_tree`.
    │                                      └─ load_view(store, ref) ─► View
    │                                                                  │
    ├─ checker / navigate / freshness ◄───────────────────────────────┤
-   ├─ exporter.graph|context|dot ◄───────────────────────────────────┤
+   ├─ exporter (pack) ◄──────────────────────────────────────────────┤
    └─ work (flat symlinks) ◄─────────────────────────────────────────┘
 ```
 
@@ -64,7 +65,7 @@ run from the repo root with `PYTHONPATH=src python3 -m bd_tree`.
   the target's live title; rendering reads the live title, `checker` reports
   `link-title-stale`, and `ops.retitle` drives the store-wide rewrite.
 
-Validation is global; export and agent context are view-scoped. The default
+Validation is global; pack and agent context are view-scoped. The default
 anchor is `ROOT`, else the lowest member of the first component; an explicit ref
 where a command takes one wins, and `check --view` only narrows reporting. Data
 refs are full `id-version`; a bare id is a CLI selector resolved inside the
@@ -80,13 +81,13 @@ conversion path.
 | --- | --- |
 | `loader.py` | Filename grammar, store scan, `ROOT`, component view (`_load_graph_view`), `current_ref` |
 | `model.py` | `Node`, `Store` (`neighbors`, `components`, `children`, `parents`, `topology_roots`), `View` (with `distance`), `Neighbor`, `Edge`, `Issue`, `Link` |
-| `graph.py` | Adjacency, `ring_distances`, `graph_view`, ring rendering, graph audit, flat graph export |
+| `graph.py` | Adjacency, `ring_distances`, `graph_view`, ring rendering, graph checks, flat pack paths |
 | `frontmatter.py` | Parse and rewrite front matter; body bytes are never re-serialised |
 | `checker.py` | Structural checks, including `contains-removed`, `--require`, size limits |
-| `freshness.py` | Pins, stale edges, reconcile |
+| `freshness.py` | Pins, stale edges, pin repair |
 | `navigate.py` | `show`, `find`, `path` renderers over undirected neighbours |
-| `exporter.py` | `graph`, `context`, `dot` projections, flat paths, path templates |
-| `work.py` | Single flat `<project>/bd_work/` area, `current`/`views`/`edit`, switching, `--status`, `--writeback`, git context |
+| `exporter.py` | Pack projections (graph and fresh context), flat paths, path templates |
+| `work.py` | Single flat `<project>/bd_work/` area, `current`/`views`/`edit`, switching, `--status`, `--repair`, git context |
 | `solutions.py` | Thin `git worktree` lifecycle wrapper |
 | `ops.py` | `init`, `new` (seeds empty `title`/`summary`), `link`, `unlink`, `clone`, `replace`, `delete`, `diff`, `migrate`, `retitle` |
 | `api.py` | Public Python functions |
@@ -167,14 +168,14 @@ There is one topology and one order: undirected BFS distance from the anchor.
 2. Read order from `Graph.distance` and the documented tie-break
    `(distance, kind_rank, link type, id, version)`. Do not re-walk neighbours
    independently; a second walk can disagree on a cycle.
-3. Put adjacency, rings, audit, and graph export in `graph.py`. In
+3. Put adjacency, rings, checks, and flat pack paths in `graph.py`. In
    `navigate.py`, render through `render_show`, `render_path`, or
    `walk_neighbors`; there is no `bd tree` and no second child relation.
 4. If the command materializes files, reuse `graph.layout_paths` and
    `exporter._ring_layout` rather than constructing names; the work area is
    flat and uses store basenames.
 5. If it filters, decide explicitly whether the filter stops traversal
-   (`--depth`) or only hides output (`--distance`). A display filter keeps
+   (`--depth`) or only hides output (`--rings`). A display filter keeps
    walking through hidden nodes.
 6. Direction is a label. A new renderer may show `→`/`←`, but must not use
    direction to include or exclude a node unless the command is explicitly
@@ -182,12 +183,14 @@ There is one topology and one order: undirected BFS distance from the anchor.
 7. Add a temporary-store test with the smallest graph that distinguishes the new
    rule; include a cycle and a reciprocal pair where relevant.
 
-## Add an exporter
+## Add a pack projection
 
-Exporters are registered by decorator and share the CLI `export` group.
+`bd pack` materializes a view through a function in `exporter.py`: `api.pack`
+calls the default graph projection, or the fresh-context projection with
+`--fresh`. A new mode is a new function plus a branch in `api.pack` and a CLI
+option.
 
 ```python
-@exporter("summary")
 def export_summary(view: View, out: Path, **opts) -> ExportResult:
     _prepare_out(out, force=opts.get("force", False), clean=opts.get("clean", False))
     files = []
@@ -200,7 +203,7 @@ def export_summary(view: View, out: Path, **opts) -> ExportResult:
 
 Rules:
 
-- Take a `View`, never a root path. The graph exporter also accepts a `Graph`,
+- Take a `View`, never a root path. The graph projection also accepts a `Graph`,
   but a `View` is the common seam.
 - Return `ExportResult`.
 - Preserve arbitrary front matter.
@@ -212,7 +215,7 @@ Rules:
 - Be deterministic; sort by `(distance, id, version)` where the view matters,
   and by `(id, version)` otherwise.
 - Never write outside `out`.
-- Add the name to the `export` subparser list and add a test.
+- Wire the new mode into `bd pack` and add a test.
 
 ## Add a structural edit
 
@@ -260,17 +263,17 @@ python3 -m pytest -q
 - `test_navigate.py` covers `show` rings and arrows, `path` shortest chains,
   `find` scoping, `view_roots`, and the CLI wrappers.
 - `test_graph.py` covers `ring_distances`, cycle distance, reciprocal pairs,
-  dangling links, `--type`/`--distance`/`--depth`, flat `layout_paths` and
-  templates, ring headings, DOT, audit warnings, and flat graph export.
+  dangling links, `--type`/`--rings`/`--depth`, flat `layout_paths` and
+  templates, ring headings, DOT, check warnings, and flat pack output.
 - `test_topology.py` covers the graph model, component roots, graph view,
   `show`/`path`/`find`, and that cycles and back-edges check clean.
 - `test_work.py` covers flat symlinks, generated `INDEX.md`/`REFS.md`, ring
-  grouping, a cycle appearing once, status/writeback, and the single area.
+  grouping, a cycle appearing once, status/repair, and the single area.
 - `test_export.py`, `test_dot_render.py`, and `test_visual.py` cover the
   read-only projections and rendering.
 - `test_examples.py` runs the example at `examples/` (store under `.bd_tree/`)
-  through check, graph traversal, and flat export, asserting twelve nodes, one
-  component, and a clean audit.
+  through check, graph traversal, and flat packing, asserting twelve nodes, one
+  component, and a clean store.
 - `test_refs.py` covers the filename/ref grammar: full refs, selectors, and
   invalid forms.
 - `test_inline.py` covers the token grammar, the prefix title, fences/code
@@ -297,7 +300,7 @@ Before a commit:
 ```sh
 python3 -m pytest -q
 bd check                         # examples: 12 nodes
-bd audit                         # explicit graph audit
+bd stale                         # stale or untracked propagating edges
 bd work 1-1                      # flat work area, 12 symlinks
 git diff --check
 ```
@@ -313,17 +316,17 @@ git diff --check
   `bd current` reports the work area and the view actually in it.
 - `bd check --view REF` narrows reporting to one component; the default anchor is
   `ROOT`, else the lowest component member.
-- `bd graph`, `bd show`, `bd path`, `bd out REF`, `bd in REF`, and `bd audit`
-  quickly show what the loader sees. `bd graph 1-1 --distance A:B` shows one
+- `bd graph`, `bd show`, `bd path`, `bd out REF`, `bd in REF`, and `bd check`
+  quickly show what the loader sees. `bd graph 1-1 --rings A:B` shows one
   ring window while still traversing through the rest.
 - `bd show REF+N` caps each body at 4000 characters unless `--max-chars` is
   given; `--max-chars 0` prints full bodies.
 - `bd find` defaults to the anchor's component; `--regex` treats the query as a
   pattern, `--view REF` narrows, and `--all` searches the whole store. Output
   stays capped.
-- `bd work --status` diagnoses symlink problems without touching the store and
-  inspects the view actually in the area; `bd edit REF` resolves a ref inside
-  that view.
+- `bd current --status` diagnoses symlink problems without touching the store
+  and inspects the view actually in the area; `bd edit REF` resolves a ref
+  inside that view.
 - `pdb` works normally; the CLI is a thin argparse layer.
 
 Common mistakes:
@@ -334,7 +337,7 @@ Common mistakes:
 - Re-introducing an authored placement key. Ordering is BFS distance.
 - Treating a `child`/`parent` label as membership. Membership is the whole weak
   component.
-- Applying a display filter to traversal. `--distance` hides output only.
+- Applying a display filter to traversal. `--rings` hides output only.
 - Hardcoding layer names or edge types. The tool is schema-agnostic.
 - Writing a sidecar index or a state file. Derive it; the work-area view lives
   in `REFS.md`.
@@ -356,7 +359,7 @@ Common mistakes:
    back-reference. No derived opposite exists.
 7. Data refs are full `id-version`; a bare id is a CLI selector only.
 8. No placement key exists. `group`, `section`, `folder`, and `home` are inert.
-9. Arbitrary front matter survives edits and exports.
+9. Arbitrary front matter survives edits and projections.
 10. Body bytes survive structural edits, except the token lines in `## Links`.
 11. No JSON/TOML/lock/state data files; the only pointers are the store-level
     `ROOT`, one full ref on one line, and the folder-level `.bd_root`, one store
@@ -367,7 +370,7 @@ Common mistakes:
 13. Generated files are disposable and never committed.
 14. A project has exactly one writable work area, `<project>/bd_work/`, holding
     one view at a time. It is flat. Its view changes only with `bd work`, not
-    with `bd root`. Read-only exports never become a second work area.
+    with `bd root`. Read-only projections never become a second work area.
 15. One topology. `contains` is not data: a node declaring it is an error
     (`contains-removed`) until `bd migrate` converts it.
 
@@ -388,7 +391,7 @@ The repo is documentation-driven. When behaviour changes:
 - `docs/CHEATSHEET.md` — command reference.
 - `docs/DESIGN.md` — model, decisions, invariants, migration.
 - `docs/GRAPH.md` — the one topology: typed body tokens, undirected views,
-  rings, audit, export.
+  rings, checks, packing.
 - `docs/GRAPH-LAYOUT.md` — component membership, BFS rings, tie-breaks, the flat
   work area, worked examples, diagnostics, command map, and test map.
 - `docs/BRANCHES-AND-VERSIONS.md` — branch/version separation contract.

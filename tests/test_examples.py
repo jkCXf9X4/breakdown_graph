@@ -96,7 +96,7 @@ def test_verification_core_is_a_distance_three_fanout():
 
 def test_example_graph_export_writes_one_flat_ring_index(tmp_path):
     out = (tmp_path / "graph").resolve()
-    result = api.export_view("graph", EXAMPLES, "1-1", out)
+    result = api.pack(EXAMPLES, "1-1", out, fresh=False)
     assert result.nodes == 12
 
     generated = {
@@ -160,7 +160,7 @@ def test_example_work_is_flat_and_edit_resolves(tmp_path):
 def test_example_graph_export_uses_the_flat_file_set(tmp_path):
     root = _example_store(tmp_path)
     graph = tmp_path / "graph"
-    api.export_view("graph", root, "1-1", graph)
+    api.pack(root, "1-1", graph, fresh=False)
 
     assert _relative_files(graph) == {f"{ref}.md" for ref in REFS} | {"INDEX.md"}
 

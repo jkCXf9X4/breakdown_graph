@@ -17,8 +17,8 @@ this file is the short operating protocol.
 
    ```sh
    python3 -m pytest -q
-   bd audit
    bd check                    # 12 nodes, 0 errors, 0 warnings
+   bd stale                    # 0 stale edges
    ```
 
 3. See the shape: `bd check`, `bd graph 1-1`, `bd graph`, `bd out 1-1`,
@@ -31,8 +31,8 @@ this file is the short operating protocol.
    to `.bd_tree/nodes/<ref>.md` are an escape hatch only. Change structure with
    `bd link` / `bd unlink`. There is no `contain`/`uncontain`: `contains` is
    retired and `bd migrate` converts an older store.
-6. Validate: `bd check` validates the store and its selected view; `bd audit`
-   is the explicit graph audit. Run `bd stale` too.
+6. Validate: `bd check` validates the store and its selected view, graph checks
+   included. Run `bd stale` too.
 
 ## Two jobs
 
@@ -98,11 +98,11 @@ behaviour change and update the docs listed at the bottom.
   regular generated files. Those three names are reserved in every directory.
   Never copy node content into a work folder and never introduce a sync layer.
 - A project has exactly one writable work area, `<project>/bd_work/`. It holds
-  one view at a time; `bd work REF` replaces its contents. Read-only `bd export`
-  snapshots (graph, context, dot, svg) are not a second work area.
+  one view at a time; `bd work REF` replaces its contents. Read-only `bd pack`
+  projections and `bd graph --format` renders are not a second work area.
 - **The active node is the work area's view ref in `REFS.md`**, in the header
-  `# References — view REF[+N]`. `bd current`, `bd edit`, `--status`, and
-  `--writeback` read it. There is no extra state file.
+  `# References — view REF[+N]`. `bd current`, `bd edit`, `bd current --status`,
+  and `bd work --repair` read it. There is no extra state file.
 - A view never crosses a branch, and neither does a version. Versions are node
   files inside one checkout; branches are git. Never resolve a ref through a
   branch name, never add a branch or per-node active-version selector, and never
@@ -134,13 +134,14 @@ behaviour change and update the docs listed at the bottom.
   exists.
 - Agent sessions work in that one area and read exactly one view. Switch with
   `bd work REF` (drop the `+N` to materialize the whole view); never keep
-  parallel work folders side by side. `--status` and `--writeback` inspect the
-  view actually in the area, not the requested or default view. `bd views` lists
-  component representatives and marks the store default and the work-area anchor.
+  parallel work folders side by side. `bd current --status` and
+  `bd work --repair` inspect the view actually in the area, not the requested or
+  default view. `bd views` lists component representatives and marks the store
+  default and the work-area anchor.
 - Find and edit inside the area: `bd edit REF` prints the absolute path of a ref
   in the active view and errors if it is absent.
-- Read-only snapshots: `bd export graph --view REF --out DIR`, or another
-  `bd export` choice; they are disposable exports, never the work area.
+- Read-only projections: `bd pack REF --out DIR` (or `--fresh`), plus
+  `bd graph REF --format dot|svg`; they are disposable, never the work area.
 - Switching trees: `bd root REF` changes the store default anchor, `bd work REF`
   changes the work-area view, or clone and swap with `bd clone REF` then
   `bd replace REF NEW`. `bd replace` repoints inbound links, or repoints `ROOT`
@@ -160,22 +161,22 @@ behaviour change and update the docs listed at the bottom.
 | Add an edge | `bd link FROM TO --type supports [--propagates]`; appends a titled token to the source, cycles and back-edges legal |
 | Add a back-reference | `bd link TO FROM --type supported_by`; author it on the other node, never a derived opposite |
 | Remove an edge | `bd unlink FROM TO [--type T]` |
-| Refresh cached titles | `bd retitle [REF] [--view REF] [--dry-run]` |
-| Browse the graph | `bd graph [REF] [--depth N] [--distance A:B] [--type T]` |
+| Refresh cached titles | `bd retitle [REF] [--dry-run]` |
+| Browse the graph | `bd graph [REF] [--depth N] [--rings A:B] [--type T] [--format text\|dot\|svg]` |
 | Read a node and rings | `bd show REF+2 --max-chars 800` (rings 0..2) |
 | Shortest chain | `bd path REF` (shortest undirected path from the anchor) |
 | Search | `bd find TEXT`, `bd find 'RE' --regex`; add `--view REF` or `--all` |
 | Show the work area | `bd current [--path\|--view]` |
 | List components | `bd views` |
 | Switch/edit the work area | `bd work REF[+N]`, then open `bd edit REF` |
-| Repair symlinks | `bd work --status` / `bd work --writeback` |
+| Repair symlinks | `bd current --status` / `bd work --repair` |
 | Switch the default anchor | `bd root REF`, `bd root --clear` |
 | Show versions | `bd versions ID`, `bd delete REF` |
 | Clone a node or component | `bd clone REF [--version N] [--subtree] [--depth N]` |
 | New solution | `bd solution new NAME` |
 | Convert an old store | `bd migrate [--dry-run] [--type T]` (`contains`, front-matter `links`, classic bare files, retired placement keys) |
-| Validate | `bd check`, `bd audit`, `bd stale` |
-| Read-only agent pack | `bd export context --view REF --out DIR` |
+| Validate | `bd check`, `bd stale` |
+| Pack a view | `bd pack REF --out DIR`; `--fresh` for fresh nodes plus `AGENTS.md` and `STALE.md` |
 
 ## Commands
 
@@ -186,10 +187,10 @@ installing, prefix each with `PYTHONPATH=src python3 -m bd_tree` instead of `bd`
 export BD_ROOT=examples
 python3 -m pytest -q
 bd check                    # 12 nodes, 0 errors, 0 warnings
-bd audit                    # graph example: 0 errors, 0 warnings
+bd stale                    # 0 stale edges
 bd graph 1-1                # rings 0..4 from 1-1
 bd graph                    # same view from ROOT 1-1
-bd graph 1-1 --distance 2:3 # ring 0 plus rings 2 and 3
+bd graph 1-1 --rings 2:3    # ring 0 plus rings 2 and 3
 bd out 1-1                  # authored out-edges, sorted
 bd in 4-1                   # derived in-edges
 bd path 10-1                # shortest undirected chain from 1-1
@@ -197,8 +198,8 @@ bd views                    # component representatives
 bd work 1-1                 # single flat <project>/bd_work area
 bd current                  # <project>/bd_work (view 1-1)
 bd work 1-1+1               # same area, rings 0..1 only
-bd export graph --view 1-1 --out /tmp/bd-graph
-bd export context --view 1-1 --out /tmp/bd-context
+bd pack 1-1 --out /tmp/bd-graph
+bd pack 1-1 --fresh --out /tmp/bd-context
 
 # structural edits (substitute real refs)
 bd new --parent 1-1 --type breaks_down --field title="A new claim"
@@ -226,7 +227,7 @@ bd solution list
 ## Commit style
 
 Short conventional prefixes, matching history: `feat:`, `fix:`, `chore:`,
-`docs:`. One concern per commit. Do not commit caches, `bd_work/`, exported
+`docs:`. One concern per commit. Do not commit caches, `bd_work/`, packed
 views, or generated output.
 
 ## Docs map
@@ -239,7 +240,7 @@ views, or generated output.
 - [`docs/BRANCHES-AND-VERSIONS.md`](docs/BRANCHES-AND-VERSIONS.md) — the
   branch/version separation contract.
 - [`docs/GRAPH.md`](docs/GRAPH.md) — the one topology: typed body tokens,
-  undirected views, rings, audit, and export.
+  undirected views, rings, checks, and packing.
 - [`docs/GRAPH-LAYOUT.md`](docs/GRAPH-LAYOUT.md) — component membership, BFS
   rings, direction labels, tie-breaks, flat work area, worked examples, command
   map, and test map.

@@ -291,7 +291,7 @@ def test_graph_export_is_flat_with_ring_sections_and_byte_stable(write, tmp_path
     write(nodes, 2, links=[{"to": "3", "type": "supports"}])
     write(nodes, 3)
     out = tmp_path / "graph"
-    result = api.export_view("graph", tmp_path, "1-1", out)
+    result = api.pack(tmp_path, "1-1", out, fresh=False)
     assert result.nodes == 3
     assert {path.name for path in result.files} == {
         "1-1.md",
@@ -309,7 +309,7 @@ def test_graph_export_is_flat_with_ring_sections_and_byte_stable(write, tmp_path
         for path in sorted(out.rglob("*"))
         if path.is_file()
     }
-    api.export_view("graph", tmp_path, "1-1", out, clean=True)
+    api.pack(tmp_path, "1-1", out, fresh=False, clean=True)
     second = {
         path.relative_to(out).as_posix(): path.read_bytes()
         for path in sorted(out.rglob("*"))
@@ -341,23 +341,23 @@ def test_graph_cli_commands_and_exit_status(write, tmp_path, monkeypatch, capsys
     assert main(["graph"]) == 0
     out = capsys.readouterr().out
     assert "## 0 — 1-1" in out
-    assert main(["graph", "--dot"]) == 0
+    assert main(["graph", "--format", "dot"]) == 0
     assert "digraph bd_graph" in capsys.readouterr().out
     assert main(["out", "1"]) == 0
     assert "1-1 -> 2-1 (supports)" in capsys.readouterr().out
     assert main(["in", "2"]) == 0
     assert "[derived]" in capsys.readouterr().out
-    assert main(["audit"]) == 0
+    assert main(["check"]) == 0
     assert "0 errors, 0 warnings" in capsys.readouterr().out
 
     # A cycle and a reciprocal edge are legal now.
     write(nodes, 2, links=[{"to": "1", "type": "supports"}])
-    assert main(["audit"]) == 0
+    assert main(["check"]) == 0
 
 
 def test_example_store_resolves_from_inside_and_by_root(monkeypatch, capsys):
     monkeypatch.chdir(EXAMPLES)
-    assert main(["audit"]) == 0
+    assert main(["check"]) == 0
     capsys.readouterr()
     monkeypatch.chdir(EXAMPLES.parent)
     assert main(["--root", "examples", "graph"]) == 0

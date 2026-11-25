@@ -119,7 +119,7 @@ follows:
 - `show`: rings by distance, then arrival kind rank, then link type, then
   `(id, version)`;
 - `REFS.md`: rows by `(distance, kind_rank, id, version)`;
-- `bd graph --dot`: nodes by `(distance, id, version)`.
+- `bd graph --format dot`: nodes by `(distance, id, version)`.
 
 No ordering depends on file order, filesystem order, or a YAML mapping order.
 
@@ -152,17 +152,17 @@ bd in 4-1
 
 - `--depth N` stops traversal after `N` link hops;
 - `--type T` follows only edges with that type (repeatable);
-- `--distance A:B` shows only nodes whose ring is in the inclusive range
+- `--rings A:B` shows only nodes whose ring is in the inclusive range
   `A:B`.
 
-`--distance` is display-only: out-of-range nodes are omitted from the output,
+`--rings` is display-only: out-of-range nodes are omitted from the output,
 but traversal continues through them, so a later in-range ring remains
 reachable. The anchor is always included, even when it is
 outside the requested range.
 
 ```sh
 bd graph 1-1 --depth 1           # rings 0 and 1
-bd graph 1-1 --distance 2:3      # ring 0 plus rings 2 and 3
+bd graph 1-1 --rings 2:3         # ring 0 plus rings 2 and 3
 bd graph 1-1 --type supports     # only supports edges are traversed
 ```
 
@@ -235,16 +235,16 @@ reader can open, copy, or delete the source instead of the symlink.
 
 Rows are sorted by `(distance, kind, ref)`. The header
 `# References — view REF[+N]` is the active node of the work area: `bd current`,
-`bd edit`, `--status`, and `--writeback` read it. There is no separate state
-file and no per-node pointer.
+`bd edit`, `bd current --status`, and `bd work --repair` read it. There is no
+separate state file and no per-node pointer.
 
 ### 8.3 AGENTS.md
 
 `AGENTS.md` explains that every node `.md` is a symlink, that `INDEX.md`,
 `REFS.md`, and itself are generated, that this is the only writable area, and
-that `--status`/`--writeback` are the repair path. Inside git it also records
-the branch, short commit, and worktree. Outside git those lines are omitted and
-the layout is unchanged.
+that `bd current --status` / `bd work --repair` are the repair path. Inside git
+it also records the branch, short commit, and worktree. Outside git those lines
+are omitted and the layout is unchanged.
 
 ## 9. Worked example: the committed store
 
@@ -343,20 +343,20 @@ None reads a layout file.
 
 | Command | What it consumes |
 | --- | --- |
-| `bd graph [REF]` | The component as ring sections; `--depth`, `--distance`, and `--type` narrow traversal or display. |
-| `bd graph --dot` / `--svg` | The same view as a flat Graphviz graph, nodes ordered by distance. |
+| `bd graph [REF]` | The component as ring sections; `--depth`, `--rings`, and `--type` narrow traversal or display. |
+| `bd graph --format dot` / `--format svg` | The same view as a flat Graphviz graph, nodes ordered by distance. |
 | `bd show REF[+N]` | BFS rings `0..N`, each node once, with direction arrows. |
 | `bd path REF` | Shortest undirected path from the anchor. |
 | `bd find QUERY` | The anchor's component by default; `--view` picks another, `--all` searches the store. |
 | `bd views` | One representative and size per component. |
 | `bd work REF[+N]` | Flat symlinks plus ring-sorted `INDEX.md` and `REFS.md`. |
-| `bd work REF --status` | Reads the existing area and its declared view; no rebuild. |
-| `bd work REF --writeback` | Re-links detached files after validating their front matter. |
-| `bd current [--path\|--view]` | Reports the area and its view; read-only. |
+| `bd current --status` | Reads the existing area and its declared view; no rebuild. |
+| `bd work --repair` | Re-links detached files after validating their front matter. |
+| `bd current [--path\|--view\|--status]` | Reports the area and its view; read-only. |
 | `bd edit REF` | Path of the ref in the active view. |
-| `bd export graph --view REF --out DIR` | Regular-file copy of the flat view plus one ring-section `INDEX.md`. |
-| `bd export context --view REF --out DIR` | Fresh nodes only, plus `STALE.md` and `AGENTS.md`. |
-| `bd export dot` / `bd export svg` | Flat DOT or rendered SVG; no clusters. |
+| `bd pack REF --out DIR` | Regular-file copy of the flat view plus one ring-section `INDEX.md`. |
+| `bd pack REF --fresh --out DIR` | Fresh nodes only, plus `STALE.md` and `AGENTS.md`. |
+| `bd graph REF --format dot\|svg` | Flat DOT or rendered SVG; no clusters. |
 | `bd clone REF --subtree [--depth N]` | Copies the undirected neighbourhood (rings `0..N`) and rewires cloned edges. |
 
 ## 12. Extension guide
@@ -382,7 +382,7 @@ None reads a layout file.
 - One view per anchor: membership is the whole weak component, not one direction.
 - Distance is the only ordering primitive; direction is a label.
 - Deterministic output: sort every set by the documented keys before emitting.
-- Projection only: no node file is rewritten by browsing, export, or `bd work`.
+- Projection only: no node file is rewritten by browsing, packing, or `bd work`.
 - Full-ref edges: neighbours come from authored full-ref tokens; in-edges are
   computed by reversing them and never stored.
 - One work area: `bd work` replaces the contents of `<project>/bd_work/`.
@@ -399,7 +399,7 @@ None reads a layout file.
    rather than constructing names.
 4. Make every tie deterministic; add `(id, version)` as the final key.
 5. If it filters, decide explicitly whether the filter stops traversal
-   (`--depth`) or only hides output (`--distance`).
+   (`--depth`) or only hides output (`--rings`).
 6. Add a temporary-store test with the smallest graph that distinguishes the
    behavior, and update this document and `docs/CHEATSHEET.md`.
 
@@ -445,13 +445,13 @@ None reads a layout file.
 | Cycle distance | `test_a_cycle_loads_and_rings_use_the_minimum_distance` | closing edge shortens |
 | Reciprocal pair | `test_a_reciprocal_pair_is_legal_and_not_a_back_edge` | both sides are children |
 | Ring headings | `test_render_graph_ring_headings_split_ring_one` | ring 1 split order |
-| Text filters | `test_type_and_distance_filters` | `--type`, `--distance`, `--depth` |
+| Text filters | `test_type_and_distance_filters` | `--type`, `--rings`, `--depth` |
 | Flat paths | `test_layout_paths_is_flat_and_uses_store_basenames` | basename layout |
 | Template fields | `test_layout_paths_template_placeholders_and_front_matter` | `{distance}` and fields |
 | Work rings | `test_work_index_uses_ring_sections` | `Active`, `Distance N` |
 | Work cycle | `test_work_cycle_appears_once_at_minimum_distance` | one symlink per ref |
 | Show rings | `test_show_depth_two_uses_undirected_bfs_rings` | `show REF+N` |
 | Path arrows | `test_path_command_prints_shortest_path_with_arrows` | shortest path labels |
-| Example store | `test_example_graph_renders_rings_and_audits_clean` | rings 0..4, clean audit |
-| Export | `test_graph_export_is_flat_with_ring_sections_and_byte_stable` | one flat index |
+| Example store | `test_example_graph_renders_rings_and_audits_clean` | rings 0..4, clean check |
+| Pack | `test_graph_export_is_flat_with_ring_sections_and_byte_stable` | one flat index |
 | Views CLI | `test_graph_roots_lists_one_representative_per_component` | one line per component |

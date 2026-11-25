@@ -16,18 +16,13 @@ from pathlib import Path
 from . import api
 from .errors import BreakdownError
 from .graph import (
-    audit as graph_audit,
-)
-from .graph import (
     build_graph,
     graph_view,
-    render_audit,
     render_dot,
     render_graph,
     render_in,
     render_out,
     render_svg,
-    resolve_graph_ref,
 )
 from .loader import (
     DISCOVERY_DEPTH,
@@ -135,8 +130,29 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_work_status(result: api.WorkResult) -> int:
+    for entry in result.entries:
+        if entry.status == "ok":
+            continue
+        where = f" ({entry.ref})" if entry.ref else ""
+        print(f"{entry.status}: {entry.path}{where}")
+    for path in result.invalid:
+        print(f"invalid: {path} (missing or mismatched front matter)")
+    ok = sum(1 for entry in result.entries if entry.status == "ok")
+    print(
+        f"{ok} ok, {len(result.entries) - ok} not ok "
+        f"-> {result.out} (view {result.view_ref})"
+    )
+    return 0 if result.ok else 1
+
+
 def _cmd_current(args: argparse.Namespace) -> int:
-    info = api.area(_find_root(args.root))
+    root = _find_root(args.root)
+    if args.status:
+        return _print_work_status(
+            api.work(root, None, status=True, **_display_opts(args))
+        )
+    info = api.area(root)
     if info.ref is None:
         raise BreakdownError(
             f"no work area at {info.out}; run `bd work REF` first"
@@ -196,7 +212,7 @@ def _cmd_work(args: argparse.Namespace) -> int:
     try:
         if ref is not None:
             parsed = parse_ref_depth(ref, args.depth)
-        elif not (args.status or args.writeback):
+        elif not args.repair:
             parsed = parse_ref_depth(default_root(store), args.depth)
         else:
             parsed = None
@@ -213,26 +229,13 @@ def _cmd_work(args: argparse.Namespace) -> int:
         depth=depth,
         force=args.force,
         clean=args.clean,
-        status=args.status,
-        writeback=args.writeback,
+        writeback=args.repair,
         **_display_opts(args),
     )
-    if args.status or args.writeback:
-        for entry in result.entries:
-            if entry.status == "ok":
-                continue
-            where = f" ({entry.ref})" if entry.ref else ""
-            print(f"{entry.status}: {entry.path}{where}")
-        for path in result.invalid:
-            print(f"invalid: {path} (missing or mismatched front matter)")
-        if args.writeback:
-            print(f"{result.written} files written back and re-linked")
-        ok = sum(1 for entry in result.entries if entry.status == "ok")
-        print(
-            f"{ok} ok, {len(result.entries) - ok} not ok "
-            f"-> {result.out} (view {result.view_ref})"
-        )
-        return 0 if result.ok else 1
+    if args.repair:
+        code = _print_work_status(result)
+        print(f"{result.written} files written back and re-linked")
+        return code
     print(f"work -> {result.out}")
     print(
         f"{result.nodes} nodes, {result.symlinks} symlinks, "
@@ -286,57 +289,43 @@ def _cmd_solution_remove(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_export(args: argparse.Namespace) -> int:
-    view = getattr(args, "ref", None) or args.view
-    if view is None:
-        raise BreakdownError("provide a view REF or --view REF")
-    store = api.load(_find_root(args.root))
-    if args.view_name == "graph":
-        view = resolve_graph_ref(build_graph(store), view)
-    else:
-        view = resolve_ref(store, view)
-    opts: dict[str, object] = {}
-    if args.view_name == "context":
-        opts.update(force=args.force, clean=args.clean, **_display_opts(args))
-    elif args.view_name == "graph":
-        opts.update(force=args.force, clean=args.clean)
-    elif args.view_name == "dot":
-        opts.update(
-            color_by=args.color_by,
-            shape_by=args.shape_by,
-            render=args.render,
-            render_out=args.render_out,
-        )
-    elif args.view_name == "svg":
-        opts.update(color_by=args.color_by, shape_by=args.shape_by)
-    result = api.export_view(
-        args.view_name, _find_root(args.root), view, Path(args.out), **opts
+def _cmd_pack(args: argparse.Namespace) -> int:
+    root = _find_root(args.root)
+    result = api.pack(
+        root,
+        args.view,
+        Path(args.out),
+        fresh=args.fresh,
+        force=args.force,
+        clean=args.clean,
+        **_display_opts(args),
     )
-    print(f"{result.name} -> {result.out}")
-    print(f"{result.nodes} nodes, {len(result.files)} files (view {view})")
+    label = "fresh" if args.fresh else "full"
+    print(f"pack ({label}) -> {result.out}")
+    print(f"{result.nodes} nodes, {len(result.files)} files (view {args.view})")
     return 0
 
 
-def _parse_distance_range(text: str | None) -> tuple[int, int] | None:
+def _parse_rings(text: str | None) -> tuple[int, int] | None:
     if text is None:
         return None
     left, sep, right = text.partition(":")
     if not sep:
-        raise BreakdownError(f"invalid --distance {text!r} (expected A:B)")
+        raise BreakdownError(f"invalid --rings {text!r} (expected A:B)")
     try:
         low, high = int(left), int(right)
     except ValueError as exc:
         raise BreakdownError(
-            f"invalid --distance {text!r} (expected integers A:B)"
+            f"invalid --rings {text!r} (expected integers A:B)"
         ) from exc
     if low > high:
-        raise BreakdownError(f"invalid --distance {text!r} (A must be <= B)")
+        raise BreakdownError(f"invalid --rings {text!r} (A must be <= B)")
     return low, high
 
 
 def _cmd_graph(args: argparse.Namespace) -> int:
     graph = build_graph(api.load(_find_root(args.root)))
-    distances = _parse_distance_range(args.distance)
+    distances = _parse_rings(args.rings)
     refs = graph_view(
         graph,
         args.ref,
@@ -344,15 +333,19 @@ def _cmd_graph(args: argparse.Namespace) -> int:
         distance=distances,
         types=args.type,
     )
-    if args.svg:
-        text, kind = render_svg(graph, refs), "svg"
-    elif args.dot:
-        text, kind = render_dot(graph, refs), "dot"
+    if args.format == "svg":
+        text = render_svg(
+            graph, refs, color_by=args.color_by, shape_by=args.shape_by
+        )
+    elif args.format == "dot":
+        text = render_dot(
+            graph, refs, color_by=args.color_by, shape_by=args.shape_by
+        )
     else:
-        text, kind = render_graph(graph, refs), "text"
+        text = render_graph(graph, refs)
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8", newline="")
-        print(f"{kind} -> {args.out}")
+        print(f"{args.format} -> {args.out}")
     else:
         print(text)
     return 0
@@ -368,13 +361,6 @@ def _cmd_in(args: argparse.Namespace) -> int:
     graph = build_graph(api.load(_find_root(args.root)))
     print(render_in(graph, args.ref))
     return 0
-
-
-def _cmd_audit(args: argparse.Namespace) -> int:
-    graph = build_graph(api.load(_find_root(args.root)))
-    issues = graph_audit(graph, args.ref)
-    print(render_audit(graph, args.ref))
-    return 1 if any(issue.level == "error" for issue in issues) else 0
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
@@ -482,7 +468,7 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
 
 def _cmd_retitle(args: argparse.Namespace) -> int:
     root = _find_root(args.root)
-    view = args.view if args.view is not None else args.ref
+    view = args.ref
     result = api.retitle(root, view=view, dry_run=args.dry_run)
     verb = "would retitle" if args.dry_run else "retitled"
     print(f"{verb} {result.changed} tokens in {len(result.nodes)} nodes")
@@ -501,26 +487,22 @@ def _cmd_stale(args: argparse.Namespace) -> int:
     store = api.load(root)
     view = args.view if args.view is not None else default_root(store)
     view = resolve_ref(store, view)
+    if args.fix:
+        if not args.all and not args.refs:
+            raise BreakdownError("give one or more REFs or --all with --fix")
+        if args.all and args.refs:
+            raise BreakdownError("use either explicit refs or --all, not both")
+        changes = api.reconcile(root, refs=args.refs, view=view, all_nodes=args.all)
+        for change in changes:
+            print(change.format())
+        print(f"{len(changes)} pins rewritten")
+        return 0
+    if args.refs or args.all:
+        raise BreakdownError("REFs and --all require --fix")
     edges = api.stale(root, view)
     for edge in edges:
         print(edge.format())
     print(f"{len(edges)} stale/untracked propagating edges (view {view})")
-    return 0
-
-
-def _cmd_reconcile(args: argparse.Namespace) -> int:
-    if not args.all and not args.refs:
-        raise BreakdownError("give one or more refs or --all")
-    if args.all and args.refs:
-        raise BreakdownError("use either explicit refs or --all, not both")
-    root = _find_root(args.root)
-    store = api.load(root)
-    view = args.view if args.view is not None else default_root(store)
-    view = resolve_ref(store, view)
-    changes = api.reconcile(root, refs=args.refs, view=view, all_nodes=args.all)
-    for change in changes:
-        print(change.format())
-    print(f"{len(changes)} pins rewritten")
     return 0
 
 
@@ -647,9 +629,9 @@ def build_parser() -> argparse.ArgumentParser:
         "Edit through the symlinks; every node .md file there is the store file.\n"
         "Link tokens are written bare as [[REF, TYPE]]; cached titles are a tool-written\n"
         "prefix (TITLE)[[REF, TYPE]] that `bd retitle` regenerates.\n"
-        "`bd export` is a read-only projection of the same nodes.\n"
+        "`bd pack` materializes a read-only projection of the same nodes.\n"
         "Solutions are git worktrees (`bd solution`); layouts inside one are `bd work`.\n"
-        "Repair a work tree with `bd work REF --status` or `--writeback`.",
+        "Inspect a work tree with `bd current --status`; repair it with `bd work --repair`.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     _add_root(parser, default=None)
@@ -688,12 +670,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_display(work)
     work.add_argument("--force", action="store_true", help="overwrite detached files")
     work.add_argument("--clean", action="store_true", help="remove the output first")
-    work_mode = work.add_mutually_exclusive_group()
-    work_mode.add_argument(
-        "--status", action="store_true", help="report the state of the work tree"
-    )
-    work_mode.add_argument(
-        "--writeback",
+    work.add_argument(
+        "--repair",
         action="store_true",
         help="copy detached files back into the store and re-link them",
     )
@@ -703,6 +681,7 @@ def build_parser() -> argparse.ArgumentParser:
         "current", help="show the active work area and its view (read-only)"
     )
     _add_root(current)
+    _add_display(current)
     current_mode = current.add_mutually_exclusive_group()
     current_mode.add_argument(
         "--path", dest="path_only", action="store_true", help="print only the path"
@@ -710,9 +689,12 @@ def build_parser() -> argparse.ArgumentParser:
     current_mode.add_argument(
         "--view", dest="view_only", action="store_true", help="print only the view ref"
     )
+    current_mode.add_argument(
+        "--status", action="store_true", help="report the state of the work tree"
+    )
     current.set_defaults(func=_cmd_current)
 
-    views = sub.add_parser("views", help="list topology roots")
+    views = sub.add_parser("views", help="list component representatives")
     _add_root(views)
     views.set_defaults(func=_cmd_views)
 
@@ -765,56 +747,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     solution_remove.set_defaults(func=_cmd_solution_remove)
 
-    export = sub.add_parser("export", help="read-only derived artifacts")
-    export_sub = export.add_subparsers(dest="view_name", required=True)
-    for name, help_text in (
-        ("context", "fresh nodes only, plus STALE.md and AGENTS.md"),
-        ("dot", "Graphviz dot graph, optionally rendered"),
-        ("graph", "graph snapshot with ring index"),
-        ("svg", "rendered Graphviz SVG of one view"),
-    ):
-        child = export_sub.add_parser(name, help=help_text)
-        _add_root(child)
-        child.add_argument("--view", required=True, help="view root ref")
-        child.add_argument("--out", required=True)
-        if name == "context":
-            child.add_argument("--force", action="store_true")
-            child.add_argument("--clean", action="store_true")
-            _add_display(child)
-        elif name == "graph":
-            child.add_argument(
-                "--clean", action="store_true", help="remove the output first"
-            )
-            child.add_argument(
-                "--force", action="store_true", help="write into a non-empty dir"
-            )
-        else:
-            if name == "dot":
-                child.add_argument(
-                    "--render",
-                    action="append",
-                    choices=("svg", "png", "pdf"),
-                    metavar="FMT",
-                    default=None,
-                    help="also render FORMAT (repeatable; default: none)",
-                )
-                child.add_argument(
-                    "--render-out",
-                    default=None,
-                    help="path for the single rendered file",
-                )
-            child.add_argument(
-                "--color-by",
-                default=None,
-                help="front-matter field mapped to a stable colour "
-                "(default: link type)",
-            )
-            child.add_argument(
-                "--shape-by",
-                default=None,
-                help="front-matter field mapped to a stable shape (default: box)",
-            )
-        child.set_defaults(func=_cmd_export)
+    pack = sub.add_parser(
+        "pack",
+        help="write a view into a directory (read-only projection)",
+        description="Default: every node plus INDEX.md. --fresh: only fresh "
+        "nodes, plus AGENTS.md and STALE.md.",
+    )
+    _add_root(pack)
+    pack.add_argument("view", help="view root ref")
+    pack.add_argument("--out", required=True, help="output directory")
+    pack.add_argument(
+        "--fresh",
+        action="store_true",
+        help="fresh nodes only, plus AGENTS.md and STALE.md",
+    )
+    pack.add_argument("--force", action="store_true", help="write into a non-empty dir")
+    pack.add_argument("--clean", action="store_true", help="remove the output first")
+    _add_display(pack)
+    pack.set_defaults(func=_cmd_pack)
 
     graph = sub.add_parser(
         "graph",
@@ -831,7 +781,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--depth", type=int, default=None, help="edge hops to follow (default: all)"
     )
     graph.add_argument(
-        "--distance",
+        "--rings",
         default=None,
         metavar="A:B",
         help="inclusive ring range shown in the output (traversal continues)",
@@ -843,10 +793,21 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="T",
         help="only follow this link type (repeatable)",
     )
-    render = graph.add_mutually_exclusive_group()
-    render.add_argument("--dot", action="store_true", help="emit Graphviz DOT")
-    render.add_argument(
-        "--svg", action="store_true", help="render SVG with Graphviz"
+    graph.add_argument(
+        "--format",
+        choices=("text", "dot", "svg"),
+        default="text",
+        help="output format (default: text)",
+    )
+    graph.add_argument(
+        "--color-by",
+        default="type",
+        help="front-matter field mapped to a stable colour (default: link type)",
+    )
+    graph.add_argument(
+        "--shape-by",
+        default=None,
+        help="front-matter field mapped to a stable shape (default: box)",
     )
     graph.add_argument(
         "--out", default=None, metavar="PATH", help="write the render to PATH"
@@ -864,16 +825,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_root(incoming)
     incoming.add_argument("ref")
     incoming.set_defaults(func=_cmd_in)
-
-    audit = sub.add_parser(
-        "audit",
-        help="validate the links and component structure of the store",
-    )
-    _add_root(audit)
-    audit.add_argument(
-        "ref", nargs="?", default=None, help="anchor ref (default: store root)"
-    )
-    audit.set_defaults(func=_cmd_audit)
 
     check = sub.add_parser("check", help="validate the store and its views")
     _add_root(check)
@@ -986,17 +937,16 @@ def build_parser() -> argparse.ArgumentParser:
     diff.add_argument("right")
     diff.set_defaults(func=_cmd_diff)
 
-    stale = sub.add_parser("stale", help="list stale/untracked propagating edges")
+    stale = sub.add_parser(
+        "stale",
+        help="list stale/untracked propagating edges; --fix rewrites their pins",
+    )
     _add_root(stale)
+    stale.add_argument("refs", nargs="*", metavar="REF")
+    stale.add_argument("--all", action="store_true", help="fix every ref")
+    stale.add_argument("--fix", action="store_true", help="rewrite the pins")
     stale.add_argument("--view", default=None, help="view ref (default: store root)")
     stale.set_defaults(func=_cmd_stale)
-
-    reconcile = sub.add_parser("reconcile", help="rewrite pins for propagating edges")
-    _add_root(reconcile)
-    reconcile.add_argument("refs", nargs="*", metavar="REF")
-    reconcile.add_argument("--all", action="store_true")
-    reconcile.add_argument("--view", default=None, help="view ref (default: store root)")
-    reconcile.set_defaults(func=_cmd_reconcile)
 
     retitle = sub.add_parser(
         "retitle",
@@ -1009,9 +959,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_root(retitle)
     retitle.add_argument(
         "ref", nargs="?", default=None, help="view ref (default: the whole store)"
-    )
-    retitle.add_argument(
-        "--view", default=None, help="view ref (default: the whole store)"
     )
     retitle.add_argument(
         "--dry-run", action="store_true", help="print the plan without touching disk"

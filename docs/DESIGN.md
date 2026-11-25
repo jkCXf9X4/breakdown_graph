@@ -26,7 +26,7 @@ present.
 ## 2. Principles
 
 1. **One store, many projections.** The node files are the only source of truth;
-   views, indexes, graphs, exports, and the work layout are derived and
+   views, indexes, graphs, packs, and the work layout are derived and
    disposable. Read-only projections may be many; the writable work area is
    exactly one (§5).
 2. **Identity is not location.** A node is a running integer; its path in a view
@@ -95,8 +95,8 @@ Reserved front-matter keys:
 | `legacy` | string | Original identifier from an imported tree |
 | `freshness` | map | Per-target freshness entries, keyed by full target ref |
 
-Everything else is arbitrary and preserved on export. Typical fields: `title`,
-`summary`, `type`, `status`, `date`, `phase`, `audience`, `tags`.
+Everything else is arbitrary and preserved in projections. Typical fields:
+`title`, `summary`, `type`, `status`, `date`, `phase`, `audience`, `tags`.
 
 `name` and `title` are presentation metadata. The default work-area path uses
 the store file's basename; a `--path-template` may read any field, and its
@@ -154,8 +154,8 @@ freshness:
 - The hash is computed over the body with reserved token lines and the
   `## Links` heading stripped, so appending or removing a token does not
   invalidate a pin.
-- `bd stale` / `bd reconcile` read and rewrite this map; a malformed entry is
-  `invalid-freshness`.
+- `bd stale` reads this map and `bd stale --fix` rewrites it; a malformed entry
+  is `invalid-freshness`.
 
 ### 3.3 The graph
 
@@ -189,8 +189,8 @@ in-edges are derived by reversing them and are never written to a node file.
 ### 3.4 Views
 
 A view is the weakly connected component of one anchor over authored tokens.
-`bd export graph`, the other `bd export` choices, `bd work`, and `bd graph` take
-an anchor ref. The default anchor is the store's `ROOT` file when present, else
+`bd pack`, `bd work`, and `bd graph` take an anchor ref. The default anchor is
+the store's `ROOT` file when present, else
 the lowest member of the first component; an explicit ref where a command takes
 one wins over both.
 `bd check --view REF` only narrows reporting. `bd root REF` writes the file,
@@ -199,8 +199,8 @@ declared but missing ref is `root-ref-missing`; malformed content is
 `invalid-root`. This default anchor is separate from the view the work area
 holds: `bd root` changes the default used by commands, while `bd work REF`
 replaces the contents of `<project>/bd_work/`. `bd current` reports the area and
-the view actually there. `bd check` validates the store and the selected view;
-`bd audit` is the explicit graph audit. `bd diff A B` compares components by
+the view actually there. `bd check` validates the store and the selected view,
+graph checks included. `bd diff A B` compares components by
 logical id. A view is not a substitute for a git branch: a version of the root
 node with its own out-links gives an alternative component inside the same
 checkout, and that component is the realization. Many components can exist in
@@ -267,7 +267,7 @@ The full model, comparison table, and decision rule are in
 Git answers "what changed", not "what depends on it". Pins answer the second
 question: a propagating edge stores the target body hash at reconciliation;
 `bd stale` compares pins with current target bodies in the same view; and
-`bd reconcile` rewrites pins after an intentional review. One evidence node
+`bd stale --fix` rewrites pins after an intentional review. One evidence node
 supporting two claims can be fresh for one edge and stale for the other;
 freshness is per edge, not per node.
 
@@ -313,8 +313,8 @@ bd_work/4-1.md -> ../.bd_tree/nodes/4-1.md
   `bd work REF --depth N` prunes the materialized prefix after the view is
   resolved; `N=0` leaves the anchor alone and `--depth` overrides a suffix. The
   generated `REFS.md`, `INDEX.md`, and `AGENTS.md` carry `REF+N`, so
-  `bd current`, `--status`, `--writeback`, and `bd edit` recover the
-  materialized depth; `bd edit` rejects a ref outside that prefix. A rebuild
+  `bd current`, `bd current --status`, `bd work --repair`, and `bd edit` recover
+  the materialized depth; `bd edit` rejects a ref outside that prefix. A rebuild
   with a different depth, including a plain `bd work REF`, replaces the area and
   removes links that are no longer materialized.
 - The active node of the area is the view ref in the `REFS.md` header
@@ -331,13 +331,13 @@ bd_work/4-1.md -> ../.bd_tree/nodes/4-1.md
   `{version}`, `{distance}`, `{slug}`, `{title}`, plus any front-matter key.
   `{slug}` is the title slug, else the ref. `group`, `section`, `folder`, and
   `home` place nothing.
-- `--status` classifies paths as `ok`, `missing`, `wrong-target`, `detached`,
-  `stray`, or `stale-ref`; `--writeback` refuses invalid front matter or a
-  mismatched `id`, then writes the detached file wholesale — its body, including
-  link tokens, is taken as edited. Both inspect the view actually in the area,
-  not the requested or default view.
+- `bd current --status` classifies paths as `ok`, `missing`, `wrong-target`,
+  `detached`, `stray`, or `stale-ref`; `bd work --repair` refuses invalid front
+  matter or a mismatched `id`, then writes the detached file wholesale — its
+  body, including link tokens, is taken as edited. Both inspect the view
+  actually in the area, not the requested or default view.
 - Switching with detached (edited but unsynced) files is refused: they would be
-  lost. Run `bd work --writeback` first to keep them, or `--clean` to discard
+  lost. Run `bd work --repair` first to keep them, or `--clean` to discard
   them.
 - Generated files: one root `INDEX.md` with ring sections (`## Active`,
   `## Distance 1 — children`, …), `REFS.md` (path, ref, kind, distance, title),
@@ -364,12 +364,13 @@ ambiguous, let edits land through whichever link an agent happens to open, and
 leave two generated files claiming authority. The store is what scales; the
 context is not, and one work area is the interface that keeps them apart.
 
-Read-only projections remain: `bd export graph --view REF --out DIR` (the
+Read-only projections remain: `bd pack REF --out DIR` (the
 component projection with one ring-section index for review or publishing),
-`bd export context` (fresh nodes only, plus `STALE.md`, for an agent that must
-not write), and `bd export dot`/`bd export svg` (Graphviz). They are disposable
-snapshots, not a second work area; an agent session reads exactly one of them. A
-snapshot may be made many times because it is never writable.
+`bd pack REF --fresh --out DIR` (fresh nodes only, plus `STALE.md`, for an agent
+that must not write), and `bd graph REF --format dot|svg` (Graphviz). They are
+disposable copies and renders, not a second work area; an agent session reads
+exactly one of them. A snapshot may be made many times because it is never
+writable.
 
 `bd solution` is a thin wrapper over `git worktree` (`new`, `list`, `remove`).
 It stores no state and creates no layout: git remains authoritative for which
@@ -429,7 +430,7 @@ wants a schema.
     (one store path on one line). The work-area view lives in generated
     `REFS.md`. Derived output is disposable. The write lock is not a sidecar: it
     is transient and lives outside the store.
-13. **Writeback requires valid front matter.** A detached file is written only
+13. **Repair requires valid front matter.** A detached file is written only
     when it parses and its `id` matches; its body, including link tokens, is
     taken as edited.
 14. **Git owns solutions; `bd work` owns layout.** Worktrees isolate branches;
@@ -445,10 +446,10 @@ wants a schema.
     [`BRANCHES-AND-VERSIONS.md`](BRANCHES-AND-VERSIONS.md).
 16. **One work area at a time.** `<project>/bd_work/` holds exactly one view;
     `bd work REF` switches it by replacing the contents. Two writable folders
-    never exist at once. Read-only `bd export` snapshots (graph, context, dot,
-    svg) are not a second work area. The area's view is independent of the store
-    default anchor: `bd root` sets the default, `bd work` sets what is in the
-    area.
+    never exist at once. Read-only `bd pack` projections and
+    `bd graph --format` renders are not a second work area. The area's view is
+    independent of the store default anchor: `bd root` sets the default,
+    `bd work` sets what is in the area.
 17. **Flat ring layout is the only layout.** The work area holds one symlink per
     node at its store basename, plus one ring-section `INDEX.md` and one
     `REFS.md`. `group`, `section`, `folder`, and `home` are inert.
@@ -596,7 +597,7 @@ These are enforced or assumed:
    `home` are inert front matter.
 8. Every link resolves in the store, and every authored link inside one view is
    an edge.
-9. Arbitrary front matter is preserved on export.
+9. Arbitrary front matter is preserved in projections.
 10. Work trees contain flat node `.md` symlinks plus regular generated files.
 11. Generated files (`INDEX.md`, `AGENTS.md`, `REFS.md`) are never hand-edited.
 12. No generated artifact is committed.
@@ -605,8 +606,8 @@ These are enforced or assumed:
     neither substitutes for the other, and no ref resolves through a branch.
 14. One worktree per solution. A project has exactly one writable work area,
     `<project>/bd_work/`, holding one view at a time; it is disposable and
-    ignored. Read-only exports are separate and never a second work area. The
-    active view is recorded in the generated `REFS.md`, not in extra state.
+    ignored. Read-only projections are separate and never a second work area.
+    The active view is recorded in the generated `REFS.md`, not in extra state.
 15. Structural edits preserve body bytes and all unrelated front matter, except
     the appended or removed token lines in a `## Links` section; `bd replace`
     and `bd clone --subtree` rewrite token refs in place.
@@ -626,7 +627,7 @@ These are enforced or assumed:
 - Node versions do not sync across branches; git merges sync solutions.
 - No three-way merge between node versions; synthesis is manual.
 - One worktree per solution; switching branches can leave a layout pointing
-  at paths absent from the new branch, so rebuild and run `--status`.
+  at paths absent from the new branch, so rebuild and run `bd current --status`.
 - Distance is a graph metric, not a semantic order. A deeply linked but
   important node can sit in a high ring.
 - Cycles shorten distances deterministically but have no privileged entry.
@@ -635,7 +636,7 @@ These are enforced or assumed:
   sibling. The lock is per host and per resolved path; separate checkouts still
   conflict in git, and edits made outside `bd` are not serialized.
 - Symlinks require a POSIX filesystem; Windows needs developer mode.
-- Editors that replace symlinks need `--status`/`--writeback`.
+- Editors that replace symlinks need `bd current --status` / `bd work --repair`.
 - `bd check` validates the store and the selected view, costing more on large
   stores.
 - There is no CI configuration yet; packaging is a `pyproject.toml` with the
@@ -653,7 +654,8 @@ These are enforced or assumed:
    version and repoint to it?
 5. Should concurrent agent sessions share the one work area under leases, or
    each use a separate git worktree?
-6. Are the generic projections (`graph`/`context`/`dot`) enough, or do we need
-   per-workflow report renderers (traceability matrix, claim-evidence table)?
+6. Are the generic projections (`pack` and the `graph` formats) enough, or do
+   we need per-workflow report renderers (traceability matrix,
+   claim-evidence table)?
 7. Should node-local versions be deprecated entirely in favour of git branches,
    or kept for cheap A/B variants inside one branch?

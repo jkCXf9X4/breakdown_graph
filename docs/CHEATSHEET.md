@@ -44,7 +44,7 @@ bd root --clear                     # delete ROOT; use the lowest component memb
 
 `ROOT` sits at the store top level and holds one full `id-version` ref on one
 line, nothing else. It is the default anchor for `graph`, `find`, `work`,
-`check`, `stale`, and `reconcile`. An explicit ref where a command takes one
+`check`, and `stale`. An explicit ref where a command takes one
 wins over `ROOT`; `ROOT` wins over the lowest component member.
 `bd check --view REF` only narrows reporting. A declared but missing ref is
 `root-ref-missing`; malformed content is `invalid-root`. `bd root` does not
@@ -96,15 +96,13 @@ bd find QUERY [--view REF|--all] [--field F] [--regex] [--where K=V ...] [--limi
 bd path REF
 bd views
 
-bd graph [REF] [--depth N] [--distance A:B] [--type T] [--dot|--svg] [--out PATH]
+bd graph [REF] [--depth N] [--rings A:B] [--type T] [--format text|dot|svg] [--color-by F] [--shape-by F] [--out PATH]
 bd out REF
 bd in REF
-bd audit [REF]
 ```
 
-- `check` validates the store and the selected view. `audit` is the explicit
-  graph audit; `bd check` already runs the graph checks, so `audit` is redundant
-  but convenient.
+- `check` validates the store, the selected view, and the graph checks. There is
+  no separate `audit` command.
 - `graph` is the single view renderer: it prints ring sections from an anchor.
   The anchor is ring 0; ring 1 is split into `children` and `parents`; deeper
   rings are numbered.
@@ -112,10 +110,12 @@ bd audit [REF]
   `*` marks the store default and `anchor REF` marks the work-area view.
 - `out` lists authored out-edge tokens; `in` lists derived reverse edges,
   every line marked `[derived]`.
-- `bd graph --svg --out graph.svg` renders the same view as SVG with Graphviz;
-  `--dot` is the dependency-free fallback and `--out` writes either render.
+- `bd graph --format svg --out graph.svg` renders the same view as SVG with
+  Graphviz; `--format dot` is the dependency-free fallback and `--out` writes
+  either render. `--color-by` and `--shape-by` map front-matter fields to a
+  stable colour or shape.
 - `--depth N` on `bd graph` stops traversal after `N` link hops.
-  `--distance A:B` keeps the inclusive ring range in the output but keeps
+  `--rings A:B` keeps the inclusive ring range in the output but keeps
   traversing through hidden nodes; the anchor is always included. `--type T`
   follows only links of that type (repeatable).
 - Direction is a label, not a filter: `→` child, `←` parent. A cycle or a
@@ -136,7 +136,7 @@ bd audit [REF]
 ```sh
 bd link FROM TO --type TYPE [--propagates]
 bd unlink FROM TO [--type TYPE]
-bd retitle [REF] [--view REF] [--dry-run]
+bd retitle [REF] [--dry-run]
 ```
 
 - `link` appends `- (TITLE)[[TO, TYPE]]` to the source's `## Links` section in
@@ -151,7 +151,7 @@ bd retitle [REF] [--view REF] [--dry-run]
 - `link`, `unlink`, and `new` accept a bare id as a selector and resolve it in
   the selected view; they always write full refs.
 - `retitle` regenerates every cached title in scope: the whole store by
-  default, or the view of `REF`/`--view`. Unresolved targets are left
+  default, or the view of `REF`. Unresolved targets are left
   untouched. Use `--dry-run` to print `would retitle N tokens in M nodes`
   without writing; the real run prints `retitled N tokens in M nodes`.
 - Structural commands preserve body bytes and unrelated front matter, except the
@@ -164,8 +164,8 @@ bd retitle [REF] [--view REF] [--dry-run]
 ## Work folders
 
 ```sh
-bd work [REF[+N]] [--depth N] [--path-template T] [--title-field F] [--summary-field F] [--force] [--status] [--writeback] [--clean]
-bd current [--path|--view]
+bd work [REF[+N]] [--depth N] [--path-template T] [--title-field F] [--summary-field F] [--force] [--clean] [--repair]
+bd current [--path|--view|--status]
 bd views
 bd edit REF
 ```
@@ -179,9 +179,9 @@ bd edit REF
 - The area is flat: one node `.md` symlink per materialized ref, named after the
   store file. There are no node directories.
 - The generated `REFS.md`, `INDEX.md`, and `AGENTS.md` carry `REF+N`, so
-  `bd current`, `--status`, `--writeback`, and `bd edit` recover the materialized
-  depth. The active view is the `# References — view REF[+N]` header in
-  `REFS.md`; there is no separate state file.
+  `bd current`, `bd current --status`, `bd work --repair`, and `bd edit` recover
+  the materialized depth. The active view is the `# References — view REF[+N]`
+  header in `REFS.md`; there is no separate state file.
 - `INDEX.md` is one root file with ring sections (`## Active`,
   `## Distance 1 — children|parents`, `## Distance 2`, …). It carries a
   `nodes:` front-matter path to the real node folder, each node entry links
@@ -194,16 +194,17 @@ bd edit REF
 - `bd current` is read-only: it prints `<project>/bd_work (view <ref>)`;
   `--path` prints only the path, `--view` only the ref. It errors if no work
   area exists.
-- `--status` and `--writeback` inspect the view actually in the area, not the
-  requested or default view.
+- `bd current --status` and `bd work --repair` inspect the view actually in the
+  area, not the requested or default view.
 - `bd views` lists component representatives (`ref`, size, title), and marks the
   store default with `*` and the work-area anchor.
 - `bd edit REF` prints the absolute path of REF in the active view and errors if
   the ref is not there.
-- `--status`: `ok`, `missing`, `wrong-target`, `detached`, `stray`, `stale-ref`.
-- `--writeback` keeps edits made by an editor that replaced a symlink.
+- `bd current --status`: `ok`, `missing`, `wrong-target`, `detached`, `stray`,
+  `stale-ref`.
+- `bd work --repair` keeps edits made by an editor that replaced a symlink.
 - Switching with detached (edited but unsynced) files is refused: run
-  `--writeback` to keep them, or `--clean` to discard them.
+  `bd work --repair` to keep them, or `--clean` to discard them.
 - Re-running a healthy tree refreshes it in place: stale links are removed and
   `INDEX.md`, `REFS.md`, and `AGENTS.md` are rewritten.
 
@@ -230,8 +231,9 @@ title: The Main Thesis    # -> 4-1.md (store basename)
 name: custom-name         # metadata only; default path is still 4-1.md
 ```
 
-`bd export graph` and the other `bd export` choices are read-only snapshots, not
-a second work area.
+`bd pack` and `bd graph --format` are read-only projections, not a second work
+area: `bd pack` writes a disposable regular-file copy, and `bd graph --format`
+writes a string render to `--out` or stdout.
 
 ## Solutions (git worktrees)
 
@@ -293,36 +295,40 @@ store default with `bd root REF`. See
 
 ```sh
 bd stale [--view REF]
-bd reconcile [REF ...] [--all] [--view REF]
+bd stale --fix [REF ...] [--all] [--view REF]
 ```
 
 A link participates only when the source node's `freshness:` map has an entry
 for its target with `propagates: true` (or an existing `pinned`). The entry is
 keyed by target ref; the pinned hash covers the target body with reserved tokens
 and the `## Links` heading stripped, so token edits do not invalidate it.
-Editing a propagating target makes the source edge stale until reconciled.
+Editing a propagating target makes the source edge stale until you run
+`bd stale --fix`.
 
 ## Read-only projections
 
 ```sh
-bd export graph   --view REF --out DIR [--force] [--clean]
-bd export context --view REF --out DIR [--force] [--clean] [--path-template T] [--title-field F] [--summary-field F]
-bd export dot     --view REF --out FILE [--render FMT ...] [--render-out PATH] [--color-by FIELD] [--shape-by FIELD]
-bd export svg     --view REF --out FILE [--color-by FIELD] [--shape-by FIELD]
+bd pack REF --out DIR [--force] [--clean] [--path-template T] [--title-field F] [--summary-field F]
+bd pack REF --fresh --out DIR [--force] [--clean] [--path-template T] [--title-field F] [--summary-field F]
+bd graph REF --format dot|svg [--color-by FIELD] [--shape-by FIELD] [--out PATH]
 ```
 
-`bd export graph` is the component projection: flat node files plus one
-ring-section `INDEX.md`. `context` writes fresh node bodies plus `STALE.md` and
-`AGENTS.md`; `dot` is Graphviz.
+`bd pack` default writes every node as a flat regular file plus one ring-section
+`INDEX.md`. `--fresh` writes only fresh node bodies plus `STALE.md` and
+`AGENTS.md`, for an agent that must not write. `bd graph --format` renders the
+same store as DOT or SVG; `text` (the default) is the ring view.
 
 ```sh
-bd export dot --view 1-1 --out graph.dot --render svg   # graph.dot + graph.svg
-bd export svg --view 1-1 --out graph.svg                # rendered only
+bd pack 1-1 --out /tmp/bd-graph                         # every node + INDEX.md
+bd pack 1-1 --fresh --out /tmp/bd-context               # fresh nodes + STALE.md + AGENTS.md
+bd graph 1-1 --format dot --out graph.dot               # Graphviz source
+bd graph 1-1 --format svg --out graph.svg               # rendered image
 ```
 
-`--render` repeats for `svg`, `png`, or `pdf`; each file sits next to the `.dot`
-unless `--render-out` names the one rendered path. `bd graph --svg` remains the
-ring visual.
+`--format svg` needs the Graphviz `dot` binary on `PATH`; `--format dot` is the
+dependency-free fallback. Three projections cover the same store: `bd work`
+(writable symlinks into the store), `bd pack` (a disposable regular-file copy),
+and `bd graph --format` (a string render). Only `bd work` is writable.
 
 ## Git patterns
 
@@ -342,9 +348,8 @@ git restore --source=sol-a -- .bd_tree/nodes/5-1.md
 
 ```sh
 bd check
-bd audit                    # explicit graph audit; bd check already runs it
 bd stale
-bd work --status
+bd current --status
 git status --porcelain
 python3 -m pytest -q
 ```
@@ -368,7 +373,7 @@ python3 -m pytest -q
 | `graph-orphan` | A node is outside the default component. Link it in, or anchor the command on its component with `bd graph REF` / `bd work REF`. |
 | `graph-duplicate-version` | Two versions of one id are reachable from the anchor. Repoint one edge to the peer you want. |
 | A cycle or back-edge is rejected | It should not be. Update to the current version; only a self-loop is refused by `bd link`. |
-| Detached work file | `bd work --status`, then `bd work --writeback`. Switching views with detached files is refused until you do. |
+| Detached work file | `bd current --status`, then `bd work --repair`. Switching views with detached files is refused until you do. |
 | Want two work folders | Not supported. `bd_work/` is the single area; switch with `bd work REF`. |
 | Stale layout after branch change | `bd work REF --clean`. |
 | Dangling link after removing a node | `bd check`, then `bd unlink` or restore the node. |

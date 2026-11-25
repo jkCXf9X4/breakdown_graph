@@ -35,9 +35,9 @@ These are deliberately separate:
 - **Merge unit: the flat `nodes/` store.** One file per node version keeps a
   conflict local to the version that changed.
 - **Layout: `bd work`.** One writable symlink area at `<project>/bd_work/`;
-  `bd work REF` switches its contents to another view. Read-only `bd export`
-  projections (graph, context, dot, svg) may be many and are disposable; none is
-  a copy.
+  `bd work REF` switches its contents to another view. Read-only `bd pack`
+  projections and `bd graph --format` renders may be many and are disposable;
+  none is a writable work area.
 - **Versions are not a third axis.** Every node file is `<id>-<version>.md`;
   `5-1` and `5-2` are peer alternatives for logical node `5` inside the
   checked-out branch. Versions give no isolation and never cross a branch; git
@@ -45,8 +45,8 @@ These are deliberately separate:
   [The full separation](docs/BRANCHES-AND-VERSIONS.md).
 
 A store-level `ROOT` file names one default anchor (`bd root 1-1`), so
-`graph`, `find`, `work`, `check`, `stale`, and `reconcile` follow it without an
-argument. An explicit ref wins where a command takes one; with no `ROOT`, the
+`graph`, `find`, `work`, `check`, and `stale` follow it without an argument. An
+explicit ref wins where a command takes one; with no `ROOT`, the
 store uses the lowest member of its first component. `bd check --view REF` only
 narrows reporting. The default anchor and the view in the work area are
 separate: `bd root REF` changes the default used by commands, while `bd work REF`
@@ -81,7 +81,7 @@ Pins answer whether it still holds. Freshness pins live in one top-level
 ## Install
 
 Requirements: Python 3.10+, PyYAML; pytest only for the test suite; Graphviz
-`dot` only for dot export. The distribution is `breakdown-tree`, the import
+`dot` only for graph rendering. The distribution is `breakdown-tree`, the import
 package `bd_tree`, the command `bd`.
 
 ```sh
@@ -104,11 +104,11 @@ The repository ships a small example at `examples/`, the default store (`ROOT`
 export BD_ROOT=examples
 
 bd check                       # 12 nodes, 0 errors, 0 warnings
-bd audit                       # graph validation: 0 errors, 0 warnings
+bd stale                       # stale or untracked propagating edges
 bd graph                       # rings 0..4 from 1-1
-bd graph --svg --out /tmp/bd-graph.svg  # rendered SVG (needs Graphviz)
+bd graph --format svg --out /tmp/bd-graph.svg  # rendered SVG (needs Graphviz)
 bd graph 1-1 --depth 1         # rings 0 and 1
-bd graph 1-1 --distance 2:3    # ring 0 plus rings 2 and 3
+bd graph 1-1 --rings 2:3       # ring 0 plus rings 2 and 3
 bd out 1-1                     # authored out-edges, sorted
 bd in 4-1                      # derived in-edges for a two-parent node
 bd path 10-1                   # shortest undirected chain from 1-1
@@ -116,12 +116,12 @@ bd views                       # component representatives
 bd find links --limit 3
 bd work 1-1                    # single flat work area for the component
 bd current                     # <project>/bd_work (view 1-1)
-bd export graph --view 1-1 --out /tmp/bd-graph
+bd pack 1-1 --out /tmp/bd-graph
 ```
 
-`bd graph` is the only view renderer: text rings by default, `--dot` for
-Graphviz DOT, `--svg` for a rendered image. `bd export graph` writes the same
-flat view as a read-only snapshot (node files plus one ring-section `INDEX.md`),
+`bd graph` is the only view renderer: text rings by default, `--format dot` for
+Graphviz DOT, `--format svg` for a rendered image. `bd pack` writes the same
+flat view as a disposable copy (node files plus one ring-section `INDEX.md`),
 never a work area. `bd work` materializes the same view with symlinks.
 
 `bd work` writes the single `<project>/bd_work/` area and replaces its contents;
@@ -238,7 +238,7 @@ Inspect:
 
 ```
 bd check | bd show | bd find | bd path | bd views
-bd graph | bd out | bd in | bd audit
+bd graph | bd out | bd in
 ```
 
 Edit and structure:
@@ -257,10 +257,10 @@ lines are untouched, so add targets in ascending order or re-sort the section
 (`graph-unsorted-links` warns). Back-edges, reciprocal edges, and cycles are
 legal; a self-loop on the same ref is refused. `--propagates` records the edge
 in FROM's `freshness:` map and pins the target's current body hash; the pin is
-refreshed by `bd reconcile`.
+refreshed by `bd stale --fix`.
 
-`bd retitle [REF] [--view REF] [--dry-run]` regenerates every cached title in
-scope: the whole store by default, or the view of `REF`/`--view`. Each cache is
+`bd retitle [REF] [--dry-run]` regenerates every cached title in
+scope: the whole store by default, or the view of `REF`. Each cache is
 set from its target's live title; tokens whose target cannot be resolved are
 left untouched. It prints `retitled N tokens in M nodes`, or
 `would retitle N tokens in M nodes` with `--dry-run`.
@@ -274,8 +274,8 @@ bd root [REF] [--clear]
 Layout:
 
 ```
-bd work [REF[+N]] [--depth N] [--path-template T] [--status] [--writeback] [--clean]
-bd current [--path|--view]
+bd work [REF[+N]] [--depth N] [--path-template T] [--clean] [--repair]
+bd current [--path|--view|--status]
 bd views
 bd edit REF
 ```
@@ -290,9 +290,10 @@ materialize only rings `0..N` with `REF+N` (the same suffix `bd show` uses) or
 depth replaces the area.
 `bd current` is read-only and prints `<project>/bd_work (view <ref>)`; `--path`
 prints only the path and `--view` only the ref, and it errors when no area
-exists. `--status` and `--writeback` inspect the view actually in the area, not
-the requested or default view. `bd views` lists component representatives,
-marking the store default with `*` and the work-area anchor. `bd edit REF`
+exists. `bd current --status` and `bd work --repair` inspect the view actually
+in the area, not the requested or default view. `bd views` lists component
+representatives, marking the store default with `*` and the work-area anchor.
+`bd edit REF`
 prints the absolute path of that ref inside the current work area and errors if
 the ref is not in the materialized area.
 
@@ -346,30 +347,34 @@ is an inbound target of any link unless `--force` is given.
 Freshness:
 
 ```
-bd stale | bd reconcile
+bd stale [--fix]
 ```
 
 Read-only projections:
 
 ```
-bd export graph --view REF --out DIR
-bd export context --view REF --out DIR
-bd export dot --view REF --out FILE [--render svg|png|pdf ...]
-bd export svg --view REF --out FILE
+bd pack REF --out DIR
+bd pack REF --fresh --out DIR
+bd graph REF --format text|dot|svg [--out PATH]
 ```
 
-`bd export graph` is the read-only component projection: flat node files plus
-one ring-section `INDEX.md`. `context` is the fresh-node agent pack; `dot` and
-`svg` render the flat graph with Graphviz.
+`bd pack` is the disposable copy: every node as a regular file plus one
+ring-section `INDEX.md`. `--fresh` writes only fresh nodes, plus `AGENTS.md` and
+`STALE.md`, for an agent that must not write. `bd graph --format dot|svg`
+renders the graph with Graphviz; `text` is the ring view.
 
 ```sh
-bd export dot --view 1-1 --out graph.dot --render svg   # graph.dot + graph.svg
-bd export svg --view 1-1 --out graph.svg                # rendered only
+bd graph 1-1 --format dot --out graph.dot   # Graphviz source
+bd graph 1-1 --format svg --out graph.svg   # rendered image
 ```
 
-`--render` repeats for `svg`, `png`, or `pdf`; each file sits next to the `.dot`
-unless `--render-out` names the one rendered path. `bd graph --svg` remains the
-ring visual.
+`--format svg` pipes the DOT through Graphviz `dot`, so it needs the `dot`
+binary on `PATH`.
+
+Three projections cover the same store: `bd work` (writable symlinks into the
+store), `bd pack` (a disposable regular-file copy), and `bd graph --format`
+(a string render written to `--out` or stdout). Only `bd work` is writable;
+the other two are never a second work area.
 
 Full syntax: [`docs/CHEATSHEET.md`](docs/CHEATSHEET.md) or `bd <command> --help`.
 
@@ -381,11 +386,11 @@ src/bd_tree/               Python package
   loader.py                filename grammar, store index, component view
   model.py                 Node, Store, View, Neighbor, Edge, Issue
   checker.py               structural validation, including contains-removed
-  graph.py                 components, rings, audit, flat graph export
-  exporter.py              graph/context/dot projections
-  freshness.py             pins, stale edges, reconcile
+  graph.py                 components, rings, checks, flat graph paths
+  exporter.py              pack projections (graph and fresh context)
+  freshness.py             pins, stale edges, pin repair
   navigate.py              show/find/path renderers
-  work.py                  single flat work area, current/views/edit, status, writeback
+  work.py                  single flat work area, current/views/edit, status, repair
   solutions.py             git worktree wrapper
   ops.py                   init, new, structural edits, versions, delete, diff, migrate
   cli.py, api.py           command line and public API
@@ -400,7 +405,7 @@ docs/breakdown/            product breakdown: bd store (.bd_tree/) + ignored bd_
 - The committed example project `examples/` is a twelve-node graph:
   `.bd_tree/nodes/` holds `<id>-<version>.md` files whose bodies carry typed
   link tokens, `.bd_tree/ROOT` names `1-1`, and `bd_work/` is gitignored;
-  `bd audit` is clean. From `1-1` the rings are `0: 1-1`, `1: 2-1 3-1`,
+  `bd check` is clean. From `1-1` the rings are `0: 1-1`, `1: 2-1 3-1`,
   `2: 4-1 5-1 6-1 7-1`, `3: 8-1 12-1`, `4: 9-1 10-1 11-1`.
 - One topology. `contains` is rejected by `bd check` (`contains-removed`);
   `bd migrate` converts an older store. Front-matter `links` is retired too:
@@ -421,9 +426,9 @@ docs/breakdown/            product breakdown: bd store (.bd_tree/) + ignored bd_
 - Distance is graph nearness, not semantic importance or reading order.
 - One worktree per solution. Switching branches inside one worktree can leave a
   layout pointing at paths absent from the new branch; rebuild with
-  `bd work REF --clean` and run `bd work --status`.
+  `bd work REF --clean` and inspect it with `bd current --status`.
 - Some editors replace symlinks instead of writing through them. Use
-  `bd work --status` / `bd work --writeback`.
+  `bd current --status` / `bd work --repair`.
 - Work folders rely on symlinks; Windows needs developer mode or elevated rights.
 - No generic importer or CI configuration yet; `bd migrate` converts a classic
   bare-file store and a containment store in place.
