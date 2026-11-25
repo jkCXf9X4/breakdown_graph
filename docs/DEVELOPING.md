@@ -417,7 +417,7 @@ Keep examples executable. Run them before committing.
 
 ## Not built yet
 
-- No CI or generic importer. `bdg migrate` converts a classic bare-file store and
+- No generic importer. `bdg migrate` converts a classic bare-file store and
   a containment store in place. Packaging is `pyproject.toml` plus the `bdg`
   console script.
 - No three-way node merge; solutions merge with git.

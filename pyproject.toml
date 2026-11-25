@@ -1,11 +1,13 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "breakdown-graph"
 description = "Flat markdown typed-link topology with git solutions and one work area"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = ["PyYAML>=6"]
 dynamic = ["version"]

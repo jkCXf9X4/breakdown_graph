@@ -434,5 +434,9 @@ docs/breakdown/            product breakdown: bdg store (bdg_graph/) + ignored b
 - Some editors replace symlinks instead of writing through them. Use
   `bdg current --status` / `bdg work --repair`.
 - Work folders rely on symlinks; Windows needs developer mode or elevated rights.
-- No generic importer or CI configuration yet; `bdg migrate` converts a classic
+- No generic importer yet; `bdg migrate` converts a classic
   bare-file store and a containment store in place.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
