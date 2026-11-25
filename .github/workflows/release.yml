@@ -21,6 +21,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install Graphviz for render tests
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y graphviz
+
       - name: Install the project and build tooling
         run: python3 -m pip install --upgrade build -e '.[test]'
 
