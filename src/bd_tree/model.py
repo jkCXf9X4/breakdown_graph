@@ -36,19 +36,17 @@ def slugify(text: str) -> str:
 
 @dataclass
 class Link:
-    """One ``links`` entry.  ``type`` is an arbitrary label, never an enum.
+    """One typed link.  ``type`` is an arbitrary label, never an enum.
 
-    A symmetric link is a *master*: exactly one node file authors the relation
-    and the opposite is derived at load time.  ``inverse`` names the derived
-    edge type; when absent the master type is reused.
+    Links are declared in the node body as reserved tokens; ``raw`` holds the
+    raw token string.  ``pinned`` and ``propagates`` come from the
+    ``freshness:`` front-matter map keyed by target ref.
     """
 
     to: str
     type: str
     pinned: str | None = None
     propagates: bool = False
-    symmetric: bool = False
-    inverse: str | None = None
     raw: Any = field(default_factory=dict)
 
     @property
@@ -62,10 +60,8 @@ class Neighbor:
     """One undirected neighbour of a ref.
 
     ``kind`` is the direction from the queried ref's point of view: ``child``
-    (an authored out-link), ``parent`` (another node's authored link targets the
-    queried ref) or ``peer`` (a symmetric master in either direction).
-    ``link`` is the representative authored link and is never a derived
-    opposite.
+    (an authored out-link) or ``parent`` (another node's authored link targets
+    the queried ref).  ``link`` is the representative authored link.
     """
 
     ref: str
@@ -73,8 +69,8 @@ class Neighbor:
     link: Link
 
 
-KIND_RANK: dict[str, int] = {"child": 0, "parent": 1, "peer": 2}
-_KIND_BY_RANK: tuple[str, ...] = ("child", "parent", "peer")
+KIND_RANK: dict[str, int] = {"child": 0, "parent": 1}
+_KIND_BY_RANK: tuple[str, ...] = ("child", "parent")
 
 
 def _offer_neighbor(
@@ -176,13 +172,12 @@ class Edge:
     target: str
     type: str
     pinned: str | None
-    origin: str  # "link" (master), "derived" (opposite) or "reference"
+    origin: str  # always "authored"
     propagates: bool = False
-    symmetric: bool = False
 
     @property
     def propagating(self) -> bool:
-        return self.origin == "link" and self.propagates
+        return self.propagates
 
     @property
     def label(self) -> str:
@@ -196,6 +191,7 @@ class Issue:
     message: str
     node: str | None = None
     path: str | None = None
+    line: int | None = None
 
     def format(self) -> str:
         where = self.path or self.node or ""
@@ -256,43 +252,15 @@ class Store:
         return roots[0].ref if roots else None
 
     def structural_links(self, ref: str) -> list[Link]:
-        """Authored non-symmetric links of ``ref`` (the structural subset).
+        """The authored links of ``ref``.
 
-        Only these links keep the authored child direction and drive
-        ``bd clone --subtree``.  They no longer gate view membership.  A
-        symmetric master is shown but never structural.
+        Kept under its historical name.  There is one topology and every
+        authored link is structural; the method no longer filters.
         """
         node = self.nodes.get(ref)
         if node is None:
             return []
-        return [link for link in node.links if not link.symmetric]
-
-    def derived_links(self, ref: str) -> list[Edge]:
-        """Derived opposites targeting ``ref`` from other nodes' symmetric masters.
-
-        For every other node's master ``X --T--> ref`` with ``symmetric``, the
-        opposite ``ref --(inverse or T)--> X`` is returned with
-        ``origin="derived"``.  Derived opposites are never stored or structural.
-        """
-        edges: list[Edge] = []
-        for node in self.nodes.values():
-            if node.ref == ref:
-                continue
-            for link in node.links:
-                if not link.symmetric or link.to != ref:
-                    continue
-                edges.append(
-                    Edge(
-                        source=ref,
-                        target=node.ref,
-                        type=link.inverse or link.type,
-                        pinned=None,
-                        origin="derived",
-                        propagates=False,
-                        symmetric=True,
-                    )
-                )
-        return edges
+        return list(node.links)
 
     def children(self, ref: str) -> list[str]:
         """Structural out-link targets of ``ref`` (full refs), authored order."""
@@ -304,10 +272,9 @@ class Store:
         """Undirected neighbours of ``ref`` over authored links.
 
         Both directions are considered, one entry per neighbour ref.  Kind
-        precedence is ``child > parent > peer``: a reciprocal structural pair is
-        a ``child`` and a symmetric master in either direction is a ``peer``.
-        The representative ``link`` is always an authored link, never a derived
-        opposite.  Sorted by ``(kind_rank, link.type, id, version)``.
+        precedence is ``child > parent``: a reciprocal pair is a ``child`` from
+        each side.  The representative ``link`` is always an authored link.
+        Sorted by ``(kind_rank, link.type, id, version)``.
         """
         from .loader import is_full_ref, parse_ref
 
@@ -317,16 +284,14 @@ class Store:
             for link in node.links:
                 if link.to == ref or not is_full_ref(link.to):
                     continue
-                kind = "peer" if link.symmetric else "child"
-                _offer_neighbor(chosen, link.to, kind, link)
+                _offer_neighbor(chosen, link.to, "child", link)
         for other in self.nodes.values():
             if other.ref == ref:
                 continue
             for link in other.links:
                 if link.to != ref:
                     continue
-                kind = "peer" if link.symmetric else "parent"
-                _offer_neighbor(chosen, other.ref, kind, link)
+                _offer_neighbor(chosen, other.ref, "parent", link)
 
         def sort_key(item: tuple[str, tuple[int, str, Link]]):
             target, (rank, link_type, _link) = item
@@ -370,13 +335,11 @@ class Store:
         return found
 
     def parents(self, ref: str) -> list[str]:
-        """Refs whose structural ``links`` target ``ref``, by ``(id, version)``."""
+        """Refs whose authored links target ``ref``, by ``(id, version)``."""
         found = [
             node
             for node in self.nodes.values()
-            if any(
-                link.to == ref and not link.symmetric for link in node.links
-            )
+            if any(link.to == ref for link in node.links)
         ]
         return [node.ref for node in sorted(found, key=_ref_key)]
 
@@ -401,30 +364,21 @@ class Store:
         ref: str,
         *,
         propagating_only: bool = False,
-        include_derived: bool = False,
     ) -> list[Edge]:
-        """Authored out-edges of ``ref``; optionally append derived opposites.
-
-        ``include_derived`` leaves the default behaviour intact and adds the
-        derived opposite edges whose source is ``ref``, marked
-        ``origin="derived"`` and ``symmetric=True``.
-        """
+        """Authored out-edges of ``ref``."""
         edges = [
             Edge(
                 source=node.ref,
                 target=link.to,
                 type=link.type,
                 pinned=link.pinned,
-                origin="link",
+                origin="authored",
                 propagates=link.propagating,
-                symmetric=link.symmetric,
             )
             for node in self.nodes.values()
             if node.ref == ref
             for link in node.links
         ]
-        if include_derived:
-            edges.extend(self.derived_links(ref))
         if propagating_only:
             edges = [edge for edge in edges if edge.propagating]
         return edges
@@ -476,6 +430,7 @@ class View:
         return matches[0] if matches else None
 
     def node_edges(self, ref: str, *, propagating_only: bool = False) -> list[Edge]:
+        """Authored out-edges of ``ref`` inside this view."""
         edges = [edge for edge in self.edges if edge.source == ref]
         if propagating_only:
             edges = [edge for edge in edges if edge.propagating]

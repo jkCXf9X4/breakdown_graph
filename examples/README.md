@@ -1,11 +1,13 @@
 # Example project
 
 This folder is a complete `bd` project and the default store (`.bd_tree/`,
-`ROOT` `1-1`). The store has twelve nodes and no `contains`: `links` is the one
-edge relation. Every node declares its outgoing edges as full refs in `links`,
-and in-edges are derived by reversing them. There is no placement key: the view
-is the weakly connected component of the anchor, and ordering is the undirected
-BFS hop count from that anchor.
+`ROOT` `1-1`). The store has twelve nodes and no `contains`: typed body tokens
+are the one edge relation. Each linked node writes its outgoing edges inline in
+prose, for example [[breaks_down, 2-1]](Structural claims); tooling writes the
+same token as a `- [[TYPE, REF]](TITLE)` line under `## Links`. In-edges are
+derived by reversing authored tokens, and the cached title is advisory. There is
+no placement key: the view is the weakly connected component of the anchor, and
+ordering is the undirected BFS hop count from that anchor.
 
 The store is one component. From `1-1` the rings are:
 
@@ -20,7 +22,7 @@ The store is one component. From `1-1` the rings are:
 `4-1` has two parents (`2-1` and `3-1`) and still appears once, in ring 2.
 `8-1` has several inbound edges and still appears once, in ring 3. `12-1`
 reaches `11-1` one hop later, which is why `11-1` is ring 4 while `12-1` is ring
-3. Direction is a label: ring 1 is split into children, parents, and peers, but
+3. Direction is a label: ring 1 is split into children and parents, but
 membership is the whole component.
 
 ```sh

@@ -237,19 +237,21 @@ def test_breakdown_store_checks_clean_after_migration(tmp_path):
         assert not (set(PLACEMENT_KEYS) & set(node.meta))
     assert not (set(ROOT_HINTS) & set(store.nodes["1-1"].meta))
 
-    signature = {
-        link.type
+    # After migration every link is a plain typed token in a node body:
+    # collect (from, type, to) triples parsed from the bodies.
+    triples = {
+        (node.ref, link.type, link.to)
         for node in store.nodes.values()
         for link in node.links
-        if link.symmetric
     }
-    assert signature == {
+    assert triples
+    assert {
         "realizes",
         "implements",
         "verifies",
         "operates",
         "changes",
-    }
+    } <= {triple[1] for triple in triples}
 
     graph = build_graph(tmp_path)
     assert graph.roots == ["1-1"]

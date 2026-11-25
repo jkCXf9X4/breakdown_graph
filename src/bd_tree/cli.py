@@ -1,7 +1,9 @@
 """Command-line interface for the typed-link node store.
 
-Front-matter fields are arbitrary user metadata.  Only ``id``, ``legacy`` and
-``links`` have built-in meaning; display choices are given on the command line.
+Front-matter fields are arbitrary user metadata.  Reserved meaning is
+``id``, ``legacy`` and ``freshness`` in front matter, and the reserved
+``[[TYPE, REF]](TITLE)`` link tokens in node bodies; display choices are
+given on the command line.
 """
 
 from __future__ import annotations
@@ -459,26 +461,12 @@ def _cmd_delete(args: argparse.Namespace) -> int:
     return 0
 
 
-def _parse_inverse_types(items: list[str]) -> dict[str, str]:
-    pairs: dict[str, str] = {}
-    for item in items:
-        kind, sep, opposite = item.partition("=")
-        if not sep or not kind.strip() or not opposite.strip():
-            raise BreakdownError(
-                f"invalid --inverse {item!r} (expected TYPE=TYPE2)"
-            )
-        pairs[kind.strip()] = opposite.strip()
-    return pairs
-
-
 def _cmd_migrate(args: argparse.Namespace) -> int:
     root = _find_root(args.root)
     result = api.migrate(
         root,
         dry_run=args.dry_run,
         link_type=args.type,
-        symmetric_types=args.symmetric,
-        inverse_types=_parse_inverse_types(args.inverse),
     )
     for old, new in result.renames:
         print(f"rename {old} -> {new}")
@@ -561,15 +549,8 @@ def _cmd_link(args: argparse.Namespace) -> int:
         target,
         link_type=args.type,
         propagates=args.propagates,
-        symmetric=args.symmetric,
-        inverse=args.inverse,
     )
-    detail = args.type
-    if args.symmetric:
-        detail += ", symmetric"
-        if args.inverse:
-            detail += f", inverse={args.inverse}"
-    print(f"linked {source} -> {target} ({detail})")
+    print(f"linked {source} -> {target} ({args.type})")
     return 0
 
 
@@ -648,9 +629,10 @@ def _cmd_path(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bd",
-        description="A numeric markdown graph: typed links projected as "
-        "undirected distance rings. Front-matter fields are arbitrary; only "
-        "id, legacy and links have built-in meaning.",
+        description="A numeric markdown graph: typed link tokens in node "
+        "bodies projected as undirected distance rings. Front-matter fields "
+        "are arbitrary; reserved meaning is id, legacy, freshness in front "
+        "matter, and link tokens in bodies.",
         epilog="Start with `bd work`: it builds a writable symlink tree over the "
         "store and is the primary editing interface.\n"
         "Edit through the symlinks; every node .md file there is the store file.\n"
@@ -966,31 +948,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     migrate = sub.add_parser(
         "migrate",
-        help="convert a classic or containment store to typed links",
-        description="Version bare filenames, then convert every contains list "
-        "into typed links and strip retired placement keys (band, subpath, "
-        "layer, stage, order, band_layout, band_order).",
+        help="convert a legacy store to body link tokens",
+        description="Version bare filenames, then move every front-matter "
+        "links and contains list into a trailing ## Links section of token "
+        "lines in each node body and strip retired placement keys (band, "
+        "subpath, layer, stage, order, band_layout, band_order).",
     )
     _add_root(migrate)
     migrate.add_argument(
         "--type",
         default="breaks_down",
         help="link type for converted containment edges (default: breaks_down)",
-    )
-    migrate.add_argument(
-        "--symmetric",
-        action="append",
-        default=[],
-        metavar="TYPE",
-        help="mark every link of TYPE as a symmetric master (repeatable)",
-    )
-    migrate.add_argument(
-        "--inverse",
-        action="append",
-        default=[],
-        metavar="TYPE=TYPE2",
-        help="mark links of TYPE symmetric with derived opposite TYPE2 "
-        "(repeatable)",
     )
     migrate.add_argument(
         "--dry-run", action="store_true", help="print the plan without touching disk"
@@ -1045,30 +1013,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     link = sub.add_parser(
         "link",
-        help="append a typed link edge",
-        description="Append a typed edge. Back-edges, reciprocal edges and "
-        "cycles are legal; targets stay sorted and a self-loop is refused.",
+        help="append a typed link edge token to the FROM node body",
+        description="Append a typed edge token in the FROM node's ## Links "
+        "body section. Back-edges, reciprocal edges and cycles are legal; "
+        "a self-loop is refused.",
     )
     _add_root(link)
     link.add_argument("source", metavar="FROM")
     link.add_argument("target", metavar="TO")
-    link.add_argument("--type", required=True, help="arbitrary edge label")
+    link.add_argument(
+        "--type",
+        required=True,
+        help="edge type written in the FROM node body token",
+    )
     link.add_argument(
         "--propagates",
         action="store_true",
         help="make the edge participate in freshness, pinned to the target now",
-    )
-    link.add_argument(
-        "--symmetric",
-        action="store_true",
-        help="author the single master of a two-way relation; the opposite "
-        "edge is derived at load time",
-    )
-    link.add_argument(
-        "--inverse",
-        default=None,
-        metavar="TYPE",
-        help="type of the derived opposite edge (requires --symmetric)",
     )
     link.set_defaults(func=_cmd_link)
 

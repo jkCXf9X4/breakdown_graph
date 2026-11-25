@@ -171,7 +171,7 @@ def test_render_graph_ring_headings_split_ring_one(write, tmp_path):
         1,
         links=[
             {"to": "2", "type": "breaks_down"},
-            {"to": "4", "type": "peer", "symmetric": True},
+            {"to": "4", "type": "references"},
         ],
     )
     write(nodes, 2)
@@ -181,7 +181,7 @@ def test_render_graph_ring_headings_split_ring_one(write, tmp_path):
     text = render_graph(graph, graph_view(graph, "1-1"))
     assert "## 0 — 1-1" in text
     assert text.index("## 1 — children") < text.index("## 1 — parents")
-    assert text.index("## 1 — parents") < text.index("## 1 — peers")
+    assert "## 1 — peers" not in text
     assert text.count("[4-1]") == 1
 
 

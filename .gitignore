@@ -8,3 +8,6 @@ docs/breakdown/bd_work/
 build/
 dist/
 *.egg-info/
+
+# writable work area (generated symlinks + INDEX/AGENTS/REFS)
+bd_work/

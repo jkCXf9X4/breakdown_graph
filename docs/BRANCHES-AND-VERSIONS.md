@@ -11,7 +11,7 @@ them.
   checked out. Every node file is `<id>-<version>.md`; `5-1` and `5-2` are peer
   versions of logical node `5`.
 - A **view** is the weakly connected component of one full ref over authored
-  `links`, walked in both directions. It is derived, disposable, and never
+  tokens, walked in both directions. It is derived, disposable, and never
   crosses a branch.
 - The **flat store** is the merge unit. One file per node version keeps a
   conflict local to the version that changed.
@@ -59,12 +59,12 @@ exists only as a filename that git tracks. They meet exactly once, in a merge.
    selects no version for any other node. The default root and the view in the
    work area are separate: `bd root REF` changes the default, `bd work REF`
    changes the contents of `<project>/bd_work/`.
-6. **Links decide membership, not location.** Forward *structural* `links` are
-   the child relation, in-edges are derived (`src/bd_tree/graph.py`), and a
-   symmetric link's opposite is derived at load too. A node with
-   several parents appears once in a view. `contains` is not data; a node that
-   still declares it fails `bd check` with `contains-removed` until `bd migrate`
-   converts it.
+6. **Links decide membership, not location.** Typed body tokens are the child
+   relation, and in-edges are derived by reversing them (`src/bd_tree/graph.py`).
+   A back-reference is a separately authored token, not a derived opposite. A
+   node with several parents appears once in a view. `contains` is not data; a
+   node that still declares it fails `bd check` with `contains-removed` until
+   `bd migrate` converts it.
 
 ## Choosing the right layer
 
@@ -88,10 +88,10 @@ separate history.
 - Switching between full trees needs no copy step: write `ROOT` with
   `bd root REF` for the default root, run `bd work REF` for the work-area view,
   or repoint inbound edges with `bd replace OLD NEW`.
-- `bd clone REF` copies the source file, so the new peer keeps its declared
-  `links`. `bd clone REF --subtree` clones the whole weakly connected component
-  (or rings `0..N` with `--depth N`) and rewires the copies to each other,
-  leaving the original untouched.
+- `bd clone REF` copies the source file, so the new peer keeps its link tokens.
+  `bd clone REF --subtree` clones the whole weakly connected component (or rings
+  `0..N` with `--depth N`) and rewires the copies to each other, leaving the
+  original untouched.
   `bd replace OLD NEW` is the separate wiring step: it repoints every inbound
   link, or repoints `ROOT` when OLD is the store root; OLD's file stays as a
   peer. Clone and swap in one logical flow with `bd clone REF --subtree` then

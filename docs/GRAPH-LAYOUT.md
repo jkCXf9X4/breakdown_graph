@@ -1,7 +1,7 @@
 # Graph views and ring layout
 
 This document is the reference for how a graph store turns one anchor and its
-authored `links` into a view, a ring ordering, and a flat work area. It covers
+authored tokens into a view, a ring ordering, and a flat work area. It covers
 component membership, BFS rings, direction labels, the tie-break rules, the
 generated `INDEX.md` and `REFS.md`, a worked example on the committed store,
 cycles, and the limits of using distance as layout.
@@ -17,8 +17,8 @@ data matter:
 
 - the anchor: an explicit ref, else the store `ROOT`, else the lowest member of
   the first component;
-- `links`: typed edges with full target refs. A link with `symmetric: true` is
-  authored on one node; its opposite is derived at load and is never stored.
+- link tokens in the body: typed edges with full target refs. Every token is
+  authored on one node; nothing derives an opposite edge at load.
 
 Nothing else is stored for layout. There is no placement field, ordinal,
 position key, layout file, or cache. Components, distances, ring sections, and
@@ -38,7 +38,7 @@ rule for explicit directional commands.
 | distance | The undirected BFS hop count from the anchor. |
 | ring | All view members with one distance value. |
 | neighbour | One ref reachable over one authored edge in either direction. |
-| kind | The direction of a neighbour from the queried ref: `child`, `parent`, or `peer`. |
+| kind | The direction of a neighbour from the queried ref: `child` or `parent`. |
 | view | The whole component of the anchor, ordered by distance. |
 | materialized depth | The largest ring written into the work area (`REF+N`). |
 
@@ -50,13 +50,12 @@ minimum distance.
 `Store.neighbors(ref)` returns every authored neighbour in both directions, one
 entry per neighbour ref:
 
-- `child`: the queried ref authors a structural link to the neighbour;
-- `parent`: another node authors a structural link to the queried ref;
-- `peer`: a symmetric master connects the two refs in either direction.
+- `child`: the queried ref authors a token to the neighbour;
+- `parent`: another node authors a token to the queried ref.
 
-Kind precedence is `child > parent > peer`. A reciprocal structural pair is a
-`child` from each side; a symmetric master is a `peer` from each side. The
-representative link is always an authored link, never a derived opposite.
+Kind precedence is `child > parent`. A reciprocal pair is a `child` from each
+side. The representative link is always an authored token; there is no derived
+opposite.
 
 `Store.components()` walks those neighbours and returns every weak component.
 Members are sorted by `(id, version)`, and components are sorted by their first
@@ -96,7 +95,6 @@ split: they are numbered sections, each sorted by `(id, version)`.
 ## 0 — 1-1
 ## 1 — children
 ## 1 — parents
-## 1 — peers
 ## 2
 ## 3
 ```
@@ -112,7 +110,7 @@ Every emitted list is sorted by an explicit key. The canonical global key is:
 (distance, kind_rank, link type, id, version)
 ```
 
-where `kind_rank` is `child: 0`, `parent: 1`, `peer: 2`. The parts apply as
+where `kind_rank` is `child: 0`, `parent: 1`. The parts apply as
 follows:
 
 - components: members by `(id, version)`, components by their first member;
@@ -134,7 +132,6 @@ membership filter.
 | --- | --- |
 | `→` | child: the current node authors the edge to the next node |
 | `←` | parent: the next node authors the edge back to the current node |
-| `↔` | peer: a symmetric master connects the two nodes |
 
 `bd show REF+N` labels each node with the direction of the step that reached it
 from the previous ring. `bd show --links` prints one row per undirected
@@ -217,7 +214,7 @@ the real node folder, and ring sections:
 - [<title>](4-1.md) — [real file](../.bd_tree/nodes/4-1.md)
 ```
 
-Ring 1 is split into `children`, `parents`, and `peers`; deeper rings are
+Ring 1 is split into `children` and `parents`; deeper rings are
 `Distance N` sections. Every node entry also links to its real store file, so a
 reader can open, copy, or delete the source instead of the symlink.
 
@@ -304,7 +301,7 @@ appears once, in ring 3.
 ```
 
 Every step happens to be an authored child edge here, so every arrow is `→`.
-With a peer or a back-edge in the chain, the corresponding step is `↔` or `←`.
+With a back-edge in the chain, the corresponding step is `←`.
 
 The work area for `bd work 1-1` is flat:
 
@@ -386,8 +383,8 @@ None reads a layout file.
 - Distance is the only ordering primitive; direction is a label.
 - Deterministic output: sort every set by the documented keys before emitting.
 - Projection only: no node file is rewritten by browsing, export, or `bd work`.
-- Full-ref edges: neighbours come from authored full-ref `links`; derived
-  opposites are computed, never stored.
+- Full-ref edges: neighbours come from authored full-ref tokens; in-edges are
+  computed by reversing them and never stored.
 - One work area: `bd work` replaces the contents of `<project>/bd_work/`.
 - The active node is the `REFS.md` header, not an extra file.
 
@@ -410,7 +407,7 @@ None reads a layout file.
 
 - Membership is undirected; cycles are ordinary edges.
 - No authored placement field returns.
-- Full-ref data edges and sorted `links`.
+- Full-ref data edges and sorted tokens.
 - The three generated names stay reserved.
 - `bd_work/` stays flat.
 
@@ -420,8 +417,8 @@ None reads a layout file.
   importance, authority, or reading order. A long chain of important nodes can
   sit in ring 9 while a minor aside sits in ring 1.
 - **Ring 1 is not always "children".** It is split by direction so the labels
-  stay honest, but the graph may author a back-edge or a peer; read the arrow,
-  not the ring number.
+  stay honest, but the graph may author a back-edge; read the arrow, not the
+  ring number.
 - **Cycles shorten distances.** A closing edge can put a distant node in ring 1.
   The order is still deterministic; it is just not a topological order.
 - **Multiple shortest paths.** `bd path` prints one shortest path, chosen by the
@@ -429,7 +426,7 @@ None reads a layout file.
 - **Disconnected stores.** Removing the last edge between two groups creates two
   components. `bd views` lists both; the default anchor stays in one.
 - **No authored hierarchy.** If a project needs a declared parent/child reading
-  order, encode it with structural links and direction, not with positional
+  order, encode it with typed tokens and direction, not with positional
   fields.
 - **Template collisions.** Two nodes can resolve to one path only through
   `--path-template`; the layout appends the ref to keep them distinct.
@@ -442,7 +439,7 @@ None reads a layout file.
 | Distance map | `test_view_distance_is_undirected_bfs` | BFS hop counts |
 | Multi-parent | `test_a_multi_parent_node_appears_once_in_the_view` | one entry per node |
 | Cycle loads | `test_graph_cycle_loads_once_and_is_not_an_error` | cycles are legal |
-| Neighbour kinds | `test_neighbors_lists_both_directions_with_kind` | child/parent/peer |
+| Neighbour kinds | `test_neighbors_lists_both_directions_with_kind` | child/parent |
 | Components | `test_components_are_one_per_weak_component` | component partition |
 | Ring map | `test_ring_distances_maps_every_reachable_ref` | minimum rings |
 | Cycle distance | `test_a_cycle_loads_and_rings_use_the_minimum_distance` | closing edge shortens |

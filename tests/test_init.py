@@ -132,8 +132,9 @@ def test_init_default_graph_end_to_end(tmp_path, capsys):
     assert main(
         ["new", "--parent", "1-1", "--field", "title=X", "--root", str(project)]
     ) == 0
-    links = parse_document(
+    doc = parse_document(
         (project / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")
-    ).meta["links"]
-    assert links == [{"to": "2-1", "type": "breaks_down"}]
+    )
+    assert "links" not in doc.meta
+    assert "[[breaks_down, 2-1]]" in doc.body
     assert check(project).ok

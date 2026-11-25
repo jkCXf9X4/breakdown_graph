@@ -1,9 +1,10 @@
 """Structural validation over the full store and one link-closure view.
 
 Only structure is checked: filename grammar, id/filename agreement, duplicate
-refs, ref syntax in data, graph edges, dangling links and size, plus the retired
-``contains`` key.  Front-matter fields and link types are never
-validated unless asked for with ``require``.
+refs, ref syntax in data, graph edges, dangling links, inline token grammar
+and size, plus the retired ``contains`` key and the retired front-matter
+``links`` key.  Front-matter fields and link types are never validated unless
+asked for with ``require``.
 """
 
 from __future__ import annotations
@@ -11,13 +12,14 @@ from __future__ import annotations
 from pathlib import Path, PurePosixPath
 
 from .errors import BreakdownError
+from .inline import parse_inline_links
 from .loader import (
     load,
     load_view,
     parse_selector,
     ref_of,
 )
-from .model import CheckResult, Issue, Link, Store, View
+from .model import CheckResult, Issue, Store, View
 from .navigate import current_ref
 
 SIZE_LINES = 120
@@ -62,63 +64,9 @@ def _check_contains_removed(store: Store, issues: list[Issue]) -> None:
         )
 
 
-def _check_symmetric_links(store: Store, issues: list[Issue]) -> None:
-    """Validate the one-master rule for symmetric links."""
-    masters: list[tuple[str, Link]] = []
-    pairs: set[tuple[str, str]] = set()
-    for node in sorted(store.nodes.values(), key=lambda item: item.ref):
-        for link in node.links:
-            if not link.symmetric:
-                continue
-            if link.to == node.ref:
-                issues.append(
-                    Issue(
-                        "error",
-                        "symmetric-self-edge",
-                        f"symmetric link to itself ({link.type})",
-                        node=node.ref,
-                        path=str(node.path.relative_to(store.root)),
-                    )
-                )
-            if link.propagates:
-                issues.append(
-                    Issue(
-                        "error",
-                        "propagates-on-symmetric",
-                        f"symmetric link {node.ref} -> {link.to} ({link.type}) "
-                        "must not declare 'propagates'",
-                        node=node.ref,
-                        path=str(node.path.relative_to(store.root)),
-                    )
-                )
-            masters.append((node.ref, link))
-            if link.to != node.ref:
-                pairs.add((node.ref, link.to))
-    reported: set[tuple[str, str]] = set()
-    for source, link in masters:
-        if link.to == source:
-            continue
-        reverse = (link.to, source)
-        if reverse not in pairs or source <= link.to:
-            continue
-        key = (source, link.to) if source <= link.to else (link.to, source)
-        if key in reported:
-            continue
-        reported.add(key)
-        issues.append(
-            Issue(
-                "error",
-                "duplicate-symmetric-edge",
-                f"both {source} -> {link.to} and {link.to} -> {source} are "
-                "authored symmetric; keep one master",
-                node=key[0],
-            )
-        )
-
-
 def _check_freshness(view: View, issues: list[Issue]) -> None:
     for edge in view.edges:
-        if edge.symmetric or not edge.propagating:
+        if not edge.propagating:
             continue
         target = view.nodes.get(edge.target)
         if target is None:
@@ -142,6 +90,29 @@ def _check_freshness(view: View, issues: list[Issue]) -> None:
                     node=edge.source,
                 )
             )
+
+
+def _check_link_titles(view: View, issues: list[Issue]) -> None:
+    """Cached inline token titles must match the target node's live title."""
+    for node in view.nodes.values():
+        inline_links = parse_inline_links(node.body)
+        for found in inline_links:
+            if found.title is None:
+                continue
+            target = view.nodes.get(found.to)
+            if target is None:
+                continue
+            if target.title != found.title:
+                issues.append(
+                    Issue(
+                        "warning",
+                        "link-title-stale",
+                        f"inline title {found.title!r} does not match the live "
+                        f"title of {found.to} ({target.title!r})",
+                        node=node.ref,
+                        line=found.line,
+                    )
+                )
 
 
 def _check_sizes(
@@ -184,7 +155,10 @@ def _dedupe(issues: list[Issue]) -> list[Issue]:
     seen: set[tuple] = set()
     result: list[Issue] = []
     for issue in issues:
-        key = (issue.level, issue.code, issue.node, issue.path, issue.message)
+        key = (
+            issue.level, issue.code, issue.node, issue.path, issue.message,
+            issue.line,
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -241,7 +215,6 @@ def check(
 
     issues: list[Issue] = list(store.issues)
     _check_contains_removed(store, issues)
-    _check_symmetric_links(store, issues)
 
     from .graph import audit as graph_audit
     from .graph import build_graph
@@ -274,6 +247,7 @@ def check(
         resolved = load_view(store, selected)
         issues.extend(resolved.issues)
         _check_freshness(resolved, issues)
+        _check_link_titles(resolved, issues)
         _check_sizes(
             resolved,
             issues,

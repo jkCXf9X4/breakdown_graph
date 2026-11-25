@@ -1,12 +1,15 @@
-"""Stale-edge reporting and pin reconciliation inside one view."""
+"""Stale-edge reporting and pin reconciliation inside one view.
+
+Pins live in the top-level ``freshness`` front-matter map, keyed by target
+ref; reconciliation rewrites that map and never touches node bodies.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from .errors import BreakdownError
-from .frontmatter import parse_document, rewrite_links
+from .frontmatter import parse_document, rewrite_freshness
 from .fsutil import atomic_write, store_lock
 from .loader import load, load_view, resolve_store_root
 from .model import Edge, Node, ReconcileChange, StaleEdge, View
@@ -55,19 +58,26 @@ def stale(root: str | Path, view: str | int | None = None) -> list[StaleEdge]:
 
 
 def _reconcile_node(view: View, node: Node) -> list[ReconcileChange]:
+    """Re-pin every stale/untracked propagating edge in the freshness map."""
     changes: list[ReconcileChange] = []
-    new_links: list[Any] = []
+    freshness: dict[str, dict] = {}
     for link in node.links:
-        raw = dict(link.raw) if isinstance(link.raw, dict) else link.raw
-        state = None
+        entry: dict = {}
+        if link.pinned is not None:
+            entry["pinned"] = link.pinned
+        if link.propagates:
+            entry["propagates"] = True
         target = view.nodes.get(link.to)
+        state = None
         if link.propagating and target is not None:
             if link.pinned is None:
                 state = "untracked"
             elif link.pinned != target.body_hash:
                 state = "stale"
-        if state is not None and target is not None and isinstance(raw, dict):
-            raw["pinned"] = target.body_hash
+        if state is not None:
+            entry["pinned"] = target.body_hash
+            if link.propagates:
+                entry["propagates"] = True
             changes.append(
                 ReconcileChange(
                     node=node.ref,
@@ -78,12 +88,12 @@ def _reconcile_node(view: View, node: Node) -> list[ReconcileChange]:
                     new=target.body_hash,
                 )
             )
-        new_links.append(raw)
+        if entry:
+            freshness[link.to] = entry
     if not changes:
         return []
     doc = parse_document(node.path.read_text(encoding="utf-8"))
-    rewritten = rewrite_links(doc.raw_fm, new_links)
-    atomic_write(node.path, doc.with_raw_fm(rewritten))
+    atomic_write(node.path, doc.with_raw_fm(rewrite_freshness(doc.raw_fm, freshness)))
     return changes
 
 

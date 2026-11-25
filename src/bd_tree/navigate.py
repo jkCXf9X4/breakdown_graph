@@ -18,17 +18,16 @@ from .loader import load_view, parse_selector
 from .model import KIND_RANK, Node, Store
 
 # Direction labels for one step out of a node.
-ARROW: dict[str, str] = {"child": "→", "parent": "←", "peer": "↔"}
+ARROW: dict[str, str] = {"child": "→", "parent": "←"}
 _KIND_BY_RANK: dict[int, str] = {rank: kind for kind, rank in KIND_RANK.items()}
 _INVERSE_KIND: dict[str, str] = {
     "child": "parent",
     "parent": "child",
-    "peer": "peer",
 }
 
 # Front-matter keys that drive the model or are displayed separately.
 RESERVED: frozenset[str] = frozenset(
-    {"id", "legacy", "links", "title", "summary"}
+    {"id", "legacy", "links", "freshness", "title", "summary"}
 )
 
 MAX_FIND_LINES = 3
@@ -131,8 +130,7 @@ def shortest_path(
 
     Returns ``[(ref, arrow_into_ref), ...]`` starting with ``(start, "")`` in
     which each later arrow is the direction of that step (``→`` child, ``←``
-    parent, ``↔`` peer).  ``None`` means the two refs are in different
-    components.
+    parent).  ``None`` means the two refs are in different components.
     """
     if start not in store.nodes or target not in store.nodes:
         return None
@@ -273,9 +271,8 @@ def _display_body(node: Node, max_chars: int) -> str:
 def _graph_link_footer(store: Store, printed: Iterable[str]) -> str:
     """Undirected neighbour rows for every printed node.
 
-    Direction is a label on the row: ``→`` child, ``←`` parent, ``↔`` peer.
-    A symmetric master is a peer in both directions; derived opposites are
-    never emitted separately.
+    Direction is a label on the row: ``→`` child, ``←`` parent.  In-edges
+    arrive from other nodes' authored tokens.
     """
     rows: list[str] = []
     seen: set[tuple[str, str, str]] = set()
@@ -480,8 +477,8 @@ def render_path(store: Store, ref: str, *, anchor: str | None = None) -> str:
 
     The anchor defaults to the store anchor (declared ``ROOT``, else the first
     component representative).  There is no ancestry and no first-parent chain:
-    a BFS gives the shortest path and each step carries ``→`` (child), ``←``
-    (parent) or ``↔`` (peer).
+    a BFS gives the shortest path and each step carries ``→`` (child) or ``←``
+    (parent).
     """
     get_node(store, ref)
     start = anchor if anchor is not None else default_root(store)

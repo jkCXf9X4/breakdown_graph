@@ -277,23 +277,14 @@ def migrate(
     *,
     dry_run: bool = False,
     link_type: str = "breaks_down",
-    symmetric_types: list[str] | None = None,
-    inverse_types: dict[str, str] | None = None,
 ) -> MigrationResult:
-    """Convert a classic or containment store in place (or print the plan).
+    """Convert a legacy store in place (or print the plan).
 
-    Retired placement keys are stripped from every node and ROOT;
-    ``symmetric_types`` and ``inverse_types`` mark master links on an existing
-    store.  Every flag is idempotent, so re-running the same migration is a
-    no-op.
+    Retired placement keys are stripped from every node and ROOT; front-matter
+    links move into node bodies as token lines.  Idempotent, so re-running the
+    same migration is a no-op.
     """
-    return _migrate(
-        root,
-        dry_run=dry_run,
-        link_type=link_type,
-        symmetric_types=symmetric_types,
-        inverse_types=inverse_types,
-    )
+    return _migrate(root, dry_run=dry_run, link_type=link_type)
 
 
 def set_root(root: str | Path, ref: str | int) -> Path:
@@ -322,7 +313,6 @@ def new_node(
     parent: str | int | None = None,
     fields: dict[str, Any] | None = None,
     body: str = "",
-    links: list[dict[str, Any]] | None = None,
     link_type: str = "breaks_down",
 ) -> Path:
     """Create the next global id at version 1, optionally linked to ``parent``."""
@@ -331,7 +321,6 @@ def new_node(
         parent=parent,
         fields=fields,
         body=body,
-        links=links,
         link_type=link_type,
     )
 
@@ -343,13 +332,12 @@ def link(
     *,
     link_type: str,
     propagates: bool = False,
-    symmetric: bool = False,
-    inverse: str | None = None,
+    pinned: str | None = None,
 ) -> Path:
-    """Append a typed link edge, pinning the target when it propagates.
+    """Append a typed edge token to the FROM node's ``## Links`` section.
 
-    ``symmetric`` makes the edge the single authored master of a two-way
-    relation; ``inverse`` names the derived opposite's type and requires it.
+    ``propagates`` and/or ``pinned`` are recorded in the FROM node's
+    ``freshness`` front-matter map, keyed by the target ref.
     """
     return _link(
         root,
@@ -357,8 +345,7 @@ def link(
         target,
         link_type=link_type,
         propagates=propagates,
-        symmetric=symmetric,
-        inverse=inverse,
+        pinned=pinned,
     )
 
 

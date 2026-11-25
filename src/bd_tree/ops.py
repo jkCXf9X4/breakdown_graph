@@ -1,4 +1,13 @@
-"""Filesystem operations on the version-only numeric node store."""
+"""Filesystem operations on the version-only numeric node store.
+
+Links are declared as reserved tokens in node bodies, not front matter.
+Operating rule for structural edits: a structural edit changes only the
+source file, preserves unrelated front matter, and touches the body only
+inside ``## Links`` sections — appending or removing token lines — except
+:func:`replace`, which additionally rewrites token refs in place.  Per-edge
+pins and participation live in the top-level ``freshness`` front-matter
+map, keyed by target ref.
+"""
 
 from __future__ import annotations
 
@@ -13,10 +22,11 @@ from .frontmatter import (
     FrontMatterError,
     parse_document,
     render_document,
-    rewrite_links,
+    rewrite_freshness,
 )
 from .fsutil import atomic_copy, atomic_write, publish_new, store_lock
 from .graph import ring_distances
+from .inline import append_token, parse_inline_links, remove_token, repoint_token
 from .loader import (
     ROOT_FILE,
     STORE_DIR,
@@ -49,24 +59,8 @@ def _existing(store: Store, ref: str, role: str) -> Node:
     return node
 
 
-def _link_sort_key(item: Any) -> tuple[int, int, int, str]:
-    target = _link_target(item)
-    if target is None:
-        return (1, 0, 0, "")
-    node_id, version = parse_ref(target)
-    return (0, node_id, version, "")
-
-
-def _insert_sorted_link(links: list[Any], edge: Any) -> list[Any]:
-    """Insert ``edge`` so the list stays ordered by target ref (merge-friendly)."""
-    key = _link_sort_key(edge)
-    for index, item in enumerate(links):
-        if _link_sort_key(item) > key:
-            return links[:index] + [edge] + links[index:]
-    return links + [edge]
-
-
 def _raw_links(document) -> list[Any]:
+    """Validate the legacy front-matter ``links`` list shape for migration."""
     raw = document.meta.get("links")
     if raw is None:
         return []
@@ -79,23 +73,45 @@ def _raw_links(document) -> list[Any]:
     return [dict(item) if isinstance(item, dict) else item for item in raw]
 
 
-def _link_target(item: Any) -> str | None:
-    value = item.get("to") if isinstance(item, dict) else item
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text if is_full_ref(text) else None
+def _fm_freshness(meta: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The node's ``freshness`` front-matter map, normalized to plain dicts."""
+    raw = meta.get("freshness")
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(key): dict(value) if isinstance(value, dict) else {}
+        for key, value in raw.items()
+    }
 
 
-def _link_type(item: Any, store: Store) -> str | None:
-    """An item's effective edge type: its own, or the target's ``type``."""
-    if isinstance(item, dict):
-        value = item.get("type")
-        return value if isinstance(value, str) else None
-    target = _link_target(item)
-    node = store.nodes.get(target) if target is not None else None
-    value = node.meta.get("type") if node is not None else None
-    return value if isinstance(value, str) and value.strip() else None
+def _merge_freshness_entry(
+    freshness: dict[str, dict[str, Any]], target_ref: str, values: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """Return the map with ``values`` merged into the entry keyed ``target_ref``."""
+    merged = {key: dict(value) for key, value in freshness.items()}
+    merged[target_ref] = {**merged.get(target_ref, {}), **values}
+    return merged
+
+
+def _meta_title(meta: dict[str, Any], ref: str) -> str:
+    """A not-yet-published node's live title: its ``title`` field, else the ref."""
+    value = meta.get("title")
+    return str(value) if value not in (None, "") else ref
+
+
+_TOKEN_TYPE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
+
+
+def _check_link_type(link_type: str) -> str:
+    """A link type must be writable as a body token type."""
+    if not isinstance(link_type, str) or not link_type.strip():
+        raise BreakdownError("link type must be a non-empty string")
+    if _TOKEN_TYPE.fullmatch(link_type) is None:
+        raise BreakdownError(
+            f"link type {link_type!r} cannot be written as a body token "
+            "(expected [A-Za-z][A-Za-z0-9_-]*)"
+        )
+    return link_type
 
 
 _ROOT_BODY = "# Root\n\nState the intent of this graph here.\n"
@@ -250,30 +266,21 @@ def clone(
 
     if neighbourhood:
         # Rewire every cloned edge whose target was cloned too, leaving edges
-        # that leave the neighbourhood pointing at the original nodes.
+        # that leave the neighbourhood pointing at the original nodes.  Token
+        # refs are rewritten in place; every other byte is preserved.
         for old_ref, new_ref in mapping.items():
             target = node_path(root, *parse_ref(new_ref))
             document = parse_document(target.read_text(encoding="utf-8"))
-            links = _raw_links(document)
+            body = document.body
             changed = False
-            new_links: list[Any] = []
-            for item in links:
-                mapped = _link_target(item)
-                if mapped in mapping:
-                    replacement = mapping[mapped]
-                    item = (
-                        {**item, "to": replacement}
-                        if isinstance(item, dict)
-                        else replacement
-                    )
+            for old, new in mapping.items():
+                body, count = repoint_token(body, old, new)
+                if count:
                     changed = True
-                new_links.append(item)
             if changed:
                 atomic_write(
                     target,
-                    document.with_raw_fm(
-                        rewrite_links(document.raw_fm, new_links)
-                    ),
+                    document.opening + document.raw_fm + document.closing + body,
                 )
 
     return [(old_ref, mapping[old_ref]) for old_ref in order]
@@ -285,6 +292,8 @@ def replace(
 ) -> tuple[str, str, str]:
     """Repoint every inbound link from ``old`` to ``new``.
 
+    Token refs are rewritten in place in every node body, and each node's
+    ``freshness`` map is repointed from ``old`` to ``new`` keeping its values.
     The old node file is untouched, so it stays a peer version.  When ``old``
     is the store root, ``ROOT`` is repointed to ``new`` instead.  Returns
     ``(old_ref, parent_ref_or_ROOT, new_ref)``.
@@ -301,23 +310,21 @@ def replace(
     repointed: list[str] = []
     for node in store.nodes.values():
         document = parse_document(node.path.read_text(encoding="utf-8"))
-        links = _raw_links(document)
-        changed = False
-        new_links: list[Any] = []
-        for item in links:
-            if _link_target(item) == old_ref:
-                item = (
-                    {**item, "to": new_ref}
-                    if isinstance(item, dict)
-                    else new_ref
-                )
-                changed = True
-            new_links.append(item)
-        if changed:
+        body, count = repoint_token(document.body, old_ref, new_ref)
+        raw_fm = document.raw_fm
+        freshness = _fm_freshness(document.meta)
+        if old_ref in freshness:
+            merged = {
+                (new_ref if key == old_ref else key): value
+                for key, value in freshness.items()
+            }
+            raw_fm = rewrite_freshness(raw_fm, merged)
+        if count or raw_fm != document.raw_fm:
             atomic_write(
                 node.path,
-                document.with_raw_fm(rewrite_links(document.raw_fm, new_links)),
+                document.opening + raw_fm + document.closing + body,
             )
+        if count:
             repointed.append(node.ref)
     was_root = store.root_ref == old_ref
     if was_root:
@@ -420,14 +427,15 @@ def new_node(
     parent: str | int | None = None,
     fields: dict[str, Any] | None = None,
     body: str = "",
-    links: list[dict[str, Any]] | None = None,
     link_type: str = "breaks_down",
 ) -> Path:
     """Create the next global id at version 1 and wire it to ``parent``.
 
     No authored placement is written: bands, stages and orders are retired.
-    A typed edge is appended to the parent's ``links`` when ``parent`` is
-    given; without a parent the node is a new component of its own.
+    A typed edge token is appended to the parent's ``## Links`` body section
+    when ``parent`` is given; without a parent the node is a new component
+    of its own.  The new node file itself carries no links — a ``--body``
+    containing tokens parses like any other.
 
     The whole id-pick/parent-rewrite/publish sequence holds the store lock, so
     concurrent writers get distinct ids and neither loses a sibling.  Both
@@ -443,15 +451,12 @@ def new_node(
         parent_node: Node | None = None
     else:
         parent_node = _existing(store, resolve_ref(store, parent), "parent")
-        if not isinstance(link_type, str) or not link_type.strip():
-            raise BreakdownError("link type must be a non-empty string")
+        _check_link_type(link_type)
 
     node_id = max((node.id for node in store.nodes.values()), default=0) + 1
     meta: dict[str, Any] = {"id": node_id}
     meta.update(NEW_NODE_DEFAULTS)
     meta.update(fields)
-    if links:
-        meta["links"] = links
 
     target = node_path(root, node_id, 1)
     if target.exists():
@@ -460,13 +465,14 @@ def new_node(
     new_ref = ref_of(node_id, 1)
     if parent_node is not None:
         document = parse_document(parent_node.path.read_text(encoding="utf-8"))
-        raw = _insert_sorted_link(
-            _raw_links(document), {"to": new_ref, "type": link_type}
+        parent_body = append_token(
+            document.body, link_type, new_ref, _meta_title(meta, new_ref)
         )
-        atomic_write(
-            parent_node.path,
-            document.with_raw_fm(rewrite_links(document.raw_fm, raw)),
-        )
+        if parent_body != document.body:
+            atomic_write(
+                parent_node.path,
+                document.opening + document.raw_fm + document.closing + parent_body,
+            )
     target.parent.mkdir(parents=True, exist_ok=True)
     publish_new(target, render_document(meta, body))
     return target
@@ -480,28 +486,20 @@ def link(
     *,
     link_type: str,
     propagates: bool = False,
-    symmetric: bool = False,
-    inverse: str | None = None,
+    pinned: str | None = None,
 ) -> Path:
-    """Append a typed link edge, pinning the target when it propagates.
+    """Append a typed edge token to the source node's ``## Links`` section.
 
-    Direction is only a label: back-edges, reciprocal edges and cycles are
-    legal, and targets stay sorted.  A symmetric link is the single authored
-    master of a two-way relation; the opposite is derived at load time, never
-    written.  ``inverse`` names the derived edge's type and requires
-    ``symmetric``.  A ref may not link to itself.
+    The token is written in the FROM node body; the title is the target's
+    live title at link time.  Direction is only a label: back-edges,
+    reciprocal edges and cycles are legal, and a ref may not link to itself.
+    When ``propagates`` and/or ``pinned`` are given they are recorded in the
+    source node's ``freshness`` front-matter map, keyed by the target ref;
+    a propagating edge without an explicit pin is pinned to the target's
+    current body hash now.
     """
     root = Path(root).resolve()
-    if not isinstance(link_type, str) or not link_type.strip():
-        raise BreakdownError("link type must be a non-empty string")
-    if inverse is not None:
-        if not symmetric:
-            raise BreakdownError("--inverse requires --symmetric")
-        if not isinstance(inverse, str) or not inverse.strip():
-            raise BreakdownError("inverse type must be a non-empty string")
-        inverse = inverse.strip()
-    if symmetric and propagates:
-        raise BreakdownError("propagates cannot be combined with symmetric")
+    _check_link_type(link_type)
     store = load(root)
     source_ref = resolve_ref(store, source)
     target_ref = resolve_ref(store, target)
@@ -514,37 +512,30 @@ def link(
         )
 
     document = parse_document(source_node.path.read_text(encoding="utf-8"))
-    links = _raw_links(document)
-    for item in links:
-        if (
-            _link_target(item) == target_ref
-            and _link_type(item, store) == link_type
-        ):
+    for token in parse_inline_links(document.body):
+        if token.to == target_ref and token.type == link_type:
             raise BreakdownError(
-                f"link {source_ref} -> {target_ref} ({link_type}) already exists; "
-                "use bd unlink first"
+                f"link {source_ref} -> {target_ref} ({link_type}) already "
+                "exists; use bd unlink first"
             )
 
-    edge: dict[str, Any] = {"to": target_ref, "type": link_type}
-    if propagates:
-        edge["propagates"] = True
-        edge["pinned"] = target_node.body_hash
-    if symmetric:
-        edge["symmetric"] = True
-        if inverse is not None:
-            edge["inverse"] = inverse
-    declared_type = target_node.meta.get("type")
-    bare = (
-        not propagates
-        and not symmetric
-        and isinstance(declared_type, str)
-        and declared_type.strip()
-        and declared_type == link_type
+    body = append_token(document.body, link_type, target_ref, target_node.title)
+    raw_fm = document.raw_fm
+    if propagates or pinned is not None:
+        values: dict[str, Any] = {}
+        if propagates:
+            values["propagates"] = True
+        if propagates or pinned is not None:
+            values["pinned"] = (
+                str(pinned) if pinned is not None else target_node.body_hash
+            )
+        merged = _merge_freshness_entry(_fm_freshness(document.meta), target_ref, values)
+        if merged != _fm_freshness(document.meta):
+            raw_fm = rewrite_freshness(raw_fm, merged)
+    atomic_write(
+        source_node.path,
+        document.opening + raw_fm + document.closing + body,
     )
-    item = target_ref if bare else edge
-    links = _insert_sorted_link(links, item)
-    rewritten = rewrite_links(document.raw_fm, links)
-    atomic_write(source_node.path, document.with_raw_fm(rewritten))
     return source_node.path
 
 
@@ -556,7 +547,12 @@ def unlink(
     *,
     link_type: str | None = None,
 ) -> Path:
-    """Remove every matching edge; ``link_type`` narrows the match."""
+    """Remove every matching edge token from the source node's body.
+
+    ``link_type`` narrows the match.  The source node's ``freshness`` entry
+    keyed by the target ref is deleted only when no token targeting that ref
+    remains; all other body bytes are preserved.
+    """
     root = Path(root).resolve()
     store = load(root)
     source_ref = resolve_ref(store, source)
@@ -565,24 +561,36 @@ def unlink(
     _existing(store, target_ref, "target")
 
     document = parse_document(source_node.path.read_text(encoding="utf-8"))
-    links = _raw_links(document)
-    kept: list[Any] = []
-    removed = 0
-    for item in links:
-        existing = _link_target(item)
-        matches = existing == target_ref and (
-            link_type is None or _link_type(item, store) == link_type
-        )
-        if matches:
-            removed += 1
-        else:
-            kept.append(item)
-    if removed == 0:
+    matching = [
+        token
+        for token in parse_inline_links(document.body)
+        if token.to == target_ref
+        and (link_type is None or token.type == link_type)
+    ]
+    if not matching:
         suffix = f" ({link_type})" if link_type is not None else ""
         raise BreakdownError(f"no link {source_ref} -> {target_ref}{suffix} to remove")
 
-    rewritten = rewrite_links(document.raw_fm, kept)
-    atomic_write(source_node.path, document.with_raw_fm(rewritten))
+    body = document.body
+    removed = 0
+    for etype in dict.fromkeys(token.type for token in matching):
+        body, count = remove_token(body, etype, target_ref)
+        removed += count
+    if removed == 0:
+        raise BreakdownError(
+            f"no link {source_ref} -> {target_ref} could be removed"
+        )
+
+    raw_fm = document.raw_fm
+    if target_ref not in {token.to for token in parse_inline_links(body)}:
+        freshness = _fm_freshness(document.meta)
+        if target_ref in freshness:
+            merged = {key: value for key, value in freshness.items() if key != target_ref}
+            raw_fm = rewrite_freshness(raw_fm, merged)
+    atomic_write(
+        source_node.path,
+        document.opening + raw_fm + document.closing + body,
+    )
     return source_node.path
 
 
@@ -676,22 +684,22 @@ def migrate(
     *,
     dry_run: bool = False,
     link_type: str = "breaks_down",
-    symmetric_types: list[str] | None = None,
-    inverse_types: dict[str, str] | None = None,
 ) -> MigrationResult:
-    """One-time, idempotent, in-place migration of a classic containment store.
+    """One-time, idempotent, in-place migration of a legacy store.
 
-    Classic bare filenames are versioned first.  Every ``contains`` list becomes
-    typed ``links``; scalar links gain an explicit type; every list is sorted by
-    ref.  Retired placement keys (``band``, ``subpath``, ``layer``, ``stage``,
-    ``order``) are stripped from every node, and ``band_layout`` /
-    ``band_order`` from the ROOT node, while bodies and unrelated front matter
-    are preserved byte for byte.
+    Classic bare filenames are versioned first.  Front-matter ``links`` and
+    ``contains`` lists move into node bodies as a trailing ``## Links``
+    section of ``- [[TYPE, REF]](TITLE)`` token lines, sorted by target ref;
+    the token title is the target's live title at migration time.  Per-link
+    ``pinned``/``propagates`` keys are stripped and recorded in the node's
+    top-level ``freshness`` front-matter map.  Retired placement keys
+    (``band``, ``subpath``, ``layer``, ``stage``, ``order``) are stripped
+    from every node, and ``band_layout`` / ``band_order`` from the ROOT
+    node, while body bytes outside the appended section, titles, and
+    unrelated front matter are preserved.
 
-    The flags also work on an already-migrated store: ``symmetric_types`` marks
-    every master link of a type and ``inverse_types`` marks a type and names its
-    derived opposite.  Running the same migration twice makes no further
-    changes.
+    Running the same migration twice makes no further changes; token-only
+    stores are left untouched and ``--dry-run`` writes nothing.
     """
     if not isinstance(link_type, str) or not link_type.strip():
         raise BreakdownError("link type must be a non-empty string")
@@ -756,6 +764,13 @@ def migrate(
             return value.strip()
         return None
 
+    def target_title(ref: str) -> str:
+        target = target_by_ref.get(ref)
+        if target is None:
+            return ref
+        value = docs[target].meta.get("title")
+        return str(value) if value not in (None, "") else ref
+
     ambiguous: dict[int, set[str]] = {}
     converted: dict[Path, list[str]] = {}
     for target, document in docs.items():
@@ -769,86 +784,50 @@ def migrate(
             children.append(str(value).strip())
         converted[target] = children
 
-    final_links: dict[str, list[Any]] = {}
-    original_links: dict[str, list[Any]] = {}
+    # One plan per node: the FM entries to convert to tokens, plus the
+    # merged ``freshness`` map.  Symmetric/inverse keys die here: the token
+    # carries only the plain type and ref.
+    plans: dict[Path, tuple[list[tuple[str, str]], dict[str, dict[str, Any]]]] = {}
     for target, document in docs.items():
         where = str(source_of[target].relative_to(root))
-        original = _raw_links(document)
-        original_links[target.stem] = original
-        new_links: list[Any] = []
-        for item in original:
-            if isinstance(item, dict):
-                if "to" in item:
-                    item_changed, value = _map_data_ref(
-                        item["to"], mapping, where, ambiguous
+        entries: list[tuple[str, str]] = []
+        freshness = _fm_freshness(document.meta)
+        original_freshness = {key: dict(value) for key, value in freshness.items()}
+        if "links" in document.meta:
+            for item in _raw_links(document):
+                if isinstance(item, dict):
+                    to = item.get("to")
+                    if to is None:
+                        raise BreakdownError(
+                            f"cannot migrate {where}: link without 'to'"
+                        )
+                    _changed, value = _map_data_ref(to, mapping, where, ambiguous)
+                    target_ref = str(value).strip()
+                    etype = item.get("type")
+                    if not isinstance(etype, str) or not etype.strip():
+                        etype = target_type(target_ref) or link_type
+                    entries.append((etype.strip(), target_ref))
+                    values: dict[str, Any] = {}
+                    if item.get("propagates"):
+                        values["propagates"] = True
+                    if item.get("pinned") is not None:
+                        values["pinned"] = str(item["pinned"])
+                    if values:
+                        freshness = _merge_freshness_entry(
+                            freshness, target_ref, values
+                        )
+                else:
+                    _changed, value = _map_data_ref(item, mapping, where, ambiguous)
+                    target_ref = str(value).strip()
+                    entries.append(
+                        (target_type(target_ref) or link_type, target_ref)
                     )
-                    if item_changed:
-                        item = {**item, "to": value}
-                new_links.append(item)
-            elif isinstance(item, (str, int)) and not isinstance(item, bool):
-                _item_changed, value = _map_data_ref(
-                    item, mapping, where, ambiguous
-                )
-                target_ref = str(value).strip()
-                new_links.append(
-                    {
-                        "to": target_ref,
-                        "type": target_type(target_ref) or link_type,
-                    }
-                )
-            else:
-                new_links.append(item)
         if target in converted:
-            for child_ref in converted[target]:
-                new_links.append({"to": child_ref, "type": link_type})
-        new_links.sort(key=_link_sort_key)
-        final_links[target.stem] = new_links
-
-    symmetric_set: set[str] = set()
-    for kind in symmetric_types or ():
-        if not isinstance(kind, str) or not kind.strip():
-            raise BreakdownError("--symmetric needs a non-empty link type")
-        symmetric_set.add(kind.strip())
-    inverse_map: dict[str, str] = {}
-    for kind, opposite in (inverse_types or {}).items():
-        if not isinstance(kind, str) or not kind.strip():
-            raise BreakdownError("--inverse needs a non-empty link type")
-        if not isinstance(opposite, str) or not opposite.strip():
-            raise BreakdownError(
-                f"--inverse {kind}: needs a non-empty inverse type"
+            entries.extend(
+                (link_type, child_ref) for child_ref in converted[target]
             )
-        inverse_map[kind.strip()] = opposite.strip()
-    symmetric_set |= set(inverse_map)
-    if symmetric_set:
-        for ref, links in final_links.items():
-            touched = 0
-            kinds: set[str] = set()
-            for index, item in enumerate(links):
-                if not isinstance(item, dict):
-                    continue
-                etype = item.get("type")
-                if not isinstance(etype, str) or etype.strip() not in symmetric_set:
-                    continue
-                clean = etype.strip()
-                updated = {
-                    key: value
-                    for key, value in item.items()
-                    if key not in ("propagates", "pinned")
-                }
-                updated["symmetric"] = True
-                opposite = inverse_map.get(clean)
-                if opposite is not None:
-                    updated["inverse"] = opposite
-                if updated != item:
-                    links[index] = updated
-                    touched += 1
-                kinds.add(clean)
-            if touched:
-                where = str(source_of[target_by_ref[ref]].relative_to(root))
-                detail = ", ".join(sorted(kinds))
-                result.rewrites.append(
-                    f"{where}: symmetric {detail} ({touched} links)"
-                )
+        entries.sort(key=lambda pair: _ref_text_key(pair[1]))
+        plans[target] = (entries, freshness)
 
     root_path = root / ROOT_FILE
     declared = (
@@ -871,12 +850,17 @@ def migrate(
     for target, document in docs.items():
         where = str(source_of[target].relative_to(root))
         ref = target.stem
+        entries, freshness = plans[target]
         raw_fm = document.raw_fm
         changed = False
 
-        if final_links[ref] != original_links[ref]:
-            raw_fm = rewrite_links(raw_fm, final_links[ref])
+        if "links" in document.meta:
+            raw_fm = _remove_key(raw_fm, "links")
             changed = True
+            fm_count = len(entries) - (
+                len(converted[target]) if target in converted else 0
+            )
+            result.rewrites.append(f"{where}: links -> {fm_count} tokens")
 
         if target in converted:
             raw_fm = _remove_key(raw_fm, "contains")
@@ -884,6 +868,14 @@ def migrate(
                 f"{where}: contains -> {len(converted[target])} links "
                 f"({link_type})"
             )
+            changed = True
+
+        body = document.body
+        for etype, target_ref in entries:
+            body = append_token(body, etype, target_ref, target_title(target_ref))
+
+        if freshness != _fm_freshness(document.meta):
+            raw_fm = rewrite_freshness(raw_fm, freshness)
             changed = True
 
         retired = [
@@ -905,7 +897,11 @@ def migrate(
 
         if changed:
             pending.append(
-                (source_of[target], target, document.with_raw_fm(raw_fm))
+                (
+                    source_of[target],
+                    target,
+                    document.opening + raw_fm + document.closing + body,
+                )
             )
 
     root_path = root / ROOT_FILE

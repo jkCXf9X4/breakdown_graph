@@ -36,27 +36,30 @@ run from the repo root with `PYTHONPATH=src python3 -m bd_tree`.
 - `Store` is the full index: ref → node, all files, all edges, all issues.
   There is one topology. `Store.model` remains as a property for internal
   compatibility, but it always returns `"graph"`; do not add a second branch.
-- `Store.neighbors(ref)` is the undirected seam: authored links in both
-  directions, one entry per neighbour ref, each with a `kind` (`child`,
-  `parent`, `peer`) and the representative authored `Link`.
+- `Store.neighbors(ref)` is the undirected seam: authored tokens in both
+  directions, one entry per neighbour ref, each with a `kind` (`child` or
+  `parent`) and the representative authored `Link`.
 - `Store.components()` returns every weak component, members sorted by
   `(id, version)`. `Store.topology_roots()` returns one representative per
   component: its lowest member. The name is historical; a cycle no longer
   produces "no roots".
 - `Store.children(ref)` and `Store.parents(ref)` keep the authored direction.
-  `Store.structural_links(ref)` is the authored non-symmetric subset;
-  `Store.derived_links(ref)` computes opposite edges from other nodes' symmetric
-  masters (`origin="derived"`, never stored).
-- `Store.node_edges(ref, include_derived=False)` keeps authored behaviour by
-  default; `include_derived=True` appends derived opposites.
+  `Store.structural_links(ref)` keeps its historical name but returns every
+  authored link; there is no `derived_links`.
+- `graph.build_graph` builds `out` from authored tokens and `inn` by reversing
+  them; the reversed entries are display-only and are never stored.
+- `Store.node_edges(ref)` and `View.node_edges(ref)` return authored out-edges;
+  `graph.build_graph(...).inn` is the reversed list that `bd in` renders.
 - `View` is one component: every member once, plus `distance`, the undirected
   BFS hop count from the view ref. `View.edges` holds authored links whose two
-  ends are both in the component; derived opposites never enter.
+  ends are both in the component; reversed in-edges never enter.
 - Every read-only command works on a `View` or the anchored `Graph`; structural
   edits work on `Store` and write node files.
-- Symmetric links are one authored master per pair. The loader validates
-  `symmetric` (bool) and `inverse` (non-empty string, requires `symmetric`) and
-  the opposite is derived at load. Never write a derived opposite to a file.
+- Link declaration is body-owned: `inline.scan_inline_links` reads
+  `[[TYPE, REF]]` tokens, ignoring fenced code, inline code, and `\[[`, and
+  `inline.append_token` / `remove_token` / `repoint_token` maintain the trailing
+  `## Links` section. A cached `(TITLE)` is advisory; rendering reads the live
+  title.
 
 Validation is global; export and agent context are view-scoped. The default
 anchor is `ROOT`, else the lowest member of the first component; an explicit ref
@@ -98,23 +101,22 @@ Node    id, version, ref, meta, links, body, path
 Store   root, nodes: dict[ref, Node], issues, declared_root
         model -> "graph"
         neighbors(ref), components(), children(ref), parents(ref),
-        structural_links(ref), derived_links(ref), topology_roots()
-Neighbor ref, kind ("child" | "parent" | "peer"), link
+        structural_links(ref), topology_roots()
+Neighbor ref, kind ("child" | "parent"), link
 View    store, ref, nodes: dict[ref, Node], edges, issues,
         distance: dict[ref, int]
-Link    to, type, pinned, propagates, symmetric, inverse, raw
-Edge    source, target, type, pinned, symmetric,
-        origin ("link" | "derived" | "reference")
+Link    to, type, pinned, propagates, raw
+Edge    source, target, type, pinned, propagates, origin ("authored")
 Issue   level, code, message, node, path
 ```
 
 `Node.version` is always `>= 1`; `Node.ref` is the canonical `id-version` and
-`node_path` always emits the suffix. A symmetric master is shown as an out-edge
-but is a `peer` in the undirected view. `bd clone` copies the source file, so the
-new peer keeps its declared `links`; `bd clone --subtree` also rewires each
-cloned node's `links`, and `bd replace OLD NEW` is the separate wiring step: it
-repoints inbound links, or repoints `ROOT` when OLD is the store root, leaving
-OLD's file as a peer.
+`node_path` always emits the suffix. `Link.raw` is the token text that declared
+the edge; a node's `pinned`/`propagates` values come from its `freshness:` map.
+`bd clone` copies the source file, so the clone keeps its tokens; `bd clone
+--subtree` also rewrites cloned token refs, and `bd replace OLD NEW` is the
+separate wiring step: it repoints inbound tokens, or repoints `ROOT` when OLD is
+the store root, leaving OLD's file as a peer.
 
 ## Add a CLI command
 
@@ -171,7 +173,7 @@ There is one topology and one order: undirected BFS distance from the anchor.
 5. If it filters, decide explicitly whether the filter stops traversal
    (`--depth`) or only hides output (`--distance`). A display filter keeps
    walking through hidden nodes.
-6. Direction is a label. A new renderer may show `→`/`←`/`↔`, but must not use
+6. Direction is a label. A new renderer may show `→`/`←`, but must not use
    direction to include or exclude a node unless the command is explicitly
    directional (`bd out`, `bd in`).
 7. Add a temporary-store test with the smallest graph that distinguishes the new
@@ -211,10 +213,12 @@ Rules:
 
 ## Add a structural edit
 
-Structural edits change front matter, never prose.
+Structural edits change body tokens and freshness front matter, not prose.
 
 - `parse_document(text)` keeps `opening`, `raw_fm`, `closing`, `body`.
-- `rewrite_links(raw_fm, links)` replaces only that block.
+- `inline.append_token` / `remove_token` / `repoint_token` maintain the trailing
+  `## Links` section and leave every other body byte alone.
+- `rewrite_freshness(raw_fm, freshness)` replaces only the `freshness:` map.
 - `document.with_raw_fm(new_fm)` reconstructs the file with the body untouched.
 - `render_document(meta, body)` is for new files or an intended full front-matter
   rewrite.
@@ -225,14 +229,16 @@ Checklist:
    through `current_ref(view, id)`, and every data write uses the full ref.
 2. Refuse duplicate edges and missing targets with `BreakdownError`. A
    self-loop on one ref is refused; back-edges, reciprocal edges, and cycles are
-   accepted. Keep `links` sorted by ref.
-3. Graph edits rewrite only the source node's `links`. There is no `contains`
-   list to write, and `migrate` is the only place that reads one.
-4. Preserve every link key, including `symmetric` and `inverse`; a symmetric
-   master is authored once and `unlink` removes it. `rewrite_links` formatting
-   must not drop unknown link keys.
-5. Preserve body bytes and unrelated fields.
-6. Test that the body is unchanged byte-for-byte.
+   accepted. Keep a `## Links` section in ascending target-ref order;
+   `append_token` appends in call order, so monotone calls preserve it.
+3. A graph edit appends or removes token lines in the source node only. There is
+   no `contains` list or front-matter `links` list to write; `migrate` is the
+   only place that reads them.
+4. Preserve every token and title cache byte you are not deliberately touching;
+   `append_token` is a no-op for an identical line, and `remove_token` deletes
+   the section when it becomes empty.
+5. Preserve unrelated front matter and the body outside the edited section.
+6. Test that all other body bytes are unchanged.
 
 ## Testing
 
@@ -261,16 +267,17 @@ python3 -m pytest -q
   component, and a clean audit.
 - `test_refs.py` covers the filename/ref grammar: full refs, selectors, and
   invalid forms.
-- Symmetric tests cover the master/derived model: parsing and extra link keys,
-  loader issues, a derived opposite that is shown but never structural, the
-  `inverse` fallback to the master type, and `out`/`in` `[derived]` marking.
+- `test_inline.py` covers the token grammar, fences/code spans/escapes,
+  duplicate warnings, cached-title comparison, the `## Links` writers, and the
+  hash stripping that keeps token edits from invalidating a pin.
 - Root tests cover the precedence: explicit ref where a command takes one >
   `ROOT` > the lowest component member. They also cover `root-ref-missing`,
   `invalid-root`, and `check --view` narrowing only the report.
 - `contains-removed` tests declare `contains` and assert `bd check` fails with a
   message pointing at `bd migrate`.
-- Migration tests convert `contains` to sorted `links`, strip retired placement
-  keys, mark symmetric types, and assert the migrated store checks clean.
+- Migration tests convert `contains` and front-matter `links` to sorted body
+  tokens, move per-link freshness into the `freshness:` map, strip retired
+  placement keys, and assert the migrated store checks clean.
 - Git tests create a temporary repository, set local `user.name`/`user.email`, and
   use `pytest.mark.skipif(shutil.which("git") is None, ...)`.
 - Structural tests assert body bytes, not just field values.
@@ -331,17 +338,17 @@ Common mistakes:
    >= 1; a bare `<id>.md` is invalid.
 3. A view is the weakly connected component of its anchor over authored links.
    Membership is undirected; a node appears once at its minimum BFS distance.
-4. Direction is a label: `child`, `parent`, or `peer`. It orders ring 1 but never
+4. Direction is a label: `child` or `parent`. It orders ring 1 but never
    filters membership.
 5. Cycles, back-edges, and reciprocal pairs are legal; a self-loop on one ref is
    refused by `bd link`.
-6. `links` are typed and sorted by ref; in-edges are derived. Multiple parents
-   are legal. A symmetric link is associative: one authored master, opposite
-   derived, never structural.
+6. Body tokens are typed and kept in target-ref order; in-edges are derived by
+   reversing them. Multiple parents are legal, and every node authors its own
+   back-reference. No derived opposite exists.
 7. Data refs are full `id-version`; a bare id is a CLI selector only.
 8. No placement key exists. `group`, `section`, `folder`, and `home` are inert.
 9. Arbitrary front matter survives edits and exports.
-10. Body bytes survive structural edits.
+10. Body bytes survive structural edits, except the token lines in `## Links`.
 11. No JSON/TOML/lock/state data files; the only pointers are the store-level
     `ROOT`, one full ref on one line, and the folder-level `.bd_root`, one store
     path on one line. The work-area view is in `REFS.md`. The transient write
@@ -371,8 +378,8 @@ The repo is documentation-driven. When behaviour changes:
 - `docs/GETTING-STARTED.md` — user tutorial.
 - `docs/CHEATSHEET.md` — command reference.
 - `docs/DESIGN.md` — model, decisions, invariants, migration.
-- `docs/GRAPH.md` — the one topology: typed structural and symmetric links,
-  undirected views, rings, audit, export.
+- `docs/GRAPH.md` — the one topology: typed body tokens, undirected views,
+  rings, audit, export.
 - `docs/GRAPH-LAYOUT.md` — component membership, BFS rings, tie-breaks, the flat
   work area, worked examples, diagnostics, command map, and test map.
 - `docs/BRANCHES-AND-VERSIONS.md` — branch/version separation contract.

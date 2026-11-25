@@ -25,7 +25,7 @@ from .model import ExportResult, Issue, Link, Node, Store, View, slugify
 FANOUT_LIMIT = 200
 RESERVED = frozenset({"INDEX.md"})
 
-_KIND_NOUN = {"child": "children", "parent": "parents", "peer": "peers"}
+_KIND_NOUN = {"child": "children", "parent": "parents"}
 
 
 # ---------------------------------------------------------------------------
@@ -122,13 +122,7 @@ def build_graph(root: Store | str | Path, anchor: str | None = None) -> Graph:
     inn: dict[str, list[Link]] = {ref: [] for ref in store.nodes}
     for ref in sorted(out, key=lambda r: _ref_key(store.nodes[r])):
         for link in out[ref]:
-            reverse = Link(
-                to=ref,
-                type=link.type,
-                pinned=link.pinned,
-                propagates=link.propagates,
-                raw=link.raw,
-            )
+            reverse = Link(to=ref, type=link.type)
             inn.setdefault(link.to, []).append(reverse)
     chosen = store.root_ref if anchor is None else anchor
     return Graph(
@@ -268,8 +262,7 @@ def graph_view(
 
 
 def _link_text(link: Link) -> str:
-    label = f"{link.type}, symmetric" if link.symmetric else link.type
-    return f"{link.to} ({label})"
+    return f"{link.to} ({link.type})"
 
 
 def _identity(ref: str, graph: Graph) -> tuple[int, int]:
@@ -294,7 +287,7 @@ def _ring_sections(
             link_types[neighbor.ref] = neighbor.link.type
 
     ring0: list[str] = []
-    split: dict[str, list[str]] = {"child": [], "parent": [], "peer": []}
+    split: dict[str, list[str]] = {"child": [], "parent": []}
     higher: dict[int, list[str]] = defaultdict(list)
     other: list[str] = []
     for ref in selected:
@@ -305,7 +298,7 @@ def _ring_sections(
         if level is None:
             other.append(ref)
         elif level == 1:
-            split.setdefault(kinds.get(ref, "peer"), []).append(ref)
+            split.setdefault(kinds.get(ref, "child"), []).append(ref)
         else:
             higher[level].append(ref)
 
@@ -314,7 +307,7 @@ def _ring_sections(
         sections.append(
             (f"## 0 — {anchor}", sorted(ring0, key=lambda ref: _identity(ref, graph)))
         )
-    for kind in ("child", "parent", "peer"):
+    for kind in ("child", "parent"):
         members = sorted(
             split[kind],
             key=lambda ref: (
@@ -445,7 +438,7 @@ def render_dot(
     wanted = set(selected)
     edges = sorted(
         {
-            (source, link.to, f"{link.type}, symmetric" if link.symmetric else link.type)
+            (source, link.to, link.type)
             for source in selected
             for link in graph.out.get(source, ())
             if link.to in wanted
@@ -490,18 +483,12 @@ def render_svg(graph: Graph, refs: Iterable[str]) -> str:
 
 
 def render_out(graph: Graph, ref: str | int) -> str:
-    """Authored master links, then derived symmetric opposites."""
+    """The declared out-links of ``ref``, sorted."""
     target = resolve_graph_ref(graph, ref)
     if target not in graph.store.nodes:
         raise BreakdownError(f"unknown ref '{target}'")
     links = sorted(graph.out.get(target, ()), key=_edge_key)
     lines = [f"{target} -> {_link_text(link)}" for link in links]
-    derived = sorted(
-        graph.store.derived_links(target), key=lambda edge: _text_ref_key(edge.target)
-    )
-    lines.extend(
-        f"{target} -> {edge.target} ({edge.type})  [derived]" for edge in derived
-    )
     if not lines:
         return f"{target} -> (no declared out-links)"
     return "\n".join(lines)

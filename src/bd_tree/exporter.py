@@ -169,8 +169,8 @@ def _node_entry(
     return line
 
 
-_KIND_NOUN = {"child": "children", "parent": "parents", "peer": "peers"}
-_KIND_ORDER = ("child", "parent", "peer")
+_KIND_NOUN = {"child": "children", "parent": "parents"}
+_KIND_ORDER = ("child", "parent")
 
 
 def _identity(graph: Any, ref: str) -> tuple[int, int]:
@@ -183,7 +183,7 @@ def _ring_layout(
 ) -> list[tuple[str, str, list[str]]]:
     """Ordered ring sections: ``(heading, kind, members)`` for a flat view.
 
-    Ring 0 is ``Active``; ring 1 splits into children, parents and peers by the
+    Ring 0 is ``Active``; ring 1 splits into children and parents by the
     anchor's authored direction; deeper rings are one ``Distance N`` section.
     Every list is sorted by ``(distance, kind_rank, link type, id, version)``.
     """
@@ -210,7 +210,7 @@ def _ring_layout(
         if level is None:
             other.append(ref)
         elif level == 1:
-            split.setdefault(kinds.get(ref, "peer"), []).append(ref)
+            split.setdefault(kinds.get(ref, "child"), []).append(ref)
         else:
             higher[level].append(ref)
 

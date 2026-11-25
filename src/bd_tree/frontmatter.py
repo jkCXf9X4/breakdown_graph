@@ -1,9 +1,9 @@
 """YAML front-matter parsing and surgical rewriting.
 
-The body of a node is never parsed or re-serialised.  Every writer in this
-package appends the body string verbatim, and ``rewrite_links`` touches only
-the ``links:`` block of the front matter so key order and comments elsewhere
-survive.
+The body of a node is never parsed or re-serialised except for stripping the
+reserved ``[[TYPE, REF]]`` tokens, which must not affect freshness pins.
+``rewrite_freshness`` touches only the ``freshness:`` block of the front
+matter so key order and comments elsewhere survive byte for byte.
 """
 
 from __future__ import annotations
@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import yaml
+
+from .inline import token_spans
 
 
 class FrontMatterError(ValueError):
@@ -122,6 +124,48 @@ def parse_document(text: str) -> Document:
     raise FrontMatterError("missing closing '---'")
 
 
+_TOKEN_LINE = re.compile(
+    r"^[ \t]*(?:[-*+][ \t]+)?"
+    r"\[\[[A-Za-z][A-Za-z0-9_-]*[ \t]*,[ \t]*[0-9]+-[0-9]+\]\]"
+    r"(?:[ \t]*\([^)\n]*\))?[ \t]*$"
+)
+
+
+def strip_tokens(body: str) -> str:
+    """The body with every reserved inline token removed.
+
+    A line that is nothing but a token (or a list item holding one) is dropped
+    whole, together with the reserved ``## Links`` heading and the blank run it
+    leaves behind.  Tokens embedded in prose are removed in place.  Both forms
+    are writer noise, so neither may invalidate a freshness pin.
+    """
+    lines = [
+        line
+        for line in body.splitlines()
+        if not _TOKEN_LINE.match(line) and line.strip().lower() != "## links"
+    ]
+    collapsed: list[str] = []
+    for line in lines:
+        if not line.strip() and collapsed and not collapsed[-1].strip():
+            continue
+        collapsed.append(line)
+    return strip_inline_spans("\n".join(collapsed))
+
+
+def strip_inline_spans(body: str) -> str:
+    """The body with every inline token occurrence removed in place."""
+    spans = token_spans(body)
+    if not spans:
+        return body
+    parts: list[str] = []
+    cursor = 0
+    for start, end in spans:
+        parts.append(body[cursor:start])
+        cursor = end
+    parts.append(body[cursor:])
+    return "".join(parts)
+
+
 def normalize_body(body: str) -> str:
     """Trailing blank lines stripped, exactly one trailing newline."""
     lines = body.splitlines()
@@ -131,7 +175,14 @@ def normalize_body(body: str) -> str:
 
 
 def body_hash(body: str) -> str:
-    digest = hashlib.sha256(normalize_body(body).encode("utf-8")).hexdigest()
+    """SHA-256 of the normalized body with inline tokens stripped first.
+
+    Tokens must not invalidate freshness pins, so they are removed before the
+    body is normalized and hashed.
+    """
+    digest = hashlib.sha256(
+        normalize_body(strip_tokens(body)).encode("utf-8")
+    ).hexdigest()
     return f"sha256:{digest[:12]}"
 
 
@@ -148,53 +199,65 @@ def render_document(meta: dict[str, Any], body: str) -> str:
     return "---\n" + fm + "---\n" + body
 
 
-_LINKS_KEY = re.compile(r"^links\s*:")
+_FRESHNESS_KEY = re.compile(r"^freshness\s*:")
+_REF_TEXT_KEY = re.compile(r"^(?P<ref>[1-9]\d*)-(?P<version>[1-9]\d*)$")
 
 
-def _inline_dump(value: Any) -> str:
-    """One flow-style YAML value, without PyYAML's scalar ``...`` terminator."""
-    dumped = yaml.safe_dump(
-        value, default_flow_style=True, width=10**9, allow_unicode=True
-    )
-    lines = [
-        line for line in dumped.splitlines() if line.strip() not in ("...", "---")
-    ]
-    return "\n".join(lines).strip()
+def _ref_sort_key(text: str) -> tuple[int, int, int, str]:
+    match = _REF_TEXT_KEY.fullmatch(text)
+    if not match:
+        return (1, 0, 0, text)
+    return (0, int(match.group("ref")), int(match.group("version")), "")
 
 
-def _link_scalar(value: str | int) -> str:
-    return _inline_dump(value)
+def _format_freshness(freshness: dict[str, dict[str, Any]]) -> list[str]:
+    """The canonical ``freshness:`` block: block YAML, quoted ref keys."""
+    lines = ["freshness:"]
+    for ref in sorted(freshness, key=_ref_sort_key):
+        entry = freshness[ref] or {}
+        details: list[str] = []
+        if "pinned" in entry and entry["pinned"] is not None:
+            details.append(f"pinned: \"{entry['pinned']}\"")
+        if "propagates" in entry and entry["propagates"]:
+            details.append("propagates: true")
+        if not details:
+            lines.append(f"  '{ref}': {{}}")
+            continue
+        lines.append(f"  '{ref}':")
+        lines.extend(f"    {detail}" for detail in details)
+    return lines
 
 
-def _link_object(link: dict[str, Any] | str | int) -> str:
-    """Render one link mapping, preserving every key including unknowns.
+def _finish(lines: list[str], raw_fm: str) -> str:
+    rendered = "\n".join(lines)
+    if raw_fm.endswith("\n") or not raw_fm:
+        rendered += "\n"
+    return rendered
 
-    ``symmetric`` and ``inverse`` are ordinary link keys here; neither is
-    dropped or rewritten, so a round-trip keeps the authored master relation.
+
+def rewrite_freshness(raw_fm: str, freshness: dict[str, dict[str, Any]]) -> str:
+    """Replace the ``freshness:`` block, leaving every other line untouched.
+
+    An empty mapping removes the block entirely; a missing block is appended.
+    Every other front-matter line is byte-stable, so comments and key order
+    survive.
     """
-    if not isinstance(link, dict):
-        return _link_scalar(link)
-    data: dict[str, Any] = {}
-    for key, value in link.items():
-        if key == "pinned" and value is not None:
-            value = str(value)
-        data[key] = value
-    return _inline_dump(data)
-
-
-def _format_link(link: dict[str, Any] | str | int) -> str:
-    return "  - " + _link_object(link)
-
-
-def rewrite_links(raw_fm: str, links: list[dict[str, Any] | str | int]) -> str:
-    """Replace the ``links:`` block, leaving every other line untouched."""
     lines = raw_fm.splitlines()
-    start = next((i for i, line in enumerate(lines) if _LINKS_KEY.match(line)), None)
-    if len(links) == 1:
-        # One edge stays on one line; longer lists keep the block form.
-        block = [f"links: [{_link_object(links[0])}]"]
-    else:
-        block = ["links:"] + [_format_link(link) for link in links]
+    start = next(
+        (i for i, line in enumerate(lines) if _FRESHNESS_KEY.match(line)), None
+    )
+    if not freshness:
+        if start is None:
+            return raw_fm
+        end = start + 1
+        while end < len(lines):
+            line = lines[end]
+            if line and not line[0].isspace() and not line.startswith("- "):
+                break
+            end += 1
+        del lines[start:end]
+        return _finish(lines, raw_fm)
+    block = _format_freshness(freshness)
     if start is None:
         lines.extend(block)
     else:
@@ -205,7 +268,4 @@ def rewrite_links(raw_fm: str, links: list[dict[str, Any] | str | int]) -> str:
                 break
             end += 1
         lines[start:end] = block
-    rendered = "\n".join(lines)
-    if raw_fm.endswith("\n") or not raw_fm:
-        rendered += "\n"
-    return rendered
+    return _finish(lines, raw_fm)

@@ -15,6 +15,33 @@ BODIES = {
 }
 
 
+def _split_section(text):
+    """Split a body at the trailing ``## Links`` section marker."""
+    marker = text.rfind("## Links")
+    if marker == -1:
+        return text, None
+    return text[:marker], text[marker:]
+
+
+def _split_doc(root, ref):
+    """The node's body split into (outside-section bytes, section-or-None)."""
+    return _split_section(_doc(root, ref).body)
+
+
+def _doc(root, ref):
+    return parse_document((root / "nodes" / f"{ref}.md").read_text(encoding="utf-8"))
+
+
+def _meta(root, ref):
+    return _doc(root, ref).meta
+
+
+def _pairs(root, ref):
+    return [
+        (link.to, link.type) for link in api.load(root).nodes[ref].links
+    ]
+
+
 def _tree(write, tmp_path, *, links_1=None):
     nodes = tmp_path / "nodes"
     links = (
@@ -39,108 +66,118 @@ def _tree(write, tmp_path, *, links_1=None):
     return nodes
 
 
-def _doc(root, ref):
-    return parse_document((root / "nodes" / f"{ref}.md").read_text(encoding="utf-8"))
-
-
-def _meta(root, ref):
-    return _doc(root, ref).meta
-
-
 def test_link_appends_an_edge_and_keeps_existing_fields(write, tmp_path):
     _tree(write, tmp_path, links_1=[{"to": "3-1", "type": "reviews"}])
     api.link(tmp_path, "1-1", "4-1", link_type="supports")
-    links = _meta(tmp_path, "1-1")["links"]
-    assert links == [
-        {"to": "3-1", "type": "reviews"},
-        {"to": "4-1", "type": "supports"},
+    head, section = _split_doc(tmp_path, "1-1")
+    assert head == BODIES[1] + "\n"  # outside-section bytes unchanged
+    assert section == (
+        "## Links\n\n- [[reviews, 3-1]]\n- [[supports, 4-1]](Title of 4-1)\n"
+    )
+    assert _pairs(tmp_path, "1-1") == [
+        ("3-1", "reviews"),
+        ("4-1", "supports"),
     ]
-    assert _doc(tmp_path, "1-1").body == BODIES[1]
 
 
-def test_single_link_is_written_inline(write, tmp_path):
+def test_link_writes_the_token_when_the_section_is_absent(write, tmp_path):
     _tree(write, tmp_path, links_1=[])
     api.link(tmp_path, "1-1", "4-1", link_type="decision")
-    text = (tmp_path / "nodes" / "1-1.md").read_text(encoding="utf-8")
-    assert "links: [{to: 4-1, type: decision}]" in text
-    assert _meta(tmp_path, "1-1")["links"] == [{"to": "4-1", "type": "decision"}]
+    head, section = _split_doc(tmp_path, "1-1")
+    assert head == BODIES[1] + "\n"
+    assert section == "## Links\n- [[decision, 4-1]](Title of 4-1)\n"
+    assert _pairs(tmp_path, "1-1") == [("4-1", "decision")]
 
 
-def test_scalar_link_writes_a_full_ref_when_the_target_declares_the_type(
-    write, tmp_path
-):
-    nodes = _tree(write, tmp_path, links_1=[])
-    write(nodes, 10, type="decision", band="main", order=4, body="decision body\n")
-    api.link(tmp_path, "1-1", "10-1", link_type="decision")
-    text = (tmp_path / "nodes" / "1-1.md").read_text(encoding="utf-8")
-    assert "links: [10-1]" in text
-    assert _meta(tmp_path, "1-1")["links"] == ["10-1"]
-    assert _doc(tmp_path, "1-1").body == BODIES[1]
-
-
-def test_link_keeps_a_mapping_when_the_type_does_not_match(write, tmp_path):
-    nodes = _tree(write, tmp_path, links_1=[])
-    write(nodes, 10, type="decision", band="main", order=4)
-    api.link(tmp_path, "1-1", "10-1", link_type="supports")
-    assert _meta(tmp_path, "1-1")["links"] == [{"to": "10-1", "type": "supports"}]
-
-
-def test_link_propagating_keeps_a_mapping_even_when_the_type_matches(
-    write, tmp_path
-):
-    nodes = _tree(write, tmp_path, links_1=[])
-    write(nodes, 10, type="decision", band="main", order=4, body="decision body\n")
-    api.link(tmp_path, "1-1", "10-1", link_type="decision", propagates=True)
-    link = _meta(tmp_path, "1-1")["links"][0]
-    assert link["to"] == "10-1"
-    assert link["propagates"] is True
-
-
-def test_unlink_removes_a_scalar_link_by_type_and_by_target(write, tmp_path):
+def test_unlink_removes_a_token_by_type_and_by_target(write, tmp_path):
     nodes = _tree(
         write,
         tmp_path,
-        links_1=["10-1", {"to": "3-1", "type": "reviews"}],
+        links_1=[
+            {"to": "10-1", "type": "decision"},
+            {"to": "3-1", "type": "reviews"},
+        ],
     )
-    write(nodes, 10, type="decision", band="main", order=4, body="decision body\n")
+    write(nodes, 10, band="main", order=4, body="decision body\n")
     api.unlink(tmp_path, "1-1", "10-1", link_type="decision")
-    assert _meta(tmp_path, "1-1")["links"] == [
-        {"to": "3-1", "type": "reviews"}
-    ]
-    assert _doc(tmp_path, "1-1").body == BODIES[1]
+    head, section = _split_doc(tmp_path, "1-1")
+    assert head == BODIES[1] + "\n"
+    assert section == "## Links\n\n- [[reviews, 3-1]]\n"
 
-    nodes = _tree(write, tmp_path, links_1=["10-1"])
-    write(nodes, 10, type="decision", band="main", order=4, body="decision body\n")
+    nodes = _tree(write, tmp_path, links_1=[{"to": "10-1", "type": "decision"}])
+    write(nodes, 10, band="main", order=4, body="decision body\n")
     api.unlink(tmp_path, "1-1", "10-1")
-    assert _meta(tmp_path, "1-1").get("links") in (None, [])
+    head, section = _split_doc(tmp_path, "1-1")
+    assert head == BODIES[1] + "\n"
+    assert section is None  # the empty section is dropped
+
+
+def test_unlink_drops_the_freshness_entry_only_when_no_token_remains(
+    write, tmp_path
+):
+    nodes = tmp_path / "nodes"
+    write(
+        nodes,
+        1,
+        band="main",
+        order=0,
+        links=[
+            {"to": "4", "type": "a"},
+            {"to": "4", "type": "b"},
+        ],
+        body=BODIES[1],
+        freshness={"4-1": {"pinned": body_hash(BODIES[4]), "propagates": True}},
+    )
+    write(nodes, 4, band="main", order=3, body=BODIES[4])
+
+    api.unlink(tmp_path, "1-1", "4-1", link_type="a")
+    entry = _meta(tmp_path, "1-1")["freshness"]["4-1"]
+    assert entry["pinned"] == body_hash(BODIES[4])  # b still targets 4-1
+
+    api.unlink(tmp_path, "1-1", "4-1", link_type="b")
+    assert "freshness" not in _meta(tmp_path, "1-1")
 
 
 def test_link_propagates_pins_the_target_now(write, tmp_path):
     _tree(write, tmp_path, links_1=[])
     api.link(tmp_path, "1-1", "4-1", link_type="depends", propagates=True)
-    edge = _meta(tmp_path, "1-1")["links"][0]
-    assert edge["to"] == "4-1"
-    assert edge["type"] == "depends"
-    assert edge["propagates"] is True
-    assert edge["pinned"] == body_hash(BODIES[4])
+    entry = _meta(tmp_path, "1-1")["freshness"]["4-1"]
+    assert entry["pinned"] == body_hash(BODIES[4])
+    assert entry["propagates"] is True
+    _, section = _split_doc(tmp_path, "1-1")
+    assert "- [[depends, 4-1]](Title of 4-1)" in section
     assert api.stale(tmp_path, "1-1") == []
+
+
+def test_structural_edits_preserve_unrelated_front_matter(write, tmp_path):
+    _tree(write, tmp_path, links_1=[])
+    api.link(tmp_path, "1-1", "4-1", link_type="supports", propagates=True)
+    meta = _meta(tmp_path, "1-1")
+    assert meta["band"] == "main"
+    assert meta["order"] == 0
+    assert meta["id"] == 1
 
 
 def test_link_refuses_duplicates_and_accepts_arbitrary_types(write, tmp_path):
     _tree(write, tmp_path, links_1=[{"to": "3-1", "type": "reviews"}])
     with pytest.raises(BreakdownError, match="unlink first"):
         api.link(tmp_path, "1-1", "3-1", link_type="reviews")
-    api.link(tmp_path, "1-1", "3-1", link_type="refines-claim v2")
-    assert _meta(tmp_path, "1-1")["links"][-1] == {
-        "to": "3-1",
-        "type": "refines-claim v2",
-    }
+    api.link(tmp_path, "1-1", "3-1", link_type="refines-claim_v2")
+    assert _pairs(tmp_path, "1-1") == [
+        ("3-1", "reviews"),
+        ("3-1", "refines-claim_v2"),
+    ]
 
 
 def test_link_allows_a_backward_edge(write, tmp_path):
     _tree(write, tmp_path)
     api.link(tmp_path, "2-1", "1-1", link_type="supports")
-    assert {"to": "1-1", "type": "supports"} in _meta(tmp_path, "2-1")["links"]
+    head, section = _split_doc(tmp_path, "2-1")
+    assert head == BODIES[2] + "\n"
+    assert section == (
+        "## Links\n\n- [[breaks_down, 4-1]]\n- [[supports, 1-1]](Title of 1-1)\n"
+    )
+    assert _pairs(tmp_path, "2-1") == [("4-1", "breaks_down"), ("1-1", "supports")]
 
 
 def test_unlink_by_type_and_by_target(write, tmp_path):
@@ -154,16 +191,15 @@ def test_unlink_by_type_and_by_target(write, tmp_path):
         ],
     )
     api.unlink(tmp_path, "1-1", "4-1", link_type="a")
-    assert _meta(tmp_path, "1-1")["links"] == [
-        {"to": "4-1", "type": "b"},
-        {"to": "3-1", "type": "a"},
-    ]
+    _, section = _split_doc(tmp_path, "1-1")
+    assert section == "## Links\n\n- [[b, 4-1]]\n- [[a, 3-1]]\n"
 
     api.unlink(tmp_path, "1-1", "4-1")
-    assert _meta(tmp_path, "1-1")["links"] == [{"to": "3-1", "type": "a"}]
+    _, section = _split_doc(tmp_path, "1-1")
+    assert section == "## Links\n\n- [[a, 3-1]]\n"
 
     api.unlink(tmp_path, "1-1", "3-1")
-    assert _meta(tmp_path, "1-1").get("links") in (None, [])
+    assert _split_doc(tmp_path, "1-1")[1] is None
 
 
 def test_unlink_refuses_when_nothing_matches(write, tmp_path):
@@ -176,19 +212,33 @@ def test_unlink_refuses_when_nothing_matches(write, tmp_path):
         api.unlink(tmp_path, "1-1", "99-1")
 
 
-def test_body_bytes_unchanged_by_every_structural_edit(write, tmp_path):
+def test_structural_edits_preserve_body_bytes_except_within_links(
+    write, tmp_path
+):
     _tree(write, tmp_path, links_1=[{"to": "3-1", "type": "reviews"}])
     before = {
         ref: _doc(tmp_path, ref).body for ref in ("1-1", "2-1", "3-1", "4-1")
     }
 
     api.link(tmp_path, "1-1", "4-1", link_type="supports", propagates=True)
-    api.unlink(tmp_path, "1-1", "4-1")
-    api.link(tmp_path, "2-1", "3-1", link_type="refines")
-    api.unlink(tmp_path, "2-1", "3-1")
+    head, section = _split_doc(tmp_path, "1-1")
+    before_head, before_section = _split_section(before["1-1"])
+    assert head == before_head
+    assert section == before_section + "- [[supports, 4-1]](Title of 4-1)\n"
+    assert _doc(tmp_path, "3-1").body == before["3-1"]
+    assert _doc(tmp_path, "4-1").body == before["4-1"]
 
-    after = {ref: _doc(tmp_path, ref).body for ref in ("1-1", "2-1", "3-1", "4-1")}
-    assert after == before
+    api.unlink(tmp_path, "1-1", "4-1")
+    assert _doc(tmp_path, "1-1").body == before["1-1"]
+
+    api.link(tmp_path, "2-1", "3-1", link_type="refines")
+    head, section = _split_doc(tmp_path, "2-1")
+    assert head == _split_section(before["2-1"])[0]  # head bytes untouched
+    assert section == _split_section(before["2-1"])[1] + "- [[refines, 3-1]](Title of 3-1)\n"
+    assert _doc(tmp_path, "3-1").body == before["3-1"]
+
+    api.unlink(tmp_path, "2-1", "3-1")
+    assert _doc(tmp_path, "2-1").body == before["2-1"]
 
 
 def test_cli_structure_commands_and_exit_codes(write, tmp_path, capsys):
@@ -197,6 +247,8 @@ def test_cli_structure_commands_and_exit_codes(write, tmp_path, capsys):
 
     assert main(["link", "1", "4-1", "--type", "supports", "--root", root]) == 0
     assert "linked 1-1 -> 4-1 (supports)" in capsys.readouterr().out
+    _, section = _split_doc(tmp_path, "1-1")
+    assert section == "## Links\n- [[supports, 4-1]](Title of 4-1)\n"
 
     assert main(["link", "1", "4-1", "--type", "supports", "--root", root]) == 2
     assert "unlink first" in capsys.readouterr().err
@@ -205,7 +257,7 @@ def test_cli_structure_commands_and_exit_codes(write, tmp_path, capsys):
         main(["unlink", "1", "4-1", "--type", "supports", "--root", root]) == 0
     )
     assert "unlinked 1-1 -> 4-1 (supports)" in capsys.readouterr().out
-    assert _meta(tmp_path, "1-1").get("links") in (None, [])
+    assert _split_doc(tmp_path, "1-1")[1] is None
 
     assert main(["unlink", "1", "4-1", "--root", root]) == 2
     assert "no link" in capsys.readouterr().err
@@ -214,4 +266,6 @@ def test_cli_structure_commands_and_exit_codes(write, tmp_path, capsys):
 def test_link_allows_a_cycle_between_distinct_nodes(write, tmp_path):
     _tree(write, tmp_path)
     api.link(tmp_path, "4-1", "1-1", link_type="history")
-    assert {"to": "1-1", "type": "history"} in _meta(tmp_path, "4-1")["links"]
+    head, section = _split_doc(tmp_path, "4-1")
+    assert head == BODIES[4] + "\n"
+    assert section == "## Links\n- [[history, 1-1]](Title of 1-1)\n"

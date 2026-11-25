@@ -4,12 +4,15 @@ Every node lives at ``nodes/<id>-<version>.md``.  The filename is the only
 identity and the only version marker; there is no bare ``<id>.md`` file and no
 privileged "main" version.  All versions of one logical id are peers.
 
-Edges are declared ``links`` and nothing else.  A view is the weakly connected
-component over those authored links, rooted at one ref; a node reached through
-several neighbours appears once.  Data refs (``links`` and the ``ROOT`` file)
-must be fully qualified ``<id>-<version>`` refs.  A bare id in data is recorded
-as a ``bare-ref`` issue.  A leftover ``contains`` key is inert metadata here;
-the checker reports it as ``contains-removed``.
+Edges are declared as reserved ``[[TYPE, REF]]`` tokens in node bodies and
+nothing else; front-matter ``links:`` is retired and reported as
+``links-removed``.  Freshness pins live in the ``freshness:`` front-matter map
+keyed by target ref.  A view is the weakly connected component over those
+authored links, rooted at one ref; a node reached through several neighbours
+appears once.  Data refs (tokens and the ``ROOT`` file) must be fully
+qualified ``<id>-<version>`` refs.  A bare id in data is recorded as a
+``bare-ref`` issue.  A leftover ``contains`` key is inert metadata here; the
+checker reports it as ``contains-removed``.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from typing import Any
 
 from .errors import BreakdownError
 from .frontmatter import FrontMatterError, parse_document
+from .inline import raw_inline_tokens, scan_inline_links
 from .model import (
     Edge,
     Issue,
@@ -226,175 +230,67 @@ def _issue(
     node: str | None = None,
     path: Path | None = None,
     root: Path | None = None,
+    line: int | None = None,
 ) -> None:
     rel = None
     if path is not None:
         rel = str(path.relative_to(root)) if root is not None else str(path)
-    issues.append(Issue(level, code, message, node=node, path=rel))
+    issues.append(Issue(level, code, message, node=node, path=rel, line=line))
 
 
-def _classify_data_ref(value: object) -> tuple[str, str | None]:
-    """Classify one data ref as ``full``, ``bare`` or ``invalid``."""
-    if isinstance(value, bool) or not isinstance(value, (str, int)):
-        return "invalid", None
-    text = str(value).strip()
-    if is_full_ref(text):
-        return "full", text
-    if is_bare_ref(text):
-        return "bare", text
-    return "invalid", None
-
-
-def _parse_links(
+def _parse_freshness(
     meta: dict[str, Any], issues: list[Issue], path: Path, root: Path
-) -> tuple[list[Link], list[Any]]:
-    raw = meta.get("links")
+) -> dict[str, dict[str, Any]]:
+    """The ``freshness:`` front-matter map: quoted-ref keys -> pin entries."""
+    raw = meta.get("freshness")
     if raw is None:
-        return [], []
-    if not isinstance(raw, list):
-        _issue(issues, "error", "invalid-links", "'links' must be a list", path=path, root=root)
-        return [], []
-    links: list[Link] = []
-    raws: list[Any] = []
-    for index, item in enumerate(raw):
-        if isinstance(item, (str, int)) and not isinstance(item, bool):
-            kind, target = _classify_data_ref(item)
-            if kind == "invalid":
-                _issue(
-                    issues,
-                    "error",
-                    "invalid-ref",
-                    f"links[{index}] has invalid ref {item!r}",
-                    path=path,
-                    root=root,
-                )
-                continue
-            if kind == "bare":
-                _issue(
-                    issues,
-                    "error",
-                    "bare-ref",
-                    f"links[{index}] '{target}' is a bare id; use a full "
-                    "<id>-<version> ref",
-                    path=path,
-                    root=root,
-                )
-            links.append(Link(to=str(target), type="", raw=item))
-            raws.append(item)
-            continue
-        if not isinstance(item, dict):
+        return {}
+    if not isinstance(raw, dict):
+        _issue(
+            issues,
+            "error",
+            "invalid-freshness",
+            "'freshness' must be a mapping of ref -> entry",
+            path=path,
+            root=root,
+        )
+        return {}
+    freshness: dict[str, dict[str, Any]] = {}
+    for key, entry in raw.items():
+        if not isinstance(key, str) or not isinstance(entry, dict):
             _issue(
                 issues,
                 "error",
-                "invalid-link",
-                f"links[{index}] must be a mapping or a ref",
+                "invalid-freshness",
+                "'freshness' entries must be mappings keyed by a ref string",
                 path=path,
                 root=root,
             )
-            continue
-        to = item.get("to")
-        ltype = item.get("type")
-        kind, target = _classify_data_ref(to) if to is not None else ("invalid", None)
-        if kind == "invalid":
-            _issue(
-                issues,
-                "error",
-                "invalid-ref",
-                f"links[{index}] has invalid 'to' {to!r}",
-                path=path,
-                root=root,
-            )
-            continue
-        if kind == "bare":
-            _issue(
-                issues,
-                "error",
-                "bare-ref",
-                f"links[{index}] 'to' {target!r} is a bare id; use a full "
-                "<id>-<version> ref",
-                path=path,
-                root=root,
-            )
-        if not isinstance(ltype, str) or not ltype.strip():
-            _issue(
-                issues,
-                "error",
-                "invalid-link",
-                f"links[{index}] is missing 'type'",
-                path=path,
-                root=root,
-            )
-            continue
-        propagates = item.get("propagates", False)
-        if not isinstance(propagates, bool):
-            _issue(
-                issues,
-                "error",
-                "invalid-propagates",
-                f"'propagates' on {target} must be a boolean",
-                path=path,
-                root=root,
-            )
-            propagates = False
-        symmetric = item.get("symmetric", False)
-        if not isinstance(symmetric, bool):
-            _issue(
-                issues,
-                "error",
-                "invalid-symmetric",
-                f"'symmetric' on {target} must be a boolean",
-                path=path,
-                root=root,
-            )
-            symmetric = False
-        inverse = item.get("inverse")
-        if inverse is not None:
-            if not isinstance(inverse, str) or not inverse.strip():
-                _issue(
-                    issues,
-                    "error",
-                    "inverse-without-symmetric",
-                    f"'inverse' on {target} must be a non-empty string",
-                    path=path,
-                    root=root,
-                )
-                inverse = None
-            elif not symmetric:
-                _issue(
-                    issues,
-                    "error",
-                    "inverse-without-symmetric",
-                    f"'inverse' on {target} requires 'symmetric: true'",
-                    path=path,
-                    root=root,
-                )
-                inverse = None
-            else:
-                inverse = inverse.strip()
-        pinned = item.get("pinned")
+            return {}
+        pinned = entry.get("pinned")
+        propagates = entry.get("propagates", False)
         if pinned is not None and not isinstance(pinned, str):
             _issue(
                 issues,
                 "error",
-                "invalid-pin",
-                f"'pinned' on {target} must be a string",
+                "invalid-freshness",
+                f"'pinned' on {key} must be a string",
                 path=path,
                 root=root,
             )
-            pinned = None
-        links.append(
-            Link(
-                to=str(target),
-                type=ltype,
-                pinned=pinned,
-                propagates=propagates,
-                symmetric=symmetric,
-                inverse=inverse,
-                raw=dict(item),
+            return {}
+        if not isinstance(propagates, bool):
+            _issue(
+                issues,
+                "error",
+                "invalid-freshness",
+                f"'propagates' on {key} must be a boolean",
+                path=path,
+                root=root,
             )
-        )
-        raws.append(dict(item))
-    return links, raws
+            return {}
+        freshness[key.strip()] = {"pinned": pinned, "propagates": propagates}
+    return freshness
 
 
 @dataclass
@@ -443,7 +339,75 @@ def _parse_node(
                 path=path,
                 root=root,
             )
-    links, raw_links = _parse_links(meta, issues, path, root)
+    if "links" in meta:
+        _issue(
+            issues,
+            "error",
+            "links-removed",
+            "node still declares 'links' in front matter; link declarations "
+            "moved into node bodies as [[TYPE, REF]] tokens, run `bd migrate`",
+            node=ref,
+            path=path,
+            root=root,
+        )
+    freshness = _parse_freshness(meta, issues, path, root)
+    links: list[Link] = []
+    raw_links: list[Any] = []
+    inline_links, anomalies = scan_inline_links(doc.body)
+    for anomaly in anomalies:
+        _issue(
+            issues,
+            "error",
+            "inline-malformed",
+            f"malformed inline token on body line {anomaly.line}: "
+            f"{anomaly.reason}",
+            node=ref,
+            path=path,
+            root=root,
+            line=anomaly.line,
+        )
+    seen: dict[tuple[str, str], int] = {}
+    raws = raw_inline_tokens(doc.body)
+    for index, found in enumerate(inline_links):
+        if found.to != ref and not is_full_ref(found.to):
+            _issue(
+                issues,
+                "error",
+                "invalid-ref",
+                f"inline link to invalid ref {found.to!r} on body line "
+                f"{found.line}",
+                node=ref,
+                path=path,
+                root=root,
+                line=found.line,
+            )
+            continue
+        key = (found.type, found.to)
+        if key in seen:
+            _issue(
+                issues,
+                "warning",
+                "inline-duplicate",
+                f"inline link {found.type} to {found.to} is declared twice; "
+                f"first on body line {seen[key]}, second kept out of the graph",
+                node=ref,
+                path=path,
+                root=root,
+                line=found.line,
+            )
+            continue
+        seen[key] = found.line
+        entry = freshness.get(found.to, {})
+        links.append(
+            Link(
+                to=found.to,
+                type=found.type,
+                pinned=entry.get("pinned"),
+                propagates=entry.get("propagates", False),
+                raw=raws[index],
+            )
+        )
+        raw_links.append(raws[index])
     legacy = meta.get("legacy")
     return Node(
         id=parsed_id,
@@ -542,33 +506,6 @@ def _read_declared_root(root: Path, issues: list[Issue]) -> str | None:
     return text
 
 
-def _resolve_implicit_link_types(
-    nodes: dict[str, Node], issues: list[Issue]
-) -> None:
-    """Fill ``type=""`` links from the target node's own ``type`` field."""
-    for node in nodes.values():
-        for link in node.links:
-            if link.type:
-                continue
-            target = nodes.get(link.to)
-            if target is None:
-                link.type = "link"
-                continue
-            value = target.meta.get("type")
-            if isinstance(value, str) and value.strip():
-                link.type = value
-            else:
-                _issue(
-                    issues,
-                    "error",
-                    "invalid-link",
-                    f"implicit link to '{link.to}' needs a non-empty 'type' "
-                    "on the target",
-                    node=node.ref,
-                )
-                link.type = "link"
-
-
 def load(root: str | Path) -> Store:
     """Load the full store index at a project root or a store root."""
     root = Path(root).resolve()
@@ -579,7 +516,6 @@ def load(root: str | Path) -> Store:
     declared_root = _read_declared_root(root, issues)
     nodes = {record.node.ref: record.node for record in records if record.node is not None}
     nodes = dict(sorted(nodes.items(), key=lambda item: _ref_sort_key(item[1])))
-    _resolve_implicit_link_types(nodes, issues)
     return Store(
         root=root, nodes=nodes, issues=issues, declared_root=declared_root
     )
@@ -605,8 +541,7 @@ def _load_graph_view(store: Store, canonical: str) -> View:
 
     Repeated refs close the walk, so cycles are ordinary edges.  ``distance``
     records the hop count from ``canonical``.  ``edges`` keeps every authored
-    link whose source and target are both in the component; symmetric masters
-    stay in and derived opposites never enter.
+    link whose source and target are both in the component.
     """
     included: dict[str, Node] = {}
     distance: dict[str, int] = {canonical: 0}
@@ -633,9 +568,8 @@ def _load_graph_view(store: Store, canonical: str) -> View:
                         target=link.to,
                         type=link.type,
                         pinned=link.pinned,
-                        origin="link",
+                        origin="authored",
                         propagates=link.propagating,
-                        symmetric=link.symmetric,
                     )
                 )
     return View(

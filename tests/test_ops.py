@@ -20,6 +20,39 @@ from bd_tree.errors import BreakdownError
 from bd_tree.frontmatter import parse_document, render_document
 
 
+def _split_section(text):
+    """Split a body at the trailing ``## Links`` section marker."""
+    marker = text.rfind("## Links")
+    if marker == -1:
+        return text, None
+    return text[:marker], text[marker:]
+
+
+def _doc(root, ref):
+    return parse_document((root / "nodes" / f"{ref}.md").read_text(encoding="utf-8"))
+
+
+def _split_doc(root, ref):
+    """The node's body split into (outside-section bytes, section-or-None)."""
+    return _split_section(_doc(root, ref).body)
+
+
+def _pairs(root, ref):
+    return [
+        (link.to, link.type) for link in load(root).nodes[ref].links
+    ]
+
+
+def _legacy(nodes, node_id, **meta):
+    """Write a versioned file still declaring ``links`` in front matter."""
+    nodes.mkdir(parents=True, exist_ok=True)
+    meta.setdefault("id", node_id)
+    meta.setdefault("title", f"Node {node_id}")
+    path = nodes / f"{node_id}-1.md"
+    path.write_text(render_document(meta, "body\n"), encoding="utf-8", newline="")
+    return path
+
+
 def test_clone_creates_next_and_explicit_versions(write, tmp_path):
     write(tmp_path / "nodes", 1)
     assert clone(tmp_path, "1-1") == [("1-1", "1-2")]
@@ -39,9 +72,9 @@ def test_clone_copies_declared_links(write, tmp_path):
     write(nodes, 3)
     assert clone(tmp_path, "2-1") == [("2-1", "2-2")]
     path = nodes / "2-2.md"
-    assert parse_document(path.read_text(encoding="utf-8")).meta["links"] == [
-        {"to": "3-1", "type": "breaks_down"}
-    ]
+    text = path.read_text(encoding="utf-8")
+    # Byte copy: the token line survives untouched, unparsed.
+    assert "- [[breaks_down, 3-1]]" in text
     assert load(tmp_path).children("2-2") == ["3-1"]
     assert check(tmp_path).ok
 
@@ -78,6 +111,17 @@ def test_clone_subtree_clones_the_whole_component_and_rewires(write, tmp_path):
     assert load(tmp_path).children("1-2") == ["2-2"]
     assert load(tmp_path).children("2-2") == ["3-2", "4-2"]
     assert load(tmp_path).children("3-2") == ["5-2"]
+
+    # Tokens among the copies are repointed; every other byte is preserved.
+    head, section = _split_doc(tmp_path, "2-2")
+    source_head, source_section = _split_doc(tmp_path, "2-1")
+    assert head == source_head
+    assert section == (
+        "## Links\n\n- [[breaks_down, 3-2]]\n- [[breaks_down, 4-2]]\n"
+    )
+    assert source_section == (
+        "## Links\n\n- [[breaks_down, 3-1]]\n- [[breaks_down, 4-1]]\n"
+    )
 
     # The original component is untouched and the clone is not wired into it.
     assert load(tmp_path).children("2-1") == ["3-1", "4-1"]
@@ -152,8 +196,10 @@ def test_replace_swaps_middle_child_in_place(write, tmp_path):
     assert clone(tmp_path, "3-1") == [("3-1", "3-2")]
     assert replace(tmp_path, "3-1", "3-2") == ("3-1", "links", "3-2")
 
-    parent = parse_document((nodes / "1-1.md").read_text(encoding="utf-8"))
-    assert [entry["to"] for entry in parent.meta["links"]] == ["2-1", "3-2", "4-1"]
+    parent_text = (nodes / "1-1.md").read_text(encoding="utf-8")
+    assert "- [[breaks_down, 3-2]]" in parent_text
+    assert "- [[breaks_down, 3-1]]" not in parent_text
+    assert load(tmp_path).children("1-1") == ["2-1", "3-2", "4-1"]
     assert (nodes / "3-1.md").is_file()
     assert (nodes / "3-2.md").is_file()
 
@@ -183,8 +229,9 @@ def test_component_clone_then_replace_repoints_parent_at_new_root(write, tmp_pat
     ]
     assert replace(tmp_path, "2-1", "2-2") == ("2-1", "links", "2-2")
 
-    parent = parse_document((nodes / "1-1.md").read_text(encoding="utf-8"))
-    assert [entry["to"] for entry in parent.meta["links"]] == ["2-2"]
+    head, section = _split_doc(tmp_path, "1-1")
+    assert head == "body\n\n"
+    assert section == "## Links\n\n- [[breaks_down, 2-2]]\n"
     assert load(tmp_path).children("2-2") == ["3-2", "4-2"]
 
     assert check(tmp_path).ok
@@ -320,9 +367,10 @@ def test_diff_views_by_id(write, tmp_path):
     write(nodes, 2, version=2, links=[{"to": "5-1", "type": "breaks_down"}])
     write(nodes, 5)
     entries = {entry.id: entry.state for entry in diff(tmp_path, "1-1", "2-2")}
+    # Links now live in bodies, so the two versions of id 2 differ in content.
     assert entries == {
         1: "only-left",
-        2: "same",
+        2: "changed",
         3: "only-left",
         4: "only-left",
         5: "only-right",
@@ -344,9 +392,11 @@ def test_new_uses_next_global_id_and_appends_to_parent(write, tmp_path):
         fields={"type": "claim", "title": "New claim", "summary": ""},
     )
     assert created.name == "3-1.md"
-    root = parse_document((nodes / "1-1.md").read_text(encoding="utf-8"))
-    assert [entry["to"] for entry in root.meta["links"]] == ["2-1", "3-1"]
-    assert root.body == "root body\n"
+    head, section = _split_doc(tmp_path, "1-1")
+    assert head == "root body\n\n"  # parent body preserved outside the section
+    assert section == (
+        "## Links\n\n- [[breaks_down, 2-1]]\n- [[breaks_down, 3-1]](New claim)\n"
+    )  # title is the new node's live title
     assert load(tmp_path).children("1-1") == ["2-1", "3-1"]
 
     second = new_node(
@@ -408,8 +458,11 @@ def test_new_appends_to_the_parent_version_only(write, tmp_path):
     assert created.name == "4-1.md"
     assert load(tmp_path).children("2-1") == ["3-1"]
     assert load(tmp_path).children("2-2") == ["3-1", "4-1"]
-    version_meta = parse_document((nodes / "2-2.md").read_text(encoding="utf-8"))
-    assert [entry["to"] for entry in version_meta.meta["links"]] == ["3-1", "4-1"]
+    head, section = _split_doc(tmp_path, "2-2")
+    assert head == "body\n\n"
+    assert section == (
+        "## Links\n\n- [[breaks_down, 3-1]]\n- [[breaks_down, 4-1]](Version child)\n"
+    )
 
 
 def test_new_rejects_missing_parent(write, tmp_path):
@@ -466,7 +519,7 @@ def test_link_allows_back_edges_reciprocals_and_cycles(write, tmp_path):
     # A reciprocal structural edge is legal too.
     assert link(tmp_path, "3-1", "2-1", link_type="breaks_down")
     # The cycle closes and the store stays valid.
-    assert load(tmp_path).children("2-1") == ["1-1", "3-1"]
+    assert set(load(tmp_path).children("2-1")) == {"1-1", "3-1"}
     assert check(tmp_path).ok
 
 
@@ -476,14 +529,32 @@ def test_link_refuses_a_self_loop(write, tmp_path):
         link(tmp_path, "1-1", "1-1", link_type="supports")
 
 
-def test_link_keeps_targets_sorted(write, tmp_path):
+def test_link_appends_tokens_in_call_order(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1)
     write(nodes, 2)
     write(nodes, 3)
+    write(nodes, 4)
     link(tmp_path, "1-1", "3-1", link_type="supports")
     link(tmp_path, "1-1", "2-1", link_type="supports")
-    assert load(tmp_path).children("1-1") == ["2-1", "3-1"]
+    _, section = _split_doc(tmp_path, "1-1")
+    assert section == (
+        "## Links\n- [[supports, 3-1]](Title of 3-1)\n"
+        "- [[supports, 2-1]](Title of 2-1)\n"
+    )
+    # Monotone appends keep the section sorted by ref.
+    link(tmp_path, "1-1", "4-1", link_type="supports")
+    _, section = _split_doc(tmp_path, "1-1")
+    assert section.endswith("- [[supports, 4-1]](Title of 4-1)\n")
+
+
+def test_link_refuses_a_type_that_cannot_be_a_token(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1)
+    write(nodes, 2)
+    with pytest.raises(BreakdownError, match="body token"):
+        link(tmp_path, "1-1", "2-1", link_type="has space")
+    assert _split_doc(tmp_path, "1-1")[1] is None
 
 
 def test_folder_front_matter_survives_a_rewrite(write, tmp_path):
@@ -564,9 +635,10 @@ def test_migrate_renames_rewrites_and_is_idempotent(write, tmp_path):
     assert "# keep this comment" in migrated_text
     migrated = parse_document(migrated_text)
     assert "contains" not in migrated.meta
+    assert "links" not in migrated.meta
     assert migrated.meta["layout"] == "flat"
-    assert migrated.meta["links"] == [{"to": "2-1", "type": "breaks_down"}]
-    assert migrated.body == body
+    # Body preserved; the conversion only appends the trailing token section.
+    assert migrated.body == body + "\n## Links\n- [[breaks_down, 2-1]](Node 2)\n"
     assert (tmp_path / "ROOT").read_text(encoding="utf-8") == "1-1\n"
 
     store = load(tmp_path)
@@ -617,15 +689,17 @@ def test_migrate_strips_retired_placement_keys(tmp_path):
         for retired in ("band", "subpath", "layer", "stage", "order"):
             assert retired not in meta, (node_id, retired)
         assert "section" in meta
+        assert "links" not in meta, node_id
 
-    first = parse_document((nodes / "1-1.md").read_text(encoding="utf-8")).meta
-    assert "band_layout" not in first
-    assert "band_order" not in first
-    assert "contains" not in first
-    assert first["links"] == [
-        {"to": "2-1", "type": "breaks_down"},
-        {"to": "3-1", "type": "breaks_down"},
-    ]
+    first_meta = _doc(tmp_path, "1-1").meta
+    assert "band_layout" not in first_meta
+    assert "band_order" not in first_meta
+    assert "contains" not in first_meta
+    head, section = _split_doc(tmp_path, "1-1")
+    assert head == "body\n\n"
+    assert section == (
+        "## Links\n- [[breaks_down, 2-1]](Node 2)\n- [[breaks_down, 3-1]](Node 3)\n"
+    )
     assert any("strip" in rewrite for rewrite in result.rewrites)
 
     report = check(tmp_path)
@@ -637,45 +711,38 @@ def test_migrate_strips_retired_placement_keys(tmp_path):
     assert again.rewrites == []
 
 
-def test_migrate_cli_marks_symmetric_inverse(write, tmp_path, capsys):
+def test_migrate_cli_converts_front_matter_links_to_tokens(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    write(
+    _legacy(
         nodes,
         1,
         band="root",
         section="00-root",
         links=[
-            {"to": "2", "type": "realizes"},
-            {"to": "3", "type": "implements"},
+            {"to": "2-1", "type": "realizes"},
+            {"to": "3-1", "type": "implements"},
         ],
     )
-    write(nodes, 2, band="intent", section="00-intent")
-    write(nodes, 3, band="product", section="01-product")
-    args = [
-        "migrate",
-        "--root",
-        str(tmp_path),
-        "--symmetric",
-        "realizes",
-        "--inverse",
-        "implements=implemented_by",
-    ]
+    _legacy(nodes, 2, band="intent", section="00-intent")
+    _legacy(nodes, 3, band="product", section="01-product")
+    args = ["migrate", "--root", str(tmp_path)]
 
     assert main(args) == 0
 
-    root = parse_document((nodes / "1-1.md").read_text(encoding="utf-8")).meta
-    assert root["links"] == [
-        {"to": "2-1", "type": "realizes", "symmetric": True},
-        {
-            "to": "3-1",
-            "type": "implements",
-            "symmetric": True,
-            "inverse": "implemented_by",
-        },
+    root_doc = _doc(tmp_path, "1-1")
+    assert "links" not in root_doc.meta
+    assert "band" not in root_doc.meta
+    assert "band_order" not in root_doc.meta
+    assert "band_layout" not in root_doc.meta
+    head, section = _split_doc(tmp_path, "1-1")
+    assert head == "body\n\n"
+    assert section == (
+        "## Links\n- [[realizes, 2-1]](Node 2)\n- [[implements, 3-1]](Node 3)\n"
+    )
+    assert _pairs(tmp_path, "1-1") == [
+        ("2-1", "realizes"),
+        ("3-1", "implements"),
     ]
-    assert "band" not in root
-    assert "band_order" not in root
-    assert "band_layout" not in root
 
     capsys.readouterr()
     assert main(args) == 0

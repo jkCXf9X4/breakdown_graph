@@ -3,13 +3,14 @@
 Run `bd <command> --help` for the full flag list. Exit codes: 0 success, 1 check
 or navigation failure, 2 structural refusal.
 
-One topology: nodes joined by typed `links`. In-edges are derived; a link with
-`symmetric: true` is one authored master whose opposite is derived at load and
-never stored. A view is the weakly connected component of its anchor, ordered by
-undirected BFS distance. Direction is a label (`child`, `parent`, `peer`);
-cycles and back-edges are legal. There is no `contains` key; a node that still
-declares one fails `bd check` with `contains-removed` and is converted by
-`bd migrate`.
+One topology: nodes joined by typed link tokens in their bodies. A token is
+`[[TYPE, REF]]`, optionally with a cached `(TITLE)`. In-edges are derived by
+reversing authored tokens; a back-reference is an authored token in the other
+node, not a derived opposite. A view is the weakly connected component of its
+anchor, ordered by undirected BFS distance. Direction is a label (`child`,
+`parent`); cycles and back-edges are legal. There is no `contains` key and no
+front-matter `links`; a node that still declares either fails `bd check`
+(`contains-removed`, `links-removed`) and is converted by `bd migrate`.
 
 ## Environment
 
@@ -45,7 +46,7 @@ wins over `ROOT`; `ROOT` wins over the lowest component member.
 `root-ref-missing`; malformed content is `invalid-root`. `bd root` does not
 rewrite the view already in the work area; use `bd work REF` for that.
 
-Data refs are full `id-version`; `links` and `ROOT` never hold a bare id. A bare
+Data refs are full `id-version`; link tokens and `ROOT` never hold a bare id. A bare
 id on the command line is a selector resolved inside the selected view and is
 never written to data.
 
@@ -54,28 +55,27 @@ never written to data.
 ```sh
 bd init [DIR]                       # create .bd_tree/nodes/1-1.md and .gitignore
 bd new [--parent REF] [--type TYPE] [--field KEY=VALUE ...] [--body TEXT]
-bd migrate [--dry-run] [--type T]   # convert a classic or containment store in place
-bd migrate [--symmetric TYPE] [--inverse TYPE=TYPE2]
+bd migrate [--dry-run] [--type T]   # convert a classic, containment, or FM-links store
 ```
 
 `bd init` writes a graph root with no links and no placement key; there is no
 `--graph` flag because graph is the only topology. `bd new` allocates the next
-global integer at version 1 and, when `--parent` is given, adds a typed link
+global integer at version 1 and, when `--parent` is given, appends a typed token
 (`--type`, default `breaks_down`). Without `--parent` the node starts its own
 component. `bd new` has no placement flags: membership and order are derived from
 links and BFS distance. It seeds `title` and `summary` as empty placeholders;
 `--field` overrides them.
 
 `bd migrate` renames every bare `nodes/<id>.md` to the next free version, and
-converts a containment store: each `contains` list becomes ordered typed `links`,
-scalar links gain an explicit type, and every link list is sorted by ref.
-`--type` chooses the converted edge type (default `breaks_down`); `--dry-run`
-prints the plan without touching disk. It also strips the retired placement
-keys (`band`, `subpath`, `layer`, `stage`, `order`, and the ROOT `band_layout`
-and `band_order`) while leaving `section` as inert front matter. The same
-command upgrades an already-migrated store idempotently: `--symmetric TYPE`
-marks every link of that type a master (and drops `propagates`/`pinned`), and
-`--inverse TYPE=TYPE2` marks it and names the derived opposite.
+converts the old edge shapes: each `contains` list becomes ordered typed body
+tokens, and front-matter `links` moves into a trailing `## Links` section as
+sorted `- [[TYPE, REF]](TITLE)` lines. Retired scalar links gain an explicit
+type; `symmetric`/`inverse` are dropped; per-link `pinned`/`propagates` values
+move to the `freshness:` map. `--type` chooses the converted containment edge
+type (default `breaks_down`); `--dry-run` prints the plan without touching disk.
+It also strips the retired placement keys (`band`, `subpath`, `layer`, `stage`,
+`order`, and the ROOT `band_layout` and `band_order`) while leaving `section` as
+inert front matter. Running it again is idempotent.
 
 ## Inspect
 
@@ -96,20 +96,20 @@ bd audit [REF]
   graph audit; `bd check` already runs the graph checks, so `audit` is redundant
   but convenient.
 - `graph` is the single view renderer: it prints ring sections from an anchor.
-  The anchor is ring 0; ring 1 is split into `children`, `parents`, and `peers`;
-  deeper rings are numbered.
+  The anchor is ring 0; ring 1 is split into `children` and `parents`; deeper
+  rings are numbered.
 - `views` lists one representative per component with its node count and title;
   `*` marks the store default and `anchor REF` marks the work-area view.
-- `out` lists authored out-edges then derived symmetric opposites, marked
-  `[derived]`; `in` lists derived in-edges.
+- `out` lists authored out-edge tokens; `in` lists derived reverse edges,
+  every line marked `[derived]`.
 - `bd graph --svg --out graph.svg` renders the same view as SVG with Graphviz;
   `--dot` is the dependency-free fallback and `--out` writes either render.
 - `--depth N` on `bd graph` stops traversal after `N` link hops.
   `--distance A:B` keeps the inclusive ring range in the output but keeps
   traversing through hidden nodes; the anchor is always included. `--type T`
   follows only links of that type (repeatable).
-- Direction is a label, not a filter: `→` child, `←` parent, `↔` peer. A cycle
-  or a back-edge is legal and may put a distant node in a low ring.
+- Direction is a label, not a filter: `→` child, `←` parent. A cycle or a
+  back-edge is legal and may put a distant node in a low ring.
 - `show 5-1+2`: node 5-1 plus rings 0..2, each node once, with arrival arrows.
   With N > 0 the body is capped at 4000 characters per node unless
   `--max-chars N` is given; `--max-chars 0` prints the full body.
@@ -124,22 +124,24 @@ bd audit [REF]
 ## Structure
 
 ```sh
-bd link FROM TO --type TYPE [--propagates] [--symmetric [--inverse TYPE]]
+bd link FROM TO --type TYPE [--propagates]
 bd unlink FROM TO [--type TYPE]
 ```
 
-- `link` appends a typed edge and keeps the target list sorted by ref.
-  Back-edges, reciprocal edges, and cycles are legal. A self-loop on the same ref
-  is refused, as is an identical edge to the same target with the same type.
-- `link --symmetric` authors the single master of a two-way relation; the
-  opposite is derived at load and shown `[derived]`. `--inverse TYPE` names the
-  derived opposite's type and requires `--symmetric`.
-- `link --propagates` pins the target body hash immediately. It cannot be
-  combined with `--symmetric`.
+- `link` appends `- [[TYPE, TO]](TITLE)` to the source's `## Links` section in
+  call order; existing lines are untouched. Keep that section in ascending
+  target order (`graph-unsorted-links` warns otherwise). Back-edges, reciprocal
+  edges, and cycles are legal. A self-loop on the same ref is refused, as is an
+  identical edge to the same target with the same type. To make a
+  back-reference, link from the other node; there is no symmetric flag.
+- `link --propagates` records the edge in the source's `freshness:` map and pins
+  the target body hash immediately.
 - `link`, `unlink`, and `new` accept a bare id as a selector and resolve it in
   the selected view; they always write full refs.
-- Structural commands preserve body bytes and unrelated front matter.
-- `unlink` removes matching master links; derived opposites disappear with them.
+- Structural commands preserve body bytes and unrelated front matter, except the
+  token lines they append or remove.
+- `unlink` removes matching token lines; any reverse edge is only a `bd in`
+  computation and disappears with the authored token.
 - `contains` is not a command and not data. Run `bd migrate` to convert a store
   that uses it.
 
@@ -165,7 +167,7 @@ bd edit REF
   depth. The active view is the `# References — view REF[+N]` header in
   `REFS.md`; there is no separate state file.
 - `INDEX.md` is one root file with ring sections (`## Active`,
-  `## Distance 1 — children|parents|peers`, `## Distance 2`, …). It carries a
+  `## Distance 1 — children|parents`, `## Distance 2`, …). It carries a
   `nodes:` front-matter path to the real node folder, each node entry links
   straight to its real file, and a `nodes/` link opens the folder for copying or
   deleting store files.
@@ -248,10 +250,10 @@ Every node file is a version (`<id>-<version>.md`, version >= 1); versions of
 one id are peers. `bd versions ID` accepts `5` or `5-1` and uses the logical id.
 There is no per-node pointer. An edge pins a full ref, and a view warns when two
 versions of one id are reachable (`graph-duplicate-version`). `bd clone REF`
-copies the source file, including its declared `links`, to the next free version
+copies the source file, including its link tokens, to the next free version
 of the same logical id (or to `--version N`) and wires nothing into the current
 view. `bd clone REF --subtree` clones the whole weakly connected component and
-rewrites each cloned node's `links`; edges whose targets were cloned are
+rewrites each cloned node's token refs; edges whose targets were cloned are
 rewired to the copies, while a depth prefix keeps edges that leave the prefix
 pointing at the originals. The original stays untouched; `--depth N` narrows the
 clone to rings `0..N` and implies `--subtree`. `--version` cannot be combined with `--subtree` or `--depth`.
@@ -277,10 +279,11 @@ bd stale [--view REF]
 bd reconcile [REF ...] [--all] [--view REF]
 ```
 
-A structural link participates only with `propagates: true` (or an existing
-`pinned`). Symmetric links never propagate: `propagates` on a symmetric link is
-`propagates-on-symmetric`. Editing a propagating target makes the source edge
-stale until reconciled.
+A link participates only when the source node's `freshness:` map has an entry
+for its target with `propagates: true` (or an existing `pinned`). The entry is
+keyed by target ref; the pinned hash covers the target body with reserved tokens
+and the `## Links` heading stripped, so token edits do not invalidate it.
+Editing a propagating target makes the source edge stale until reconciled.
 
 ## Read-only projections
 
@@ -337,11 +340,12 @@ python3 -m pytest -q
 | `bd current` errors | No work area exists. Build one with `bd work [REF]`. |
 | `bd edit REF` errors | The ref is not in the active view. Switch with `bd work REF` or pass a ref that is present. |
 | `root-ref-missing` / `invalid-root` | The `ROOT` file names an absent ref or is malformed. Fix it, or run `bd root --clear`. |
-| `contains-removed` | The store still declares `contains`. Run `bd migrate --dry-run` then `bd migrate`. |
-| `invalid-symmetric` / `inverse-without-symmetric` | A link's `symmetric` must be a boolean, and `inverse` needs a non-empty string plus `symmetric: true`. Fix the link, or rerun `bd migrate --symmetric TYPE [--inverse TYPE=TYPE2]`. |
-| `symmetric-self-edge` / `duplicate-symmetric-edge` | Author one master per pair, never to itself and never in both directions. Remove the extra link with `bd unlink`. |
-| `propagates-on-symmetric` | Remove `propagates`/`pinned` from the symmetric link; freshness is structural-only. |
-| `bare-ref` / `invalid-ref` in data | `links` and `ROOT` need full `id-version` refs. A classic bare-file store converts once with `bd migrate`. |
+| `contains-removed` / `links-removed` | The store still declares `contains` or front-matter `links`. Run `bd migrate --dry-run` then `bd migrate`. |
+| `inline-malformed` | A `[[...]]` fragment is not `[[TYPE, REF]]` with a full ref. Fix the token; use `\[[` to show one literally. |
+| `inline-duplicate` | One node declares the same type and target twice. Remove one with `bd unlink`. |
+| `link-title-stale` | A cached `(TITLE)` differs from the target's live title. Update or drop the parenthetical; rendering already uses the live title. |
+| `invalid-freshness` | The `freshness:` map must key full target refs to a mapping with string `pinned` and boolean `propagates`. |
+| `bare-ref` / `invalid-ref` in data | `ROOT` needs a full `id-version` ref; a bare ref inside a token is `inline-malformed`. A classic bare-file store converts once with `bd migrate`. |
 | `graph-dangling-link` | A link targets a missing node. Remove it or restore the target. |
 | `graph-orphan` | A node is outside the default component. Link it in, or anchor the command on its component with `bd graph REF` / `bd work REF`. |
 | `graph-duplicate-version` | Two versions of one id are reachable from the anchor. Repoint one edge to the peer you want. |

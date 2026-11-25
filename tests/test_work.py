@@ -448,9 +448,9 @@ def test_status_and_writeback_use_refs_manifest_when_ref_changes(write, tmp_path
         "name: renamed\n"
         "title: Moved\n"
         "summary: s\n"
-        "links: [{to: 4-1, type: breaks_down}]\n"
         "---\n"
-        "new body\n",
+        "new body\n"
+        "\n## Links\n- [[breaks_down, 4-1]]\n",
         encoding="utf-8",
     )
 
@@ -463,7 +463,7 @@ def test_status_and_writeback_use_refs_manifest_when_ref_changes(write, tmp_path
     result = api.work(tmp_path, "1-1", out, writeback=True)
     assert result.written == 1
     assert (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8").endswith(
-        "new body\n"
+        "- [[breaks_down, 4-1]]\n"
     )
     assert dest.is_symlink()
     assert api.work(tmp_path, "1-1", out, status=True).ok

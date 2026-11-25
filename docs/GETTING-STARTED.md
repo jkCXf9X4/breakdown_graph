@@ -2,10 +2,11 @@
 
 This guide goes from the default example to a browsable, editable store with a
 flat work area, typed links, and a second solution in a git worktree. `bd` has
-one topology: markdown nodes joined by typed `links`. In-edges are derived; one
-with `symmetric: true` is an authored master whose opposite is derived at load.
-A view is the weakly connected component of its anchor, ordered by undirected
-BFS distance.
+one topology: markdown nodes joined by typed link tokens in their bodies. A
+token is `[[TYPE, REF]]`, optionally with a cached `(TITLE)`. In-edges are
+derived by reversing authored tokens; a back-reference is an authored token in
+the other node, not a derived opposite. A view is the weakly connected component
+of its anchor, ordered by undirected BFS distance.
 
 You need Python 3.10+ and PyYAML. From a clone, install the package:
 
@@ -16,8 +17,8 @@ bd --help
 
 ## 1. See the default store
 
-The repository ships `examples/` as the default store (`ROOT` `1-1`). Every node
-declares `links`, and the store is one component.
+The repository ships `examples/` as the default store (`ROOT` `1-1`). Linked
+nodes carry typed tokens in their bodies, and the store is one component.
 
 ```sh
 export BD_ROOT=examples
@@ -42,18 +43,19 @@ A node file looks like this:
 ---
 id: 1
 title: <the intent of this graph>
-links:
-  - to: 2-1
-    type: breaks_down
-  - to: 3-1
-    type: breaks_down
 ---
 # <the intent of this graph>
+
+The intent breaks down into [[breaks_down, 2-1]](Structural claims) and
+[[breaks_down, 3-1]](Verification claims).
 ```
 
 The filename is identity and version: logical id `1`, version `1`. The rest of
-the front matter is arbitrary. `links` declares typed edges as full `id-version`
-refs. There is no placement field: membership and order come from the graph.
+the front matter is arbitrary. A token declares one typed edge to a full
+`id-version` ref; `(TITLE)` is a cached copy of the target's live title and is
+advisory. Tooling appends the same token as a `- [[TYPE, REF]](TITLE)` line
+under `## Links`. Front-matter `links` is retired (`links-removed`). There is no
+placement field: membership and order come from the graph.
 
 There is no second topology and no `contains` key. A node that still declares
 `contains` fails `bd check` with `contains-removed`; `bd migrate` converts it
@@ -74,19 +76,19 @@ bd views
 ```
 
 - `graph` renders ring sections from an anchor, with authored `→ out` edges and
-  derived `← in` edges. The anchor is ring 0; ring 1 is split into `children`,
-  `parents`, and `peers`; deeper rings are numbered. `bd graph` is the only view
+  derived `← in` edges. The anchor is ring 0; ring 1 is split into `children`
+  and `parents`; deeper rings are numbered. `bd graph` is the only view
   renderer.
 - `--depth N` stops traversal after `N` hops. `--distance A:B` keeps an
   inclusive ring range in the output but keeps traversing through hidden nodes;
   the anchor is always included.
 - `show REF+N` prints the node body plus rings `0..N`, each node once. Arrival
-  arrows label the direction (`→` child, `←` parent, `↔` peer).
+  arrows label the direction (`→` child, `←` parent).
 - `find` searches titles, summaries, bodies, and front-matter fields.
 - `path` prints the shortest undirected chain from the anchor, with an arrow on
   every step. `4-1` has two parents; the path is deterministic but is only one
   of several equally short routes.
-- `out` lists authored out-edges; `in` lists derived in-edges.
+- `out` lists authored out-edge tokens; `in` lists derived reverse edges.
 - `views` lists one representative per component, marking the default with `*`
   and the work-area anchor.
 
@@ -109,16 +111,18 @@ bd check
 
 The graph audit checks the rules that make the undirected view meaningful:
 
-- links resolve to existing full refs and are sorted by ref;
-- a symmetric relation has one master per pair, never a self-edge, no
-  `propagates`, and `inverse` only with `symmetric: true`
-  (`invalid-symmetric`, `inverse-without-symmetric`, `symmetric-self-edge`,
-  `duplicate-symmetric-edge`, `propagates-on-symmetric`);
-- a bare data ref is `bare-ref`, and a malformed one is `invalid-ref`;
+- tokens resolve to existing full refs and are kept in ascending target order;
+- a token that does not match `[[TYPE, REF]]` is `inline-malformed`, and the
+  same type and target twice on one node warns `inline-duplicate`;
+- a cached `(TITLE)` that differs from the target's live title warns
+  `link-title-stale`; rendering still uses the live title;
+- a bare `ROOT` ref is `bare-ref`, and malformed `ROOT` content is
+  `invalid-root`;
 - a node outside the default component warns (`graph-orphan`); out-degree above
   200 warns (`graph-wide-fanout`);
 - a reachable duplicate version warns (`graph-duplicate-version`);
-- a node declaring `contains` is `contains-removed`.
+- a node declaring `contains` is `contains-removed`, and one declaring
+  front-matter `links` is `links-removed`.
 
 Cycles, back-edges, reciprocal edges, and direction are not errors. Only a
 self-loop on one ref is refused by `bd link`.
@@ -128,16 +132,17 @@ Structure is edited with links:
 ```sh
 bd new --parent 1-1 --type breaks_down --field title="A new claim"
 bd link 2-1 8-1 --type supports
-bd link 2-1 8-1 --type verifies --symmetric --inverse verified_by
+bd link 8-1 2-1 --type supported_by
 bd unlink 2-1 8-1 --type supports
 ```
 
-`bd new` allocates the next global id at version 1 and adds a typed link to the
-parent; `--type` defaults to `breaks_down`. It has no placement flags. Without
-`--parent`, the node starts its own component. `bd link` keeps each target list
-sorted by ref; back-edges and cycles are legal. `--symmetric` instead authors
-the one master of a two-way relation; `--inverse TYPE` names the derived
-opposite's type.
+`bd new` allocates the next global id at version 1 and appends a typed token to
+the parent's `## Links` section; `--type` defaults to `breaks_down`. It has no
+placement flags. Without `--parent`, the node starts its own component.
+`bd link` appends `- [[TYPE, TO]](TITLE)` to the source in call order; existing
+lines are untouched, so add targets in ascending order or re-sort the section.
+Back-edges and cycles are legal. A back-reference is a second authored token on
+the other node with its own type — there is no `--symmetric`.
 
 ## 4. Edit in the work area
 
@@ -265,8 +270,8 @@ bd check
 3 nodes, 0 errors, 0 warnings (view 1-1)
 ```
 
-`bd graph 1-1` renders rings `0` and `1`. `bd new` adds the typed link to the
-parent's `links`; it writes no position.
+`bd graph 1-1` renders rings `0` and `1`. `bd new` appends a typed token to the
+parent's `## Links` section; it writes no position.
 
 The work area is flat: each node's path is its store basename. `group`,
 `section`, `folder`, and `home` are inert front matter: they place nothing.
@@ -276,7 +281,7 @@ is derived from edges and undirected distance.
 
 ## 6. Typed links and freshness
 
-`links` carries typed edges. Add a propagating edge and track freshness:
+The body carries typed tokens. Add a propagating edge and track freshness:
 
 ```sh
 bd link 2-1 3-1 --type supports --propagates
@@ -284,8 +289,11 @@ bd stale
 ```
 
 Then edit a target through its work area, or open it with `bd edit REF`. A
-propagating edge pins the target body hash; `bd stale` reports when the target
-moves. `--propagates` is opt-in; a `see_also` edge never goes stale.
+propagating edge records `pinned` under the target's ref in the source node's
+top-level `freshness:` map; `bd stale` reports when the target moves.
+`--propagates` is opt-in; a `see_also` edge never goes stale. The pinned hash
+ignores token lines and the `## Links` heading, so adding an edge does not
+invalidate another edge's pin.
 
 Reconcile after reviewing the change:
 
@@ -332,10 +340,10 @@ bd replace 1-1 1-2
 ```
 
 `bd clone REF` copies a ref to the next free version of the same logical id (or
-to `--version N`) and keeps the source file's declared `links`; it wires
-nothing into a view. `bd clone REF --subtree` clones the whole weakly connected
-component and rewires every cloned edge whose target was also cloned; a depth
-prefix keeps edges that leave the prefix pointing at the originals. `--depth N`
+to `--version N`) and keeps the source file's link tokens; it wires nothing into
+a view. `bd clone REF --subtree` clones the whole weakly connected component and
+rewrites the cloned token refs whose target was also cloned; a depth prefix
+keeps edges that leave the prefix pointing at the originals. `--depth N`
 narrows the clone to rings `0..N` and implies `--subtree`.
 `--version` cannot be combined with `--subtree` or `--depth`.
 `bd replace OLD NEW` is the separate wiring step: it repoints every inbound
@@ -428,10 +436,10 @@ There is no generic importer yet. The pattern is:
    project layout), named `<id>-<version>.md` with a running integer id and a
    version starting at `1`.
 2. `id` matches the logical id in the filename.
-3. `links` lists typed edges as full refs, sorted. No placement key is needed:
-   the view is the component of the anchor and the order is BFS distance. If
-   the tree must read as a hierarchy, encode the parent -> child edges; a
-   `child` label comes from the authored direction.
+3. Link tokens name typed edges with full refs, in ascending target order. No
+   placement key is needed: the view is the component of the anchor and the
+   order is BFS distance. If the tree must read as a hierarchy, encode the
+   parent -> child tokens; a `child` label comes from the authored direction.
 4. Prose citations are separate; an edge is a link, not a bibliography entry.
 5. The flat work area uses store basenames; `--path-template` overrides naming.
 
@@ -439,19 +447,18 @@ An older store that used `contains` or authored placement is converted in place:
 
 ```sh
 bd migrate --dry-run     # print the plan
-bd migrate               # contains -> links; retired placement keys stripped
+bd migrate               # contains/links -> body tokens; retired keys stripped
 bd check                 # clean
 ```
 
-`bd migrate` sorts the converted links, uses `--type` (default `breaks_down`)
-for `contains` edges, removes the retired placement fields, and keeps `section`
-as inert front matter. On an already-migrated store, `--symmetric TYPE` marks
-every link of a type as a master and `--inverse TYPE=TYPE2` names its derived
-opposite; both are idempotent.
+`bd migrate` writes converted edges as sorted body tokens, uses `--type`
+(default `breaks_down`) for `contains` edges, moves per-link freshness into the
+`freshness:` map, removes the retired placement fields, and keeps `section` as
+inert front matter. It is idempotent and leaves a token-only store untouched.
 
 `examples/` is the default worked project: a twelve-node graph under
-`examples/.bd_tree/` with one file per node version, declared `links`, one
-component, rings 0 through 4 from `1-1`, and no `contains`.
+`examples/.bd_tree/` with one file per node version, typed tokens in the linked
+bodies, one component, rings 0 through 4 from `1-1`, and no `contains`.
 
 ## Troubleshooting
 
@@ -460,11 +467,12 @@ component, rings 0 through 4 from `1-1`, and no `contains`.
 | `bd: unknown ref '1-1'` | No store found, or the ref is absent from the selected view. Run from the project root or store root, or set `BD_ROOT` to the directory containing `nodes/` (or `.bd_tree/nodes/`). |
 | `bd check` sees the wrong store | `BD_ROOT` or `--root` points elsewhere. `bd` uses the nearest `nodes/` or `.bd_tree/nodes/` upward. |
 | `root-ref-missing` / `invalid-root` | The `ROOT` file names an absent ref or is malformed. Fix it, or run `bd root --clear`. |
-| `contains-removed` | The store still declares `contains`. Run `bd migrate --dry-run`, then `bd migrate`. |
-| `invalid-symmetric` / `inverse-without-symmetric` | `symmetric` must be a boolean and `inverse` a non-empty string only with `symmetric: true`. Fix the link, or rerun `bd migrate --symmetric TYPE [--inverse TYPE=TYPE2]`. |
-| `symmetric-self-edge` / `duplicate-symmetric-edge` | Author one master per pair, never to itself and never in both directions; remove the extra link with `bd unlink`. |
-| `propagates-on-symmetric` | Remove `propagates`/`pinned`; freshness is structural-only. |
-| `bare-ref` / `invalid-ref` in data | `links` and `ROOT` need full `id-version` refs. Convert a classic bare-file store once with `bd migrate`. |
+| `contains-removed` / `links-removed` | The store still declares `contains` or front-matter `links`. Run `bd migrate --dry-run`, then `bd migrate`. |
+| `inline-malformed` | A `[[...]]` fragment is not `[[TYPE, REF]]` with a full ref. Fix the token; escape it as `\[[` to show it literally. |
+| `inline-duplicate` | One node declares the same type and target twice. Remove one with `bd unlink`. |
+| `link-title-stale` | A cached `(TITLE)` differs from the target's live title. Update or drop the parenthetical. |
+| `invalid-freshness` | `freshness:` must key full target refs to a mapping with string `pinned` and boolean `propagates`. |
+| `bare-ref` / `invalid-ref` in data | `ROOT` needs a full `id-version` ref; a bare ref inside a token is `inline-malformed`. Convert a classic bare-file store once with `bd migrate`. |
 | A cycle or back-edge is reported | It should not be. Update to the current version; only a self-loop is refused by `bd link`. |
 | `graph-orphan` | A node is outside the default component. Link it in, or anchor on its component with `bd graph REF` / `bd work REF`. |
 | `bd work` refuses to switch | `bd_work/` has detached or stray files. Run `--status`, then `--writeback` to keep them or `--clean` to discard them. |

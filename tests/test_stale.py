@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from bd_tree.api import reconcile, stale
+from bd_tree.api import load, reconcile, stale
 from bd_tree.errors import BreakdownError
 from bd_tree.frontmatter import parse_document
+from conftest import add_token, set_freshness
 
 
 def test_stale_then_reconcile_keeps_body(write, tmp_path, pin):
@@ -33,14 +34,19 @@ def test_stale_then_reconcile_keeps_body(write, tmp_path, pin):
     assert edges[0].label == "3-1 -> 2-1 (serves)"
     assert edges[0].state == "stale"
 
+    dependent_before = parse_document(path.read_text(encoding="utf-8"))
+    dependent_body_before = dependent_before.body
+
     changes = reconcile(tmp_path, ["3-1"], "1-1")
     assert len(changes) == 1
     assert changes[0].new == pin("v2\n")
     assert stale(tmp_path, "1-1") == []
 
     after = parse_document(path.read_text(encoding="utf-8"))
-    assert after.body == "dependent body stays identical\n\n"
-    assert after.meta["links"][0]["pinned"] == pin("v2\n")
+    # The dependent's body bytes are identical through reconciliation.
+    assert after.body == dependent_body_before
+    # Reconciliation re-pins through the top-level freshness map.
+    assert after.meta["freshness"]["2-1"]["pinned"] == pin("v2\n")
     keys = [
         line.split(":", 1)[0]
         for line in after.raw_fm.splitlines()
@@ -100,6 +106,55 @@ def test_already_pinned_link_propagates_without_the_flag(write, tmp_path, pin):
     assert stale(tmp_path, "1-1") == []
     write(nodes, 2, body="v2\n")
     assert [edge.state for edge in stale(tmp_path, "1-1")] == ["stale"]
+
+
+def test_pins_compare_body_hashes_not_titles(write, tmp_path, pin):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2", "type": "breaks_down"}])
+    write(nodes, 2, body="v1\n")
+    write(nodes, 3, links=[{"to": "2", "type": "serves"}])
+    target_hash = load(tmp_path).nodes["2-1"].body_hash
+    set_freshness(nodes, "3-1", {"2-1": {"pinned": target_hash}})
+    assert stale(tmp_path, "1-1") == []
+
+    # A front-matter title change does not touch the target's body hash.
+    write(nodes, 2, title="Renamed", body="v1\n")
+    assert stale(tmp_path, "1-1") == []
+
+
+def test_target_hash_ignores_token_text(write, tmp_path, pin):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2", "type": "breaks_down"}])
+    write(nodes, 2, links=[{"to": "1", "type": "see_also"}], body="v1\n")
+    write(nodes, 3, links=[{"to": "2", "type": "serves"}])
+    target_hash = load(tmp_path).nodes["2-1"].body_hash
+    set_freshness(nodes, "3-1", {"2-1": {"pinned": target_hash}})
+    assert stale(tmp_path, "1-1") == []
+
+    # Token text is stripped from body_hash: retitling a token in place
+    # does not make dependents stale.
+    write(
+        nodes,
+        2,
+        links=[{"to": "1", "type": "see_also", "title": "Renamed"}],
+        body="v1\n",
+    )
+    assert stale(tmp_path, "1-1") == []
+
+
+def test_target_hash_ignores_appended_tokens(write, tmp_path, pin):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2", "type": "breaks_down"}])
+    write(nodes, 2, body="v1\n")
+    write(nodes, 3, links=[{"to": "2", "type": "serves"}])
+    target_hash = load(tmp_path).nodes["2-1"].body_hash
+    set_freshness(nodes, "3-1", {"2-1": {"pinned": target_hash}})
+    assert stale(tmp_path, "1-1") == []
+
+    # An appended token in the target's Links section is stripped from the
+    # target's body hash, so the dependent stays fresh.
+    add_token(nodes, "2-1", "[[supports, 3-1]]")
+    assert stale(tmp_path, "1-1") == []
 
 
 def test_reconcile_reaches_a_parent_through_an_undirected_view(write, tmp_path):

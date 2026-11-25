@@ -31,10 +31,10 @@ present.
    exactly one (§5).
 2. **Identity is not location.** A node is a running integer; its path in a view
    is presentation metadata.
-3. **One topology: typed links.** A node declares `links`; in-edges are derived.
-   A view is the weakly connected component of one anchor. Direction remains in
-   the data and as a label, but it does not gate membership. Ordering is the
-   undirected BFS distance from the anchor.
+3. **One topology: typed links.** A node declares typed link tokens in its
+   body; in-edges are derived. A view is the weakly connected component of one
+   anchor. Direction remains in the data and as a label, but it does not gate
+   membership. Ordering is the undirected BFS distance from the anchor.
 4. **No schema.** Front matter is arbitrary; the built-in keys are listed below.
    Layer names, types, and status values are user data.
 5. **Work in the store, through one work area.** The writable work area is a
@@ -48,7 +48,7 @@ present.
    derived. A writer's advisory lock is transient and lives in the system temp
    directory, keyed by the store path, so no lock file enters the store or git.
 7. **Freshness is opt-in per edge.** A link participates in staleness only when
-   it declares `propagates: true`.
+   the source node's `freshness:` map names its target with `propagates: true`.
 8. **Git owns the solution boundary; the flat store is the merge unit; views are
    lenses.** A branch/worktree isolates a solution; a work folder only
    changes the layout inside one checkout. Neither is a second source of truth.
@@ -85,21 +85,15 @@ store there first, then a `.bd_root`), then the downward scan. `ROOT` and
 default-view ref; `.bd_root` is a one-line folder-level pointer that names a
 store.
 
-### 3.2 Front matter
+### 3.2 Node body and front matter
 
-Reserved identity and edge keys:
+Reserved front-matter keys:
 
 | Key | Type | Semantics |
 | --- | --- | --- |
 | `id` | int | Optional logical id; must match the filename |
 | `legacy` | string | Original identifier from an imported tree |
-| `links` | list of edge objects | Authored edges: structural out-links or a symmetric master |
-| `to` | full ref | Edge target; required and never bare |
-| `type` | string | Edge label; required and non-empty |
-| `propagates` | bool | Opt-in freshness participation |
-| `pinned` | string | Target body hash recorded at reconciliation |
-| `symmetric` | bool | Marks the single authored master of a two-way relation |
-| `inverse` | string | Type of the derived opposite; requires `symmetric: true` |
+| `freshness` | map | Per-target freshness entries, keyed by full target ref |
 
 Everything else is arbitrary and preserved on export. Typical fields: `title`,
 `summary`, `type`, `status`, `date`, `phase`, `audience`, `tags`.
@@ -110,60 +104,84 @@ the store file's basename; a `--path-template` may read any field, and its
 `home` are ordinary front matter: preserved, never read for layout, and they add
 no schema.
 
-Edge object:
+Link declarations are reserved tokens in the body, not front-matter keys:
 
-```yaml
-links:
-  - { to: 6-2, type: supports, propagates: true, pinned: "sha256:ab12cd34ef56" }
-  - { to: 27-1, type: verifies, symmetric: true, inverse: verified_by }
+```markdown
+The intent breaks down into [[breaks_down, 2-1]](Structural claims).
+
+## Links
+- [[verifies, 12-1]](Verification core)
 ```
 
-- `to`: a full ref. A bare `to` is an error. `type`: a required non-empty
-  arbitrary label, never validated against an enum.
-- `propagates`: opt-in freshness participation. `pinned`: target body hash
-  recorded at the last reconciliation, written by `bd reconcile` and never
-  required by hand.
-- `symmetric`: `true` marks the single authored master of a two-way relation;
-  `inverse` names the derived opposite's type and requires `symmetric`. Both
-  are loader-validated and preserved by link rewriting.
-- Extra keys on an edge are preserved.
+- **Grammar:** `[[TYPE, REF]]`, optionally followed by spaces and `(TITLE)`.
+  `TYPE` matches `[A-Za-z][A-Za-z0-9_-]*`; `REF` is a full `id-version` ref and
+  never a bare id; `TITLE` is non-empty and excludes `)` and newlines.
+- **Two forms:** a token inside prose, or a `- [[TYPE, REF]](TITLE)` line in a
+  trailing `## Links` section. `bd new --parent` appends to the parent,
+  `bd link` appends to the source, `bd unlink` removes, and `bd replace` /
+  `bd clone --subtree` rewrite refs in place. Authors may also write tokens
+  directly in sentences.
+- **Cached title:** `(TITLE)` is advisory. Rendering always uses the target's
+  live title; only `bd check` compares the cache and reports
+  `link-title-stale`.
+- **Ignored:** fenced code blocks, inline code spans, and the `\[[` escape.
+  Indented code blocks and HTML comments are not handled.
+- **Back-references are authored.** There is no derived opposite: if `3-1`
+  writes `[[verifies, 8-1]]` and `8-1` should acknowledge it, `8-1` authors its
+  own token with its own type. `bd in` still derives the reverse list from
+  authored tokens and marks it `[derived]`.
+- **Front-matter `links` is retired.** A node that still declares it is
+  `links-removed`; `bd migrate` moves the list into the body as tokens.
+
+Freshness pins live in one top-level map, keyed by target ref:
+
+```yaml
+freshness:
+  '5-1':
+    pinned: sha256:abc123def456
+    propagates: true
+```
+
+- `propagates: true` opts that target edge into staleness; `pinned` holds the
+  target body hash recorded at the last reconciliation.
+- The hash is computed over the body with reserved token lines and the
+  `## Links` heading stripped, so appending or removing a token does not
+  invalidate a pin.
+- `bd stale` / `bd reconcile` read and rewrite this map; a malformed entry is
+  `invalid-freshness`.
 
 ### 3.3 The graph
 
-Structural `links` are the authored edges. Each edge is written on one node with
-a full target ref and a type; `propagates` and `pinned` are preserved. Out-edges
-are authored facts; in-edges are derived by reversing them and are never written
-to a node file.
+Typed body tokens are the authored edges. Each token names one full target ref
+and a type; the source node owns it. Out-edges are the authored tokens;
+in-edges are derived by reversing them and are never written to a node file.
 
-- There is one topology. A link is *structural* unless it declares
-  `symmetric: true`. Structural links keep the authored direction and drive
-  `bd out`, `bd in`, and the directional rows of `bd graph`.
+- There is one topology. Every token is structural: it joins its two nodes in
+  the undirected view and supplies the type of the step.
 - A view is the **weakly connected component** of one anchor over authored
   links, walked in both directions. A node reached through several neighbours
   appears once. Multiple parents, reciprocal pairs, back-edges, and cycles are
   legal. Only a self-loop on one ref is refused by `bd link`.
 - **Distance** is the undirected BFS hop count from the anchor. It is the only
-  ordering primitive: ring 0 is the anchor, ring 1 is split into children,
-  parents, and peers, and deeper rings are numbered.
-- **Direction is a label.** `Store.neighbors(ref)` returns `child`, `parent`, or
-  `peer` for each authored neighbour. Kind precedence is
-  `child > parent > peer`; a reciprocal structural pair is a `child` from each
-  side and a symmetric master is a `peer` from each side. Direction never filters
+  ordering primitive: ring 0 is the anchor, ring 1 is split into children and
+  parents, and deeper rings are numbered.
+- **Direction is a label.** `Store.neighbors(ref)` returns `child` or `parent`
+  for each authored neighbour. Kind precedence is `child > parent`; a
+  reciprocal pair is a `child` from each side. Direction never filters
   membership or creates a validation error.
-- A symmetric master is authored on exactly one node. For `X --T--> Y` with
-  `symmetric: true` and `inverse: I`, load derives `Y --(I or T)--> X` with
-  `origin="derived"`. The opposite is never written to a file and never
-  structures a view; `bd out`, `bd in`, and the `show --links` footer mark it
-  `[derived]`.
-- `links` is kept sorted by ref. Sorted lists keep a merge local to the edge
-  that changed; `bd link` keeps targets sorted. Fan-out above 200 warns and
-  suggests an intermediate header.
+- **No derived opposite exists.** Nothing is marked `[derived]` in the store;
+  `bd in` derives the reverse list from authored tokens and labels every line
+  `[derived]`. A back-reference is an ordinary token in the other node.
+- Tokens are expected in ascending target-ref order; `graph-unsorted-links`
+  warns otherwise. `bd link` appends in call order and rewrites no existing
+  line, so add targets monotonically or re-sort the section. Fan-out above 200
+  warns and suggests an intermediate header.
 - A node that still declares `contains` is an error (`contains-removed`) telling
   the user to run `bd migrate`. The key is not part of the model.
 
 ### 3.4 Views
 
-A view is the weakly connected component of one anchor over authored `links`.
+A view is the weakly connected component of one anchor over authored tokens.
 `bd export graph`, the other `bd export` choices, `bd work`, and `bd graph` take
 an anchor ref. The default anchor is the store's `ROOT` file when present, else
 the lowest member of the first component; an explicit ref where a command takes
@@ -187,18 +205,20 @@ axes, deliberately separate:
 - **Merge unit: the flat `nodes/` store.** One file per node version and no
   nested output keep conflicts local to the version that changed.
 - **Within a checkout: views.** Shape edges with `bd link`/`bd unlink` (and
-  `bd new --parent`). Every structural edit changes only the source file and
-  preserves arbitrary front matter and body bytes.
+  `bd new --parent`). A structural edit changes only the source file: body
+  bytes and arbitrary front matter are preserved, except the appended or
+  removed token lines in its `## Links` section (and `bd replace`, which
+  rewrites token refs in place).
 
 ### 3.5 Versions
 
 - Every node file is a version: `5-1.md`, `5-2.md`, and so on are peers, each
   immutable by convention, not enforcement. No version is privileged.
 - `bd clone 5-1` copies a ref to the next free version of the same logical id
-  (or to `--version N`) and keeps the source file's declared `links`; it wires
+  (or to `--version N`) and keeps the source file's link tokens; it wires
   nothing into the current component. `bd clone 5-1 --subtree` clones the whole
-  weak component of the source and rewires every cloned edge whose target was
-  also cloned; `--depth N` narrows that to BFS rings `0..N` and implies
+  weak component of the source and rewrites the cloned token refs whose target
+  was also cloned; `--depth N` narrows that to BFS rings `0..N` and implies
   `--subtree`, so edges leaving the prefix still point at the originals. The
   original stays untouched, and `--version` cannot be combined with `--subtree`
   or `--depth`.
@@ -216,8 +236,8 @@ axes, deliberately separate:
   with `bd work REF` (the work area) or `bd root REF` (the store default).
   Switching needs no copy step.
 
-Version references in `links` are exact full refs (`6-2`, not `6`); this makes a
-view independent of later edits to any peer.
+Version references in link tokens are exact full refs (`6-2`, not `6`); this
+makes a view independent of later edits to any peer.
 
 Versions are **node-local** alternatives inside one branch. They are not the
 solution boundary and do not sync across branches. A solution-level alternative
@@ -245,7 +265,9 @@ supporting two claims can be fresh for one edge and stale for the other;
 freshness is per edge, not per node.
 
 Hash: SHA-256 of the normalized body (trailing blank lines stripped, exactly one
-trailing newline), truncated to 12 hex characters.
+trailing newline), with reserved token lines and the `## Links` heading removed
+first, truncated to 12 hex characters. A token change therefore never
+invalidates a pin.
 
 ## 5. Work folders
 
@@ -303,10 +325,10 @@ bd_work/4-1.md -> ../.bd_tree/nodes/4-1.md
   `{slug}` is the title slug, else the ref. `group`, `section`, `folder`, and
   `home` place nothing.
 - `--status` classifies paths as `ok`, `missing`, `wrong-target`, `detached`,
-  `stray`, or `stale-ref`; `--writeback` re-links detached files and refuses
-  invalid front matter or a mismatched `id`, so a body-only replacement cannot
-  erase `links`. Both inspect the view actually in the area, not the requested
-  or default view.
+  `stray`, or `stale-ref`; `--writeback` refuses invalid front matter or a
+  mismatched `id`, then writes the detached file wholesale — its body, including
+  link tokens, is taken as edited. Both inspect the view actually in the area,
+  not the requested or default view.
 - Switching with detached (edited but unsynced) files is refused: they would be
   lost. Run `bd work --writeback` first to keep them, or `--clean` to discard
   them.
@@ -349,11 +371,11 @@ branch is checked out where; `bd work` remains the layout inside one checkout.
 ## 6. Schema-agnostic by construction
 
 Nothing in the tool knows a project's layer names. The only reserved vocabulary
-is structural: `id`, `legacy`, `links`, and the link keys `to`, `type`,
-`propagates`, `pinned`, `symmetric`, `inverse`. `name` and `title` are
-presentation metadata; `title` supplies the template slug. `group`, `section`,
-`folder`, and `home` are ordinary front matter: preserved, never read, with no
-effect on placement or validation.
+is structural: the front-matter keys `id`, `legacy`, and `freshness`, plus the
+body token grammar `[[TYPE, REF]]` and its optional cached `(TITLE)`. `name` and
+`title` are presentation metadata; `title` supplies the template slug. `group`,
+`section`, `folder`, and `home` are ordinary front matter: preserved, never
+read, with no effect on placement or validation.
 
 Consequences: any workflow can define fields (`phase`, `status`, `stream`); the
 graph orders nodes by undirected distance from the anchor; path templates read
@@ -369,49 +391,58 @@ wants a schema.
    path churn when titles change.
 3. **Versions as mandatory filename suffixes.** `5-1`, `5-2`; every node is a
    version and no unsuffixed file exists.
-4. **One topology: typed links, undirected views.** Authored `links`; in-edges
-   derived. A view is the weakly connected component of the anchor, and distance
-   is undirected BFS. Direction survives as a label. `contains` is retired;
-   `bd migrate` converts an older store.
+4. **One topology: typed body tokens, undirected views.** A node authors edges
+   as `[[TYPE, REF]]` tokens in its body; in-edges are derived. A view is the
+   weakly connected component of the anchor, and distance is undirected BFS.
+   Direction survives as a label. `contains` is retired; `bd migrate` converts
+   an older store, including front-matter `links`.
 5. **Views as components, not branches.** No branch names, branch directories,
    or global selector.
-6. **Structural links keep direction; in-edges are derived.** Membership is
-   undirected; several parents and reciprocal edges are legal. Symmetric
-   relations are authored as one master per pair and the opposite is derived at
-   load, marked `[derived]`.
-7. **Arbitrary front matter.** The tool fits any workflow; projects opt into
+6. **Direction is a label; back-references are authored.** Membership is
+   undirected; several parents and reciprocal edges are legal. There is no
+   derived opposite: a node that should acknowledge an edge authors its own
+   token with its own type. Only `bd in` derives the reverse list, marked
+   `[derived]`.
+7. **A cached token title is advisory.** `(TITLE)` saves a lookup but rendering
+   always uses the target's live title; only `bd check` reports
+   `link-title-stale`.
+8. **Freshness is a per-node map.** Pins and `propagates` live in the
+   `freshness:` front-matter map keyed by target ref, not inside edge objects;
+   the pinned hash ignores reserved tokens and the `## Links` heading.
+9. **Arbitrary front matter.** The tool fits any workflow; projects opt into
    validation.
-8. **Freshness per edge, opt-in.** No hardcoded `serves`/`supports` semantics.
-9. **Work trees with symlinks are the primary interface.** Flat, no sync-back,
+10. **Freshness per edge, opt-in.** No hardcoded `serves`/`supports` semantics.
+11. **Work trees with symlinks are the primary interface.** Flat, no sync-back,
    and exactly one writable work area.
-10. **No JSON/TOML/lock/state sidecars.** The exceptions are the store-level
+12. **No JSON/TOML/lock/state sidecars.** The exceptions are the store-level
     `ROOT` file (one ref on one line) and the folder-level `.bd_root` pointer
     (one store path on one line). The work-area view lives in generated
     `REFS.md`. Derived output is disposable. The write lock is not a sidecar: it
     is transient and lives outside the store.
-11. **Writeback requires valid front matter.** Protects `links` from body-only
-    replacements.
-12. **Git owns solutions; `bd work` owns layout.** Worktrees isolate branches;
+13. **Writeback requires valid front matter.** A detached file is written only
+    when it parses and its `id` matches; its body, including link tokens, is
+    taken as edited.
+14. **Git owns solutions; `bd work` owns layout.** Worktrees isolate branches;
     the single `bd_work/` area shapes the current view inside one branch.
     Structural edits go through `bd link` / `bd unlink` and `bd clone` /
     `bd replace`.
-13. **Branches and versions are disjoint layers.** Branches isolate whole
+15. **Branches and versions are disjoint layers.** Branches isolate whole
     checkouts; versions are peer files for single nodes. No cross-branch refs,
     no branch selector, no per-node active-version selector, and no copy step
     across branches. The one store-level pointer is `ROOT`, a single full ref
     line naming the default view anchor; a folder-level `.bd_root` pointer names
     a store for discovery only. See
     [`BRANCHES-AND-VERSIONS.md`](BRANCHES-AND-VERSIONS.md).
-14. **One work area at a time.** `<project>/bd_work/` holds exactly one view;
+16. **One work area at a time.** `<project>/bd_work/` holds exactly one view;
     `bd work REF` switches it by replacing the contents. Two writable folders
     never exist at once. Read-only `bd export` snapshots (graph, context, dot,
     svg) are not a second work area. The area's view is independent of the store
     default anchor: `bd root` sets the default, `bd work` sets what is in the
     area.
-15. **Flat ring layout is the only layout.** The work area holds one symlink per
+17. **Flat ring layout is the only layout.** The work area holds one symlink per
     node at its store basename, plus one ring-section `INDEX.md` and one
     `REFS.md`. `group`, `section`, `folder`, and `home` are inert.
-16. **2026-11-25: topology moved from a DAG with authored bands to an
+18. **2026-11-25: topology moved from a DAG with authored bands to an
     undirected component with a ring layout.** Cycles and back-edges broke the
     old assumptions: a cycle could leave a component with no root and no
     topological order, so the tool needed placement fields (`band`, `subpath`,
@@ -423,6 +454,18 @@ wants a schema.
     order-refusal class, legal cycles, and a work area that is a simple flat ring
     projection. Existing stores are converted by `bd migrate`, which strips the
     retired placement fields.
+19. **2026-11-25: link declarations moved from front matter into body tokens,
+    and symmetric masters were retired.** `links: [{to, type}]` split the
+    assertion from the sentence it belonged to; a body token keeps the edge next
+    to the prose and lets `bd link` append one line without rewriting a YAML
+    list. Symmetry is no longer inferred: each node authors every edge it
+    asserts, so a back-reference is an ordinary token and no `inverse`,
+    `[derived]` opposite, or one-master rule survives. The cached `(TITLE)` is
+    advisory only. Freshness moved out of the edge object into the top-level
+    `freshness:` map, keyed by target ref, so pins survive token edits. Cost: a
+    malformed token is a body-level error (`inline-malformed`) and indented code
+    blocks and HTML comments are not shielded. Gain: one place for an assertion,
+    no second copy to keep in sync, and no symmetric special case.
 
 ## 8. Rejected alternatives
 
@@ -437,6 +480,18 @@ wants a schema.
   the link relation, forced per-store detection and dispatch, and made
   `section` a second placement language. Removed: one typed-link topology;
   `bd migrate` converts an older store.
+- **Front-matter `links` as the authoring surface.** It kept edges in a YAML
+  block away from the sentence that asserts them, and a scalar link had to
+  borrow the target's `type`. Body tokens are the authored assertion; a node
+  that still declares `links` is `links-removed`.
+- **Symmetric master with a derived opposite.** One file owned a two-way
+  relation, but the relation could not be read from the other node, and
+  validation needed `symmetric`/`inverse`, one-master, and
+  propagation-refusal rules. Retired: each node authors its own token; `bd in`
+  still derives the reverse list.
+- **Per-link freshness keys.** `propagates`/`pinned` inside an edge object made
+  every token append rewrite the YAML list. The top-level `freshness:` map
+  keeps pins stable while tokens move.
 - **Branch directories (`branches/<name>/nodes/`).** Clean layering, but a
   global selector and branch metadata returned, needing duplicate state.
 - **Filename branches (`<id>-<branch>`).** Better, but branch names were
@@ -458,7 +513,7 @@ wants a schema.
   alternatives implicitly stays rejected: refs and diffs must show the choice.
   A single store-level `ROOT` line is accepted as the default view anchor; it
   names the full ref a bare command starts from and selects no version for any
-  other node (§7.13). A folder-level `.bd_root` pointer is accepted only for
+  other node (§7.15). A folder-level `.bd_root` pointer is accepted only for
   store discovery and selects no view or version.
 - **`use` selection maps for cross-branch mixes.** A solution is a branch;
   mixing is a merge or `git restore --source`; a selector would be a second
@@ -471,22 +526,22 @@ wants a schema.
 
 `bd migrate` is the only conversion path. It keeps the classic-store path (bare
 `nodes/<id>.md` files become `<id>-<version>.md`) and converts a containment
-store in place:
+or front-matter-link store in place:
 
-1. Each `contains: [c0, c1, ...]` becomes
-   `links: [{to: c0, type: T}, {to: c1, type: T}, ...]` in the same order, and
-   the key is removed. `T` is `--type`, default `breaks_down`.
-2. Scalar `links` entries gain an explicit type, and every link list is sorted
-   by ref.
+1. Each `contains: [c0, c1, ...]` becomes a typed body token
+   `[[T, c0]]` in a trailing `## Links` section, in the same order, and the key
+   is removed. `T` is `--type`, default `breaks_down`.
+2. Front-matter `links` becomes one `- [[TYPE, REF]](TITLE)` line per edge,
+   sorted by ref; a retired scalar link gains an explicit type taken from the
+   target. Per-link `pinned`/`propagates` values move to the node's top-level
+   `freshness:` map. `symmetric` and `inverse` are dropped.
 3. Retired placement keys are stripped from every node (`band`, `subpath`,
    `layer`, `stage`, `order`) and from the ROOT node (`band_layout`,
    `band_order`). `section` stays as inert front matter and places nothing.
 4. `--dry-run` reports the plan; the default applies atomically. `--root` works.
 
-The same command also upgrades an already-migrated store, idempotently:
-`--symmetric TYPE` marks every link of a type as a symmetric master (dropping
-`propagates`/`pinned`), and `--inverse TYPE=TYPE2` marks it and names the
-derived opposite's type. There is no placement flag.
+There is no placement flag and no symmetry flag: the token carries only its
+type and ref.
 
 A store that still declares `contains` fails `bd check` with `contains-removed`
 until it is migrated. After migration `bd check` passes.
@@ -497,16 +552,17 @@ These are enforced or assumed:
 
 1. The filename is identity and version: every node file is `<id>-<version>.md`,
    version >= 1; a bare `<id>.md` is invalid.
-2. `links` and `ROOT` hold full `id-version` refs; a bare id is a CLI selector
-   resolved inside the selected view and is never written to data.
+2. Link tokens and `ROOT` hold full `id-version` refs; a bare id is a CLI
+   selector resolved inside the selected view and is never written to data.
 3. A view is the weakly connected component of its anchor over authored links.
    Membership is undirected; a node appears once at its minimum BFS distance.
-4. Direction is a label: `child`, `parent`, or `peer`. It orders ring 1 but never
-   filters membership.
+4. Direction is a label: `child` or `parent`. It orders ring 1 but never filters
+   membership.
 5. Cycles, back-edges, and reciprocal pairs are legal. A self-loop on one ref is
    refused by `bd link`.
-6. There is one edge relation: typed `links`. Multiple parents are legal. A
-   symmetric link is one authored master; its opposite is derived, never stored.
+6. There is one edge relation: typed body tokens. Multiple parents are legal,
+   and every node authors its own back-reference. No derived opposite exists;
+   only reversed in-edges are marked `[derived]`.
 7. No placement key exists in the model. `group`, `section`, `folder`, and
    `home` are inert front matter.
 8. Every link resolves in the store, and every authored link inside one view is
@@ -522,10 +578,17 @@ These are enforced or assumed:
     `<project>/bd_work/`, holding one view at a time; it is disposable and
     ignored. Read-only exports are separate and never a second work area. The
     active view is recorded in the generated `REFS.md`, not in extra state.
-15. Structural edits preserve body bytes and all unrelated front matter.
+15. Structural edits preserve body bytes and all unrelated front matter, except
+    the appended or removed token lines in a `## Links` section; `bd replace`
+    and `bd clone --subtree` rewrite token refs in place.
 16. `contains` is not data. A node that declares it is an error and is migrated,
     not interpreted.
-17. One master per symmetric relation; derived opposites never appear in a file.
+17. Front-matter `links` is not data either: a node that declares it is
+    `links-removed` and is migrated into body tokens.
+18. A cached token title is advisory. All rendering reads the live title; only
+    `bd check` compares the cache and warns `link-title-stale`.
+19. Freshness pins live in the `freshness:` map keyed by target ref; the pinned
+    body hash excludes reserved tokens and the `## Links` heading.
 
 ## 11. Known limits
 

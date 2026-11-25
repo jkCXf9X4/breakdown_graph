@@ -50,25 +50,26 @@ behaviour change and update the docs listed at the bottom.
   layout) are the only source of truth.
 - A filename is identity and version: `<id>-<version>.md`, version >= 1. There
   is no bare `<id>.md`; versions of one id are peers.
-- A ref is the full `id-version` (`5-1`, not `5`). `links` and `ROOT` hold full
-  refs only; a bare ref in data is a `check` error (`bare-ref`). A bare id on
-  the command line is a selector resolved inside the selected view; it is never
-  written to data.
-- There is one topology: typed `links`. In-edges are derived; a symmetric link
-  (`symmetric: true`, optional `inverse: TYPE`) is one authored master whose
-  opposite is derived at load, marked `[derived]`, and never stored.
-  `contains` is not data. A node that still declares it fails `bd check` with
-  `contains-removed`; `bd migrate` converts it.
+- A ref is the full `id-version` (`5-1`, not `5`). Link tokens and `ROOT` hold
+  full refs only; a bare ref in data is a `check` error (`bare-ref`). A bare id
+  on the command line is a selector resolved inside the selected view; it is
+  never written to data.
+- There is one topology: typed body tokens `[[TYPE, REF]]`, optionally with a
+  cached `(TITLE)`. In-edges are derived by reversing authored tokens; nothing
+  else is marked `[derived]`. A back-reference is an authored token in the other
+  node, with its own type. `contains` and front-matter `links` are not data: a
+  node that still declares either fails `bd check` (`contains-removed`,
+  `links-removed`); `bd migrate` converts it.
 - **A view is undirected.** It is the weakly connected component of its anchor
   over authored links, walked in both directions. Membership is not directional;
   multiple parents, reciprocal edges, back-edges, and cycles are legal.
 - **Distance is the ordering primitive.** It is the undirected BFS hop count
-  from the anchor. Ring 0 is the anchor; ring 1 is split into `children`,
-  `parents`, and `peers`; deeper rings are numbered. Every emitted list sorts by
-  an explicit key; the canonical key is
+  from the anchor. Ring 0 is the anchor; ring 1 is split into `children` and
+  `parents`; deeper rings are numbered. Every emitted list sorts by an explicit
+  key; the canonical key is
   `(distance, kind_rank, link type, id, version)` with
-  `child: 0, parent: 1, peer: 2`.
-- **Direction is a label, not a filter.** `→` child, `←` parent, `↔` peer.
+  `child: 0, parent: 1`.
+- **Direction is a label, not a filter.** `→` child, `←` parent.
   `bd out`/`bd in` stay directional; `bd graph`, `bd show`, `bd work`, and
   `bd find` use the whole component. `bd clone --subtree` copies the
   undirected neighbourhood (optionally rings `0..N` via `--depth`) and rewires
@@ -76,11 +77,13 @@ behaviour change and update the docs listed at the bottom.
 - **No placement keys.** There is no authored position, ordinal, or ROOT layout
   hint. `group`, `section`, `folder`, and `home` are ordinary inert front matter.
   Add no schema unless a project asks for one.
-- Front matter is otherwise arbitrary; only the identity/link/freshness keys
-  (`id`, `legacy`, `links`, `to`, `type`, `propagates`, `pinned`, `symmetric`,
-  `inverse`) are reserved. `name` and `title` are presentation metadata; `title`
-  supplies the template slug. A node's path in the work area is the store file's
-  basename unless `--path-template` overrides it.
+- Front matter is otherwise arbitrary; only the identity/freshness keys
+  (`id`, `legacy`, `freshness`) are reserved. The link assertion is the body
+  token grammar; `(TITLE)` is an advisory cache of the target's live title. Two
+  forms are legal: inline in prose, and `- [[TYPE, REF]](TITLE)` lines in a
+  trailing `## Links` section. `name` and `title` are presentation metadata;
+  `title` supplies the template slug. A node's path in the work area is the
+  store file's basename unless `--path-template` overrides it.
 - A self-loop on one ref is refused by `bd link`. A back-edge, a reciprocal
   edge, and a longer cycle are legal and produce no error.
 - Git owns the solution boundary: one branch/worktree per solution. The flat store
@@ -150,8 +153,8 @@ behaviour change and update the docs listed at the bottom.
 | Add a node | `bd new [--parent REF] [--type breaks_down] [--field K=V ...]`; no parent starts a new component |
 | Clone and replace a node | `bd clone OLD` then `bd replace OLD NEW` |
 | Replace a version in place | `bd replace OLD NEW` |
-| Add an edge | `bd link FROM TO --type supports [--propagates]`; cycles and back-edges legal, targets sorted |
-| Add a symmetric edge | `bd link FROM TO --type verifies --symmetric [--inverse verified_by]` |
+| Add an edge | `bd link FROM TO --type supports [--propagates]`; appends a token to the source, cycles and back-edges legal |
+| Add a back-reference | `bd link TO FROM --type supported_by`; author it on the other node, never a derived opposite |
 | Remove an edge | `bd unlink FROM TO [--type T]` |
 | Browse the graph | `bd graph [REF] [--depth N] [--distance A:B] [--type T]` |
 | Read a node and rings | `bd show REF+2 --max-chars 800` (rings 0..2) |
@@ -165,7 +168,7 @@ behaviour change and update the docs listed at the bottom.
 | Show versions | `bd versions ID`, `bd delete REF` |
 | Clone a node or component | `bd clone REF [--version N] [--subtree] [--depth N]` |
 | New solution | `bd solution new NAME` |
-| Convert an old store | `bd migrate [--dry-run] [--type T]` (`contains`, classic bare files, retired placement keys); add `--symmetric TYPE`, `--inverse TYPE=TYPE2` on an already-migrated store |
+| Convert an old store | `bd migrate [--dry-run] [--type T]` (`contains`, front-matter `links`, classic bare files, retired placement keys) |
 | Validate | `bd check`, `bd audit`, `bd stale` |
 | Read-only agent pack | `bd export context --view REF --out DIR` |
 
@@ -195,7 +198,7 @@ bd export context --view 1-1 --out /tmp/bd-context
 # structural edits (substitute real refs)
 bd new --parent 1-1 --type breaks_down --field title="A new claim"
 bd link FROM TO --type supports   # legal even as a back-edge or cycle
-bd link FROM TO --type verifies --symmetric --inverse verified_by
+bd link TO FROM --type supported_by   # back-reference: authored on the other node
 bd unlink FROM TO
 
 bd current --path           # print that directory; read-only, no build
@@ -210,7 +213,8 @@ bd solution list
 - CLI uses argparse. No new dependency without a clear reason.
 - Structural errors raise `BreakdownError`; check reporting uses `Issue`.
 - Preserve arbitrary front-matter fields and body bytes unless the command
-  explicitly rewrites them.
+  explicitly rewrites them. Token maintenance may add or remove `## Links`
+  lines; `bd replace` and `bd clone --subtree` rewrite token refs in place.
 
 ## Commit style
 
@@ -227,8 +231,8 @@ views, or generated output.
 - [`docs/DESIGN.md`](docs/DESIGN.md) — model, decisions, invariants, migration.
 - [`docs/BRANCHES-AND-VERSIONS.md`](docs/BRANCHES-AND-VERSIONS.md) — the
   branch/version separation contract.
-- [`docs/GRAPH.md`](docs/GRAPH.md) — the one topology: typed structural and
-  symmetric links, undirected views, rings, audit and export.
+- [`docs/GRAPH.md`](docs/GRAPH.md) — the one topology: typed body tokens,
+  undirected views, rings, audit, and export.
 - [`docs/GRAPH-LAYOUT.md`](docs/GRAPH-LAYOUT.md) — component membership, BFS
   rings, direction labels, tie-breaks, flat work area, worked examples, command
   map, and test map.
