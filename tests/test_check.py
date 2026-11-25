@@ -59,7 +59,7 @@ def test_filename_grammar_and_id_mismatch(write, tmp_path):
 
 def test_a_node_without_tokens_is_a_leaf(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="Root", tokens=["[[breaks_down, 2-1]]"], body="b\n")
+    _write_tokens(nodes, 1, title="Root", tokens=["[[2-1, breaks_down]]"], body="b\n")
     _write_tokens(nodes, 2, title="Two", tokens=[], body="b\n")
     result = check(tmp_path)
     assert result.ok
@@ -68,8 +68,8 @@ def test_a_node_without_tokens_is_a_leaf(write, tmp_path):
 
 def test_dangling_token_target_is_an_error(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="Root", tokens=["[[breaks_down, 2-1]]"], body="b\n")
-    _write_tokens(nodes, 2, title="Two", tokens=["[[serves, 9-1]]"], body="b\n")
+    _write_tokens(nodes, 1, title="Root", tokens=["[[2-1, breaks_down]]"], body="b\n")
+    _write_tokens(nodes, 2, title="Two", tokens=["[[9-1, serves]]"], body="b\n")
     result = check(tmp_path)
     assert any(issue.code == "graph-dangling-link" for issue in result.errors)
 
@@ -80,11 +80,11 @@ def test_freshness_warnings(write, tmp_path, pin):
         nodes,
         1,
         title="Root",
-        tokens=["[[breaks_down, 2-1]]", "[[breaks_down, 3-1]]"],
+        tokens=["[[2-1, breaks_down]]", "[[3-1, breaks_down]]"],
         body="b\n",
     )
     _write_tokens(nodes, 2, title="Two", tokens=[], body="b\n")
-    _write_tokens(nodes, 3, title="Three", tokens=["[[serves, 2-1]]"], body="b\n")
+    _write_tokens(nodes, 3, title="Three", tokens=["[[2-1, serves]]"], body="b\n")
     _set_freshness(nodes, "3-1", {"2-1": {"pinned": pin("old\n")}})
     result = check(tmp_path)
     assert any(issue.code == "stale-link" for issue in result.warnings)
@@ -96,7 +96,7 @@ def test_home_keys_are_inert_arbitrary_front_matter(write, tmp_path):
         nodes,
         1,
         title="Root",
-        tokens=["[[breaks_down, 2-1]]", "[[breaks_down, 3-1]]"],
+        tokens=["[[2-1, breaks_down]]", "[[3-1, breaks_down]]"],
         body="b\n",
         home="same/place.md",
     )
@@ -111,14 +111,14 @@ def test_home_keys_are_inert_arbitrary_front_matter(write, tmp_path):
 
 def test_untracked_token_and_oversize_warning(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="Root", tokens=["[[breaks_down, 2-1]]"], body="b\n")
-    _write_tokens(nodes, 2, title="Two", tokens=["[[supports, 3-1]]"], body="b\n")
+    _write_tokens(nodes, 1, title="Root", tokens=["[[2-1, breaks_down]]"], body="b\n")
+    _write_tokens(nodes, 2, title="Two", tokens=["[[3-1, supports]]"], body="b\n")
     _write_tokens(nodes, 3, title="Three", tokens=[], body="b\n")
     _set_freshness(nodes, "2-1", {"3-1": {"propagates": True}})
     result = check(tmp_path)
     assert any(issue.code == "untracked-link" for issue in result.warnings)
 
-    _write_tokens(nodes, 2, title="Two", tokens=["[[supports, 3-1]]"], body="line\n" * 121)
+    _write_tokens(nodes, 2, title="Two", tokens=["[[3-1, supports]]"], body="line\n" * 121)
     _set_freshness(nodes, "2-1", {"3-1": {"propagates": True}})
     result = check(tmp_path)
     assert any(issue.code == "oversize" for issue in result.warnings)
@@ -151,11 +151,11 @@ def test_multiple_parents_appear_once_in_the_view(write, tmp_path):
         nodes,
         1,
         title="Root",
-        tokens=["[[breaks_down, 2-1]]", "[[breaks_down, 3-1]]"],
+        tokens=["[[2-1, breaks_down]]", "[[3-1, breaks_down]]"],
         body="b\n",
     )
-    _write_tokens(nodes, 2, title="Two", tokens=["[[supports, 4-1]]"], body="b\n")
-    _write_tokens(nodes, 3, title="Three", tokens=["[[supports, 4-1]]"], body="b\n")
+    _write_tokens(nodes, 2, title="Two", tokens=["[[4-1, supports]]"], body="b\n")
+    _write_tokens(nodes, 3, title="Three", tokens=["[[4-1, supports]]"], body="b\n")
     _write_tokens(nodes, 4, title="Four", tokens=[], body="b\n")
     result = check(tmp_path)
     assert result.ok
@@ -170,7 +170,7 @@ def test_view_with_two_versions_of_one_id_warns(write, tmp_path):
         nodes,
         1,
         title="Root",
-        tokens=["[[breaks_down, 2-1]]", "[[breaks_down, 2-2]]"],
+        tokens=["[[2-1, breaks_down]]", "[[2-2, breaks_down]]"],
         body="b\n",
     )
     _write_tokens(nodes, 2, title="Two", tokens=[], body="b\n")
@@ -184,7 +184,7 @@ def test_view_with_two_versions_of_one_id_warns(write, tmp_path):
 
 def test_default_root_is_lowest_id_version(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 5, title="Five", tokens=["[[breaks_down, 6-1]]"], body="b\n")
+    _write_tokens(nodes, 5, title="Five", tokens=["[[6-1, breaks_down]]"], body="b\n")
     _write_tokens(nodes, 6, title="Six", tokens=[], body="b\n")
     result = check(tmp_path)
     assert result.ok
@@ -194,7 +194,7 @@ def test_default_root_is_lowest_id_version(write, tmp_path):
 
 def test_default_root_is_the_first_component_representative(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 2, title="Two", tokens=["[[breaks_down, 3-1]]"], body="b\n")
+    _write_tokens(nodes, 2, title="Two", tokens=["[[3-1, breaks_down]]"], body="b\n")
     _write_tokens(nodes, 3, title="Three", tokens=[], body="b\n")
     _write_tokens(nodes, 1, title="One v2", tokens=[], body="b\n", version=2)
     result = check(tmp_path)
@@ -211,9 +211,9 @@ def test_default_root_is_the_first_component_representative(write, tmp_path):
 
 def test_declared_root_wins_over_the_representative(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="One", tokens=["[[breaks_down, 2-1]]"], body="b\n")
+    _write_tokens(nodes, 1, title="One", tokens=["[[2-1, breaks_down]]"], body="b\n")
     _write_tokens(nodes, 2, title="Two", tokens=[], body="b\n")
-    _write_tokens(nodes, 1, title="One v4", tokens=["[[breaks_down, 2-1]]"], body="b\n", version=4)
+    _write_tokens(nodes, 1, title="One v4", tokens=["[[2-1, breaks_down]]"], body="b\n", version=4)
     (tmp_path / "ROOT").write_text("1-4\n", encoding="utf-8")
     result = check(tmp_path)
     assert result.ok
@@ -243,7 +243,7 @@ def test_bare_root_ref_is_reported(write, tmp_path):
 
 def test_node_outside_the_anchor_component_warns_as_graph_orphan(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="Root", tokens=["[[breaks_down, 2-1]]"], body="b\n")
+    _write_tokens(nodes, 1, title="Root", tokens=["[[2-1, breaks_down]]"], body="b\n")
     _write_tokens(nodes, 2, title="Two", tokens=[], body="b\n")
     _write_tokens(nodes, 9, title="Nine", tokens=[], body="b\n")
     result = check(tmp_path)
@@ -255,9 +255,9 @@ def test_node_outside_the_anchor_component_warns_as_graph_orphan(write, tmp_path
 
 def test_token_target_joins_the_component(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="Root", tokens=["[[breaks_down, 2-1]]"], body="b\n")
-    _write_tokens(nodes, 2, title="Two", tokens=["[[history, 10-1]]"], body="b\n")
-    _write_tokens(nodes, 10, title="Decisions", tokens=["[[supports, 11-1]]"], body="b\n")
+    _write_tokens(nodes, 1, title="Root", tokens=["[[2-1, breaks_down]]"], body="b\n")
+    _write_tokens(nodes, 2, title="Two", tokens=["[[10-1, history]]"], body="b\n")
+    _write_tokens(nodes, 10, title="Decisions", tokens=["[[11-1, supports]]"], body="b\n")
     _write_tokens(nodes, 11, title="Eleven", tokens=[], body="b\n")
     result = check(tmp_path)
     assert result.ok
@@ -266,9 +266,9 @@ def test_token_target_joins_the_component(write, tmp_path):
 
 def test_a_separate_component_is_not_in_the_view(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="Root", tokens=["[[breaks_down, 2-1]]"], body="b\n")
+    _write_tokens(nodes, 1, title="Root", tokens=["[[2-1, breaks_down]]"], body="b\n")
     _write_tokens(nodes, 2, title="Two", tokens=[], body="b\n")
-    _write_tokens(nodes, 3, title="Three", tokens=["[[supports, 4-1]]"], body="b\n")
+    _write_tokens(nodes, 3, title="Three", tokens=["[[4-1, supports]]"], body="b\n")
     _write_tokens(nodes, 4, title="Four", tokens=[], body="b\n")
     view = load_view(tmp_path, "1-1")
     assert set(view.nodes) == {"1-1", "2-1"}
@@ -276,9 +276,9 @@ def test_a_separate_component_is_not_in_the_view(write, tmp_path):
 
 def test_cycle_is_legal_and_the_view_is_the_whole_component(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="One", tokens=["[[supports, 2-1]]"], body="b\n")
-    _write_tokens(nodes, 2, title="Two", tokens=["[[supports, 3-1]]"], body="b\n")
-    _write_tokens(nodes, 3, title="Three", tokens=["[[supports, 1-1]]"], body="b\n")
+    _write_tokens(nodes, 1, title="One", tokens=["[[2-1, supports]]"], body="b\n")
+    _write_tokens(nodes, 2, title="Two", tokens=["[[3-1, supports]]"], body="b\n")
+    _write_tokens(nodes, 3, title="Three", tokens=["[[1-1, supports]]"], body="b\n")
     result = check(tmp_path)
     assert result.ok
     assert set(load_view(tmp_path, "1-1").nodes) == {"1-1", "2-1", "3-1"}
@@ -286,7 +286,7 @@ def test_cycle_is_legal_and_the_view_is_the_whole_component(write, tmp_path):
 
 def test_dangling_token_target_still_errors(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="Root", tokens=["[[supports, 99-1]]"], body="b\n")
+    _write_tokens(nodes, 1, title="Root", tokens=["[[99-1, supports]]"], body="b\n")
     result = check(tmp_path)
     assert any(issue.code == "graph-dangling-link" for issue in result.errors)
 
@@ -310,7 +310,7 @@ def test_band_keys_are_inert_front_matter(write, tmp_path):
 
 def test_bare_id_in_a_token_is_malformed_and_excluded(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="Root", tokens=["[[x, 2]]"], body="b\n")
+    _write_tokens(nodes, 1, title="Root", tokens=["[[2, x]]"], body="b\n")
     _write_tokens(nodes, 2, title="Two", tokens=[], body="b\n")
     result = check(tmp_path)
     assert any(issue.code == "inline-malformed" for issue in result.errors)
@@ -336,7 +336,37 @@ def test_fm_links_key_is_an_error(write, tmp_path):
 
 def test_cached_title_matches_the_live_title(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="One", tokens=["[[x, 2-1]](Two)"], body="b\n")
+    _write_tokens(nodes, 1, title="One", tokens=["(Two)[[2-1, x]]"], body="b\n")
     _write_tokens(nodes, 2, title="Two", tokens=[], body="b\n")
     assert check(tmp_path).ok
-    assert token_title("[[x, 2-1]](Two)") == "Two"
+    assert token_title("(Two)[[2-1, x]]") == "Two"
+
+
+def test_missing_cached_title_is_a_warning(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    _write_tokens(nodes, 1, title="One", tokens=["[[2-1, x]]"], body="b\n")
+    _write_tokens(nodes, 2, title="Two", tokens=[], body="b\n")
+    result = check(tmp_path)
+    assert result.ok
+    issues = [
+        issue for issue in result.warnings if issue.code == "inline-title-missing"
+    ]
+    assert len(issues) == 1
+    assert issues[0].line == 2
+
+
+def test_cached_title_goes_stale_after_the_target_is_retitled(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    _write_tokens(nodes, 1, title="One", tokens=["(Child)[[2-1, x]]"], body="b\n")
+    _write_tokens(nodes, 2, title="Child", tokens=[], body="b\n")
+    assert not any(
+        issue.code == "link-title-stale" for issue in check(tmp_path).issues
+    )
+
+    _write_tokens(nodes, 2, title="Renamed", tokens=[], body="b\n")
+    result = check(tmp_path)
+    stale = [
+        issue for issue in result.warnings if issue.code == "link-title-stale"
+    ]
+    assert len(stale) == 1
+    assert stale[0].line == 2

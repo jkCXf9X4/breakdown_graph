@@ -11,7 +11,11 @@ from bd_tree.navigate import render_find, render_path, render_show
 
 
 def _write_tokens(nodes, node_id, *, title, tokens, body, **fields):
-    """One node whose body declares its links directly as tokens."""
+    """One node whose body declares its links directly as bare tokens.
+
+    The cached titles are then generated for the whole store, as the tool
+    does: fixtures never hand-write a title cache.
+    """
     nodes.mkdir(parents=True, exist_ok=True)
     ref = f"{node_id}-1"
     data = {"id": node_id, "title": title, **fields}
@@ -21,6 +25,7 @@ def _write_tokens(nodes, node_id, *, title, tokens, body, **fields):
     (nodes / f"{ref}.md").write_text(
         render_document(data, text), encoding="utf-8", newline=""
     )
+    api.retitle(nodes.parent)
 
 
 def _graph(write, tmp_path):
@@ -29,21 +34,21 @@ def _graph(write, tmp_path):
         nodes,
         1,
         title="Root",
-        tokens=["[[breaks_down, 2-1]]", "[[breaks_down, 3-1]]"],
+        tokens=["[[2-1, breaks_down]]", "[[3-1, breaks_down]]"],
         body="# Root\n\nThe intent.\n",
     )
     _write_tokens(
         nodes,
         2,
         title="Left",
-        tokens=["[[supports, 4-1]]"],
+        tokens=["[[4-1, supports]]"],
         body="left body\n",
     )
     _write_tokens(
         nodes,
         3,
         title="Right",
-        tokens=["[[supports, 4-1]]"],
+        tokens=["[[4-1, supports]]"],
         body="right body\n",
     )
     _write_tokens(nodes, 4, title="Claim", tokens=[], body="needle claim body\n")
@@ -55,7 +60,6 @@ def _graph(write, tmp_path):
 
 def test_graph_model_children_parents_roots_and_anchor(write, tmp_path):
     store = _graph(write, tmp_path)
-    assert store.model == "graph"
     assert store.children("1-1") == ["2-1", "3-1"]
     assert store.children("4-1") == []
     assert store.parents("4-1") == ["2-1", "3-1"]
@@ -65,19 +69,10 @@ def test_graph_model_children_parents_roots_and_anchor(write, tmp_path):
     assert api.load(tmp_path).root_ref == "1-1"
 
 
-def test_band_keys_are_inert_and_every_store_is_the_graph_model(write, tmp_path):
-    nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="Root", tokens=["[[x, 2-1]]"], body="b\n", band="a", order=0)
-    _write_tokens(nodes, 2, title="Two", tokens=[], body="b\n", band="b", order=0)
-    store = load(tmp_path)
-    assert store.model == "graph"
-    assert api.load_view(tmp_path, "1-1").model == "graph"
-
-
 def test_anchor_is_the_lowest_component_member_not_the_stage(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="Late", tokens=["[[x, 3-1]]"], body="b\n", stage=2)
-    _write_tokens(nodes, 2, title="Early", tokens=["[[x, 3-1]]"], body="b\n", stage=0)
+    _write_tokens(nodes, 1, title="Late", tokens=["[[3-1, x]]"], body="b\n", stage=2)
+    _write_tokens(nodes, 2, title="Early", tokens=["[[3-1, x]]"], body="b\n", stage=0)
     _write_tokens(nodes, 3, title="Leaf", tokens=[], body="b\n", stage=3)
     store = load(tmp_path)
     assert [node.ref for node in store.topology_roots()] == ["1-1"]
@@ -86,8 +81,8 @@ def test_anchor_is_the_lowest_component_member_not_the_stage(write, tmp_path):
 
 def test_default_anchor_agrees_with_store_root(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="Late", tokens=["[[x, 3-1]]"], body="b\n", stage=2)
-    _write_tokens(nodes, 2, title="Early", tokens=["[[x, 3-1]]"], body="b\n", stage=0)
+    _write_tokens(nodes, 1, title="Late", tokens=["[[3-1, x]]"], body="b\n", stage=2)
+    _write_tokens(nodes, 2, title="Early", tokens=["[[3-1, x]]"], body="b\n", stage=0)
     _write_tokens(nodes, 3, title="Leaf", tokens=[], body="b\n", stage=3)
     store = load(tmp_path)
     graph = build_graph(store)
@@ -97,10 +92,10 @@ def test_default_anchor_agrees_with_store_root(write, tmp_path):
 
 def test_graph_roots_lists_one_representative_per_component(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="One", tokens=["[[x, 2-1]]"], body="b\n")
+    _write_tokens(nodes, 1, title="One", tokens=["[[2-1, x]]"], body="b\n")
     _write_tokens(nodes, 2, title="Two", tokens=[], body="b\n")
     _write_tokens(nodes, 7, title="Seven", tokens=[], body="b\n")
-    _write_tokens(nodes, 5, title="Five", tokens=["[[x, 6-1]]"], body="b\n")
+    _write_tokens(nodes, 5, title="Five", tokens=["[[6-1, x]]"], body="b\n")
     _write_tokens(nodes, 6, title="Six", tokens=[], body="b\n")
     graph = build_graph(tmp_path)
     assert graph.roots == ["1-1", "5-1", "7-1"]
@@ -113,7 +108,6 @@ def test_graph_roots_lists_one_representative_per_component(write, tmp_path):
 def test_graph_view_is_the_weak_component_with_distances(write, tmp_path):
     _graph(write, tmp_path)
     view = api.load_view(tmp_path, "1-1")
-    assert view.model == "graph"
     assert set(view.nodes) == {"1-1", "2-1", "3-1", "4-1"}
     assert list(view.nodes).count("4-1") == 1
     assert view.distance == {"1-1": 0, "2-1": 1, "3-1": 1, "4-1": 2}
@@ -200,8 +194,8 @@ def test_graph_check_is_clean_on_a_connected_store(write, tmp_path):
 
 def test_graph_check_accepts_a_cycle(write, tmp_path, monkeypatch, capsys):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="One", tokens=["[[x, 2-1]]"], body="b\n")
-    _write_tokens(nodes, 2, title="Two", tokens=["[[x, 1-1]]"], body="b\n")
+    _write_tokens(nodes, 1, title="One", tokens=["[[2-1, x]]"], body="b\n")
+    _write_tokens(nodes, 2, title="Two", tokens=["[[1-1, x]]"], body="b\n")
     result = api.check(tmp_path)
     assert result.ok
     monkeypatch.chdir(tmp_path)
@@ -211,7 +205,7 @@ def test_graph_check_accepts_a_cycle(write, tmp_path, monkeypatch, capsys):
 
 def test_graph_check_accepts_a_back_edge(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="One", tokens=["[[x, 2-1]]"], body="b\n", stage=1)
+    _write_tokens(nodes, 1, title="One", tokens=["[[2-1, x]]"], body="b\n", stage=1)
     _write_tokens(nodes, 2, title="Two", tokens=[], body="b\n", stage=1)
     result = api.check(tmp_path)
     assert result.ok

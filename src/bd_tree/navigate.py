@@ -296,11 +296,6 @@ def _graph_link_footer(store: Store, printed: Iterable[str]) -> str:
     return "links:\n" + "\n".join(rows)
 
 
-def _link_footer(store: Store, printed: Iterable[str]) -> str:
-    """Authored out-edges and derived in-edges for printed nodes."""
-    return _graph_link_footer(store, printed)
-
-
 def render_show(
     store: Store,
     ref: str,
@@ -336,7 +331,7 @@ def render_show(
                 parts.append(body)
         blocks.append("\n".join(parts))
     if links:
-        footer = _link_footer(store, printed)
+        footer = _graph_link_footer(store, printed)
         if footer:
             blocks.append(footer)
     return "\n\n".join(blocks)

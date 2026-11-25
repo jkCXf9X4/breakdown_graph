@@ -4,7 +4,7 @@ Every node lives at ``nodes/<id>-<version>.md``.  The filename is the only
 identity and the only version marker; there is no bare ``<id>.md`` file and no
 privileged "main" version.  All versions of one logical id are peers.
 
-Edges are declared as reserved ``[[TYPE, REF]]`` tokens in node bodies and
+Edges are declared as reserved ``[[REF, TYPE]]`` tokens in node bodies and
 nothing else; front-matter ``links:`` is retired and reported as
 ``links-removed``.  Freshness pins live in the ``freshness:`` front-matter map
 keyed by target ref.  A view is the weakly connected component over those
@@ -345,7 +345,7 @@ def _parse_node(
             "error",
             "links-removed",
             "node still declares 'links' in front matter; link declarations "
-            "moved into node bodies as [[TYPE, REF]] tokens, run `bd migrate`",
+            "moved into node bodies as [[REF, TYPE]] tokens, run `bd migrate`",
             node=ref,
             path=path,
             root=root,
@@ -369,6 +369,18 @@ def _parse_node(
     seen: dict[tuple[str, str], int] = {}
     raws = raw_inline_tokens(doc.body)
     for index, found in enumerate(inline_links):
+        if found.title is None:
+            _issue(
+                issues,
+                "warning",
+                "inline-title-missing",
+                f"inline link {found.type} to {found.to} has no cached title; "
+                "tooling fills it",
+                node=ref,
+                path=path,
+                root=root,
+                line=found.line,
+            )
         if found.to != ref and not is_full_ref(found.to):
             _issue(
                 issues,

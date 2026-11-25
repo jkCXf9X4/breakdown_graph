@@ -4,13 +4,17 @@ Run `bd <command> --help` for the full flag list. Exit codes: 0 success, 1 check
 or navigation failure, 2 structural refusal.
 
 One topology: nodes joined by typed link tokens in their bodies. A token is
-`[[TYPE, REF]]`, optionally with a cached `(TITLE)`. In-edges are derived by
-reversing authored tokens; a back-reference is an authored token in the other
-node, not a derived opposite. A view is the weakly connected component of its
-anchor, ordered by undirected BFS distance. Direction is a label (`child`,
-`parent`); cycles and back-edges are legal. There is no `contains` key and no
-front-matter `links`; a node that still declares either fails `bd check`
-(`contains-removed`, `links-removed`) and is converted by `bd migrate`.
+`(TITLE)[[REF, TYPE]]`, with the cached title as a prefix (optional spaces
+between `)` and `[[`); authors write the bare `[[REF, TYPE]]`, and the tool
+fills the title. A bare token is valid but `bd check` warns
+`inline-title-missing`; a mismatch warns `link-title-stale`, and `bd retitle`
+regenerates the cache. In-edges are derived by reversing authored tokens; a
+back-reference is an authored token in the other node, not a derived opposite.
+A view is the weakly connected component of its anchor, ordered by undirected
+BFS distance. Direction is a label (`child`, `parent`); cycles and back-edges
+are legal. There is no `contains` key and no front-matter `links`; a node that
+still declares either fails `bd check` (`contains-removed`, `links-removed`)
+and is converted by `bd migrate`.
 
 ## Environment
 
@@ -69,13 +73,19 @@ links and BFS distance. It seeds `title` and `summary` as empty placeholders;
 `bd migrate` renames every bare `nodes/<id>.md` to the next free version, and
 converts the old edge shapes: each `contains` list becomes ordered typed body
 tokens, and front-matter `links` moves into a trailing `## Links` section as
-sorted `- [[TYPE, REF]](TITLE)` lines. Retired scalar links gain an explicit
-type; `symmetric`/`inverse` are dropped; per-link `pinned`/`propagates` values
-move to the `freshness:` map. `--type` chooses the converted containment edge
-type (default `breaks_down`); `--dry-run` prints the plan without touching disk.
-It also strips the retired placement keys (`band`, `subpath`, `layer`, `stage`,
-`order`, and the ROOT `band_layout` and `band_order`) while leaving `section` as
-inert front matter. Running it again is idempotent.
+sorted `- (TITLE)[[REF, TYPE]]` lines. Legacy suffix tokens
+`[[TYPE, REF]](TITLE)` or `[[REF, TYPE]](TITLE)` become the prefix form
+`(TITLE)[[REF, TYPE]]`; tokens in either component order are normalized to
+ref-first, and missing titles are filled.
+Retired scalar links gain an explicit type; `symmetric`/`inverse` are dropped;
+per-link `pinned`/`propagates` values move to the `freshness:` map. `--type`
+chooses the converted containment edge type (default `breaks_down`);
+`--dry-run` prints the plan without touching disk. It also strips the retired
+placement keys (`band`, `subpath`, `layer`, `stage`, `order`, and the ROOT
+`band_layout` and `band_order`) while leaving `section` as inert front matter.
+Running it again is idempotent. `bd retitle` is the explicit post-migration
+refresh: it regenerates cached titles in the whole store or a view from each
+target's live title.
 
 ## Inspect
 
@@ -126,18 +136,24 @@ bd audit [REF]
 ```sh
 bd link FROM TO --type TYPE [--propagates]
 bd unlink FROM TO [--type TYPE]
+bd retitle [REF] [--view REF] [--dry-run]
 ```
 
-- `link` appends `- [[TYPE, TO]](TITLE)` to the source's `## Links` section in
-  call order; existing lines are untouched. Keep that section in ascending
-  target order (`graph-unsorted-links` warns otherwise). Back-edges, reciprocal
-  edges, and cycles are legal. A self-loop on the same ref is refused, as is an
-  identical edge to the same target with the same type. To make a
-  back-reference, link from the other node; there is no symmetric flag.
+- `link` appends `- (TITLE)[[TO, TYPE]]` to the source's `## Links` section in
+  call order, writing the target's live title; existing lines are untouched.
+  Keep that section in ascending target order (`graph-unsorted-links` warns
+  otherwise). Back-edges, reciprocal edges, and cycles are legal. A self-loop
+  on the same ref is refused, as is an identical edge to the same target with
+  the same type. To make a back-reference, link from the other node; there is
+  no symmetric flag.
 - `link --propagates` records the edge in the source's `freshness:` map and pins
   the target body hash immediately.
 - `link`, `unlink`, and `new` accept a bare id as a selector and resolve it in
   the selected view; they always write full refs.
+- `retitle` regenerates every cached title in scope: the whole store by
+  default, or the view of `REF`/`--view`. Unresolved targets are left
+  untouched. Use `--dry-run` to print `would retitle N tokens in M nodes`
+  without writing; the real run prints `retitled N tokens in M nodes`.
 - Structural commands preserve body bytes and unrelated front matter, except the
   token lines they append or remove.
 - `unlink` removes matching token lines; any reverse edge is only a `bd in`
@@ -257,8 +273,9 @@ rewrites each cloned node's token refs; edges whose targets were cloned are
 rewired to the copies, while a depth prefix keeps edges that leave the prefix
 pointing at the originals. The original stays untouched; `--depth N` narrows the
 clone to rings `0..N` and implies `--subtree`. `--version` cannot be combined with `--subtree` or `--depth`.
-`bd replace OLD NEW` is the separate wiring step: it repoints every inbound link,
-or repoints `ROOT` when OLD is the store root; OLD's file stays as a peer. Clone
+`bd replace OLD NEW` is the separate wiring step: it repoints every inbound
+link and sets the rewritten tokens' cached title to NEW's live title, or
+repoints `ROOT` when OLD is the store root; OLD's file stays as a peer. Clone
 and swap in one logical flow with `bd clone REF --subtree` then
 `bd replace REF <printed new root ref>`. If OLD is outside the default view,
 `bd replace` errors. Several parents are legal; repoint the edge whose peer you
@@ -341,9 +358,10 @@ python3 -m pytest -q
 | `bd edit REF` errors | The ref is not in the active view. Switch with `bd work REF` or pass a ref that is present. |
 | `root-ref-missing` / `invalid-root` | The `ROOT` file names an absent ref or is malformed. Fix it, or run `bd root --clear`. |
 | `contains-removed` / `links-removed` | The store still declares `contains` or front-matter `links`. Run `bd migrate --dry-run` then `bd migrate`. |
-| `inline-malformed` | A `[[...]]` fragment is not `[[TYPE, REF]]` with a full ref. Fix the token; use `\[[` to show one literally. |
+| `inline-malformed` | A `[[...]]` fragment is not `[[REF, TYPE]]` with a full ref. Fix the token; use `\[[` to show one literally. |
 | `inline-duplicate` | One node declares the same type and target twice. Remove one with `bd unlink`. |
-| `link-title-stale` | A cached `(TITLE)` differs from the target's live title. Update or drop the parenthetical; rendering already uses the live title. |
+| `inline-title-missing` | A token is bare. Run `bd retitle` to fill the cached title; do not hand-write it. |
+| `link-title-stale` | A cached `(TITLE)` differs from the target's live title. Run `bd retitle`; rendering already uses the live title. |
 | `invalid-freshness` | The `freshness:` map must key full target refs to a mapping with string `pinned` and boolean `propagates`. |
 | `bare-ref` / `invalid-ref` in data | `ROOT` needs a full `id-version` ref; a bare ref inside a token is `inline-malformed`. A classic bare-file store converts once with `bd migrate`. |
 | `graph-dangling-link` | A link targets a missing node. Remove it or restore the target. |

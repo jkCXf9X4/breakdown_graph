@@ -153,7 +153,7 @@ def test_target_hash_ignores_appended_tokens(write, tmp_path, pin):
 
     # An appended token in the target's Links section is stripped from the
     # target's body hash, so the dependent stays fresh.
-    add_token(nodes, "2-1", "[[supports, 3-1]]")
+    add_token(nodes, "2-1", "[[3-1, supports]]")
     assert stale(tmp_path, "1-1") == []
 
 

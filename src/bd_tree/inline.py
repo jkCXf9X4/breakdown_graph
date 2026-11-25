@@ -3,12 +3,20 @@
 Link declarations live in node bodies as reserved tokens, not in front
 matter.  The token grammar is::
 
-    [[ TYPE , REF ]]  optionally followed by zero or more spaces then ( TITLE )
+    ( TITLE )[ REF , TYPE ]  or  [ REF , TYPE ]
 
-``TYPE`` is ``[A-Za-z][A-Za-z0-9_-]*``; ``REF`` is a full ref only,
-``[0-9]+-[0-9]+``; at most one optional space may sit on each side of the
-comma, and none after ``[[`` or before ``]]``.  ``TITLE`` is any run of
-characters except ``)`` and newline and must be non-empty.
+The cached title is a *prefix*: zero or more spaces may sit between ``)`` and
+``[[``, the title is non-empty, and it excludes ``)`` and newline.  The title is
+tool-generated cache, not authored content; an author writes only the bare
+token and tooling fills or refreshes the title.
+
+``REF`` comes first and is a full ref only, ``[0-9]+-[0-9]+``; ``TYPE`` is
+``[A-Za-z][A-Za-z0-9_-]*``; at most one optional space may sit on each side of
+the comma, and none after ``[[`` or before ``]]``.
+
+The legacy suffix form ``[[TYPE, REF]](TITLE)`` (and its ref-first variant) is
+*not* a token form: ``(TITLE)`` stays prose and a type-first bracket is an
+anomaly (``bd migrate`` normalizes older stores).
 
 Ignored (neither links nor errors): fenced code blocks (backticks and tildes,
 fence of three or more characters, with or without a language), inline code
@@ -20,29 +28,34 @@ reason ``unterminated``; any other ``[[]]``-shaped fragment that fails the
 grammar is an anomaly with a short reason.  Code spans, fences and escapes
 never produce anomalies.
 
-The writer helpers (``append_token``, ``remove_token``, ``repoint_token``) are
-the write unit's interface for maintaining the trailing ``## Links`` section.
+The writer helpers (``append_token``, ``remove_token``, ``repoint_token``,
+``retitle_tokens``) are the write unit's interface for maintaining tokens and
+the trailing ``## Links`` section.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 _TYPE = r"[A-Za-z][A-Za-z0-9_-]*"
 _REF = r"[0-9]+-[0-9]+"
 
-# The full fragment between the brackets: `TYPE ?,( ?)REF`.
-_FRAGMENT = re.compile(rf"(?P<type>{_TYPE}) ?,( ?)(?P<ref>{_REF})\Z")
-# A token list line maintained under `## Links`.
+# The full fragment between the brackets: `REF ?,( ?)TYPE`.
+_FRAGMENT = re.compile(rf"(?P<ref>{_REF}) ?,( ?)(?P<type>{_TYPE})\Z")
+# A token list line maintained under `## Links`: title is an optional prefix.
 _LIST_TOKEN = re.compile(
-    rf"^- \[\[(?P<type>{_TYPE}) ?,( ?)(?P<ref>{_REF})\]\]"
-    r"(?: *\([^)]*\))?$"
+    rf"^[-*+][ \t]+(?:\([^)\n]*\)[ \t]*)?"
+    rf"\[\[(?P<ref>{_REF}) ?,( ?)(?P<type>{_TYPE})\]\]"
+    r"[ \t]*$"
 )
 _OPEN_BRACKETS = re.compile(r"\[\[")
 _BACKTICK_RUN = re.compile(r"`+")
 _FENCE_OPEN = re.compile(r"^( {0,3})(`{3,}|~{3,})(.*)$", re.DOTALL)
 _HEADING_12 = re.compile(r"^ {0,3}#{1,2}(\s|$)")
+# A cached title prefix ending exactly where `[[` begins: `(TITLE)` + spaces.
+_PREFIX = re.compile(r"\((?P<title>[^)\n]*)\)[ ]*\Z")
 
 
 @dataclass(frozen=True)
@@ -72,7 +85,7 @@ class _Match:
     type: str
     ref: str
     title: str | None
-    start: int  # absolute body offset of the opening ``[[``
+    start: int  # absolute body offset of the token start (title prefix included)
     end: int  # absolute body offset past the last consumed character
     raw: str  # the literal source substring of the token
 
@@ -117,18 +130,38 @@ def _escaped_at(line: str, index: int) -> bool:
     return count % 2 == 1
 
 
+def _prefix_title(line: str, index: int) -> tuple[str | None, int]:
+    """The cached title ending right before ``index`` and its token start.
+
+    Returns ``(None, index)`` when there is no ``(TITLE)`` prefix.  The title
+    itself may be empty here; the caller reports that as ``empty title``.
+    """
+    match = _PREFIX.search(line[:index])
+    if match is None:
+        return None, index
+    return match.group("title"), match.start()
+
+
 def _fragment_reason(fragment: str) -> str:
-    """A short reason for a fragment that failed `TYPE ?,( ?)REF`."""
+    """A short reason for a fragment that failed `REF ?,( ?)TYPE`."""
     if fragment == "":
         return "empty token"
     if "," not in fragment:
         return "missing ','"
-    type_part, _, ref_part = fragment.partition(",")
-    if not re.fullmatch(rf"{_TYPE} ?", type_part):
+    ref_part, _, type_part = fragment.partition(",")
+    ref_text = ref_part.strip()
+    type_text = type_part.strip()
+    if not re.fullmatch(rf"{_REF} ?", ref_part):
+        if re.fullmatch(_TYPE, ref_text) and re.fullmatch(_REF, type_text):
+            return "reversed components"
+        if re.fullmatch(r"[0-9]+", ref_text):
+            return "bare ref"
+        if re.fullmatch(_REF, ref_text):
+            return "bad spacing"
+        return "invalid ref"
+    if not re.fullmatch(_TYPE, type_text):
         return "invalid type"
-    if re.fullmatch(r"[0-9]+", ref_part.strip()):
-        return "bare ref"
-    return "invalid ref"
+    return "bad spacing"
 
 
 def _scan_body(body: str) -> tuple[list[_Match], list[InlineAnomaly]]:
@@ -164,52 +197,35 @@ def _scan_body(body: str) -> tuple[list[_Match], list[InlineAnomaly]]:
                 continue
             if any(start <= index < end for start, end in regions):
                 continue
+            title, start = _prefix_title(line, index)
             close = line.find("]]", cursor)
             while close != -1 and any(start <= close < end for start, end in regions):
                 close = line.find("]]", close + 2)
             if close == -1:
-                anomalies.append(InlineAnomaly(line_number, index + 1, "unterminated"))
+                anomalies.append(InlineAnomaly(line_number, start + 1, "unterminated"))
                 continue
             fragment = line[cursor:close]
             parsed = _FRAGMENT.fullmatch(fragment)
             if parsed is None:
                 anomalies.append(
-                    InlineAnomaly(
-                        line_number, index + 1, _fragment_reason(fragment)
-                    )
+                    InlineAnomaly(line_number, start + 1, _fragment_reason(fragment))
                 )
                 cursor = close + 2
                 continue
+            if title == "":
+                anomalies.append(InlineAnomaly(line_number, start + 1, "empty title"))
+                cursor = close + 2
+                continue
             end = close + 2
-            title: str | None = None
-            rest = line[end:]
-            stripped = rest.lstrip(" ")
-            if stripped.startswith("("):
-                parenthesis = stripped.find(")")
-                if parenthesis == -1:
-                    anomalies.append(
-                        InlineAnomaly(line_number, index + 1, "unterminated title")
-                    )
-                    cursor = close + 2
-                    continue
-                title = stripped[1:parenthesis]
-                if title == "":
-                    anomalies.append(
-                        InlineAnomaly(line_number, index + 1, "empty title")
-                    )
-                    cursor = close + 2
-                    continue
-                end += len(rest) - len(stripped) + parenthesis + 1
-                cursor = end
-            raw = line[index:end].rstrip("\r\n")
+            raw = line[start:end].rstrip("\r\n")
             matches.append(
                 _Match(
                     line=line_number,
-                    col=index + 1,
+                    col=start + 1,
                     type=parsed.group("type"),
                     ref=parsed.group("ref"),
                     title=title,
-                    start=offset + index,
+                    start=offset + start,
                     end=offset + end,
                     raw=raw,
                 )
@@ -248,15 +264,15 @@ def token_spans(body: str) -> list[tuple[int, int]]:
 
 
 def render_token(type: str, ref: str, title: str | None) -> str:
-    """The canonical token text: ``[[TYPE, REF]]`` plus ``(TITLE)``."""
-    token = f"[[{type}, {ref}]]"
-    return f"{token}({title})" if title is not None else token
+    """The canonical token text: ``(TITLE)[[REF, TYPE]]`` or bare."""
+    token = f"[[{ref}, {type}]]"
+    return f"({title}){token}" if title is not None else token
 
 
 def token_title(raw: str) -> str | None:
     """The cached title of a raw token string, else ``None``."""
     match = re.fullmatch(
-        rf"\[\[{_TYPE} ?,( ?){_REF}\]\](?: *\((?P<title>[^)]*)\))?", raw
+        rf"(?:\((?P<title>[^)\n]+)\)[ ]*)?\[\[{_REF} ?,( ?){_TYPE}\]\]", raw
     )
     return match.group("title") if match is not None else None
 
@@ -275,7 +291,7 @@ def _section_end(lines: list[str], start: int) -> int:
 
 
 def append_token(text: str, type: str, ref: str, title: str) -> str:
-    """Append ``- [[TYPE, REF]](TITLE)`` to the trailing ``## Links`` section.
+    """Append ``- (TITLE)[[REF, TYPE]]`` to the trailing ``## Links`` section.
 
     The section is created at the end of the text (preceded by a blank line)
     when absent.  Appending an identical token line twice is a no-op.
@@ -311,9 +327,9 @@ def _drop_emptied_list_lines(text: str) -> str:
 def remove_token(text: str, type: str, ref: str) -> tuple[str, int]:
     """Remove every token with the exact ``(type, ref)``, wherever it sits.
 
-    Prose tokens are cut in place; a list item that held nothing else is
-    dropped whole.  Returns ``(new_text, removed_count)``.  The ``## Links``
-    section is dropped when it holds no tokens afterwards.
+    Prose tokens, title prefix included, are cut in place; a list item that
+    held nothing else is dropped whole.  Returns ``(new_text, removed_count)``.
+    The ``## Links`` section is dropped when it holds no tokens afterwards.
     """
     matches = [
         match
@@ -350,21 +366,55 @@ def remove_token(text: str, type: str, ref: str) -> tuple[str, int]:
     return text, len(matches)
 
 
-def repoint_token(text: str, old_ref: str, new_ref: str) -> tuple[str, int]:
+def repoint_token(
+    text: str, old_ref: str, new_ref: str, new_title: str | None = None
+) -> tuple[str, int]:
     """Replace ``REF`` inside every token targeting ``old_ref``.
 
     Prose and list tokens alike, without touching fenced code, code spans or
-    escapes.  Returns ``(new_text, changed_count)``.
+    escapes.  When ``new_title`` is given, the cached title is set on every
+    rewritten token too.  Returns ``(new_text, changed_count)``.
     """
     matches = [match for match in _scan_body(text)[0] if match.ref == old_ref]
     if not matches:
         return text, 0
-    pattern = re.compile(rf"(\[\[{_TYPE} ?,( ?)){re.escape(old_ref)}(?=\]\])")
+    pattern = re.compile(rf"(\[\[){re.escape(old_ref)}( ?,( ?){_TYPE})(?=\]\])")
     parts: list[str] = []
     cursor = 0
     for match in matches:
         parts.append(text[cursor : match.start])
-        parts.append(pattern.sub(rf"\g<1>{new_ref}", match.raw))
+        if new_title is None:
+            parts.append(pattern.sub(rf"\g<1>{new_ref}\g<2>", match.raw))
+        else:
+            parts.append(render_token(match.type, new_ref, new_title))
         cursor = match.end
     parts.append(text[cursor:])
     return "".join(parts), len(matches)
+
+
+def retitle_tokens(
+    text: str, titles: Mapping[str, str]
+) -> tuple[str, int]:
+    """Set the cached title of every token whose ref is a key in ``titles``.
+
+    A missing prefix is added; an existing one is replaced.  Tokens whose ref
+    is not mapped, and tokens in fenced code, code spans or escapes, are left
+    untouched.  A token counts as changed when its rendered form differs.
+    """
+    if not titles:
+        return text, 0
+    matches = [match for match in _scan_body(text)[0] if match.ref in titles]
+    if not matches:
+        return text, 0
+    parts: list[str] = []
+    cursor = 0
+    changed = 0
+    for match in matches:
+        replacement = render_token(match.type, match.ref, titles[match.ref])
+        if replacement != match.raw:
+            changed += 1
+        parts.append(text[cursor : match.start])
+        parts.append(replacement)
+        cursor = match.end
+    parts.append(text[cursor:])
+    return "".join(parts), changed

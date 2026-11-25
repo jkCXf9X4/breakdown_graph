@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
@@ -181,6 +182,22 @@ def test_cycles_are_legal_in_one_component(write, tmp_path):
     assert audit(graph) == []
 
 
+def test_example_store_migrates_to_prefix_form_tokens(tmp_path):
+    root = _example_store(tmp_path)
+
+    api.migrate(root)
+
+    store = api.load(root)
+    assert len(store.nodes) == 12
+    for node in store.nodes.values():
+        for raw in node.raw_links:
+            assert re.match(r"^\([^)]+\)\[\[", raw), (node.ref, raw)
+
+    report = api.check(root)
+    assert report.ok
+    assert not report.warnings
+
+
 def test_migration_strips_placement_keys_and_keeps_the_graph(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(
@@ -230,15 +247,17 @@ def test_breakdown_store_checks_clean_after_migration(tmp_path):
     assert not result.warnings
 
     store = api.load(tmp_path)
-    assert store.model == "graph"
     assert store.root_ref == "1-1"
     assert len(store.nodes) == 59
     for node in store.nodes.values():
         assert not (set(PLACEMENT_KEYS) & set(node.meta))
     assert not (set(ROOT_HINTS) & set(store.nodes["1-1"].meta))
 
-    # After migration every link is a plain typed token in a node body:
-    # collect (from, type, to) triples parsed from the bodies.
+    # After migration every link is a canonical prefix token in a node body:
+    # collect (from, type, to) triples parsed from those tokens.
+    for node in store.nodes.values():
+        for raw in node.raw_links:
+            assert re.match(r"^\([^)]+\)\[\[", raw), (node.ref, raw)
     triples = {
         (node.ref, link.type, link.to)
         for node in store.nodes.values()

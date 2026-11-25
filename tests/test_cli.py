@@ -272,6 +272,22 @@ def test_check_view_narrows_reporting(write, tmp_path, capsys):
     assert "not in the default component" in out
 
 
+def test_retitle_dry_run_cli(write, tmp_path, capsys):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, body="(Old)[[2-1, breaks_down]]\n")
+    write(nodes, 2, title="Two")
+    node = nodes / "1-1.md"
+    before = node.read_text(encoding="utf-8")
+
+    assert main(["retitle", "--dry-run", "--root", str(tmp_path)]) == 0
+    assert "would retitle 1 tokens in 1 nodes" in capsys.readouterr().out
+    assert node.read_text(encoding="utf-8") == before
+
+    assert main(["retitle", "--root", str(tmp_path)]) == 0
+    assert "retitled 1 tokens in 1 nodes" in capsys.readouterr().out
+    assert "(Two)[[2-1, breaks_down]]" in node.read_text(encoding="utf-8")
+
+
 def test_removed_subcommands_and_flags_exit_2(write, tmp_path):
     write(tmp_path / "nodes", 1, band="root")
     root = ["--root", str(tmp_path)]

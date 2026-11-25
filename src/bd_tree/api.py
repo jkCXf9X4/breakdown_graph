@@ -44,7 +44,7 @@ from .model import (
 from .navigate import current_ref as _current_ref
 from .navigate import default_root as _default_root
 from .navigate import resolve_ref as _resolve_ref
-from .ops import MigrationResult
+from .ops import MigrationResult, RetitleResult
 from .ops import clear_root as _clear_root
 from .ops import clone as _clone
 from .ops import delete as _delete
@@ -54,6 +54,7 @@ from .ops import link as _link
 from .ops import migrate as _migrate
 from .ops import new_node as _new_node
 from .ops import replace as _replace
+from .ops import retitle as _retitle
 from .ops import set_root as _set_root
 from .ops import unlink as _unlink
 from .ops import versions as _versions
@@ -80,6 +81,7 @@ __all__ = [
     "MigrationResult",
     "Node",
     "ReconcileChange",
+    "RetitleResult",
     "SolutionEntry",
     "SolutionResult",
     "StaleEdge",
@@ -124,6 +126,7 @@ __all__ = [
     "replace",
     "resolve_graph_ref",
     "resolve_ref",
+    "retitle",
     "ring_distances",
     "root_ref",
     "set_root",
@@ -281,10 +284,26 @@ def migrate(
     """Convert a legacy store in place (or print the plan).
 
     Retired placement keys are stripped from every node and ROOT; front-matter
-    links move into node bodies as token lines.  Idempotent, so re-running the
-    same migration is a no-op.
+    links move into node bodies as ref-first prefix-form token lines.  Tokens
+    are normalized to ``(TITLE)[[REF, TYPE]]``, retired suffix tokens in
+    either component order are rewritten, and missing titles are filled from
+    the target.  Idempotent, so re-running the same migration is a no-op.
     """
     return _migrate(root, dry_run=dry_run, link_type=link_type)
+
+
+def retitle(
+    root: str | Path,
+    *,
+    view: str | int | None = None,
+    dry_run: bool = False,
+) -> RetitleResult:
+    """Regenerate cached token titles from their targets' live titles.
+
+    The whole store is the default scope; ``view`` narrows it to one
+    undirected component.  Tokens whose target is unresolved are untouched.
+    """
+    return _retitle(root, view=view, dry_run=dry_run)
 
 
 def set_root(root: str | Path, ref: str | int) -> Path:

@@ -49,9 +49,7 @@ exists only as a filename that git tracks. They meet exactly once, in a merge.
    `bd replace OLD NEW`, or clone and swap with `bd clone REF` then
    `bd replace REF NEW`; `bd clone` alone only copies to a new peer, and
    `bd delete` only removes a file. Nothing here reads or changes git, and
-   nothing can cross a worktree. Band ordinals, inferred folders, and the
-   `unlayered` fallback are layout projection, never version state; see
-   [`GRAPH-LAYOUT.md`](GRAPH-LAYOUT.md).
+   nothing can cross a worktree.
 5. **Neither a view nor a version crosses a branch.** Mixing is `git merge` or
    `git restore --source`. There is no branch selector, no per-node
    active-version selector, and no cross-branch view. The one store-level

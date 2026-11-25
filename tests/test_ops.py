@@ -13,6 +13,7 @@ from bd_tree.api import (
     migrate,
     new_node,
     replace,
+    retitle,
     versions,
 )
 from bd_tree.cli import main
@@ -74,7 +75,7 @@ def test_clone_copies_declared_links(write, tmp_path):
     path = nodes / "2-2.md"
     text = path.read_text(encoding="utf-8")
     # Byte copy: the token line survives untouched, unparsed.
-    assert "- [[breaks_down, 3-1]]" in text
+    assert "- (Title of 3-1)[[3-1, breaks_down]]" in text
     assert load(tmp_path).children("2-2") == ["3-1"]
     assert check(tmp_path).ok
 
@@ -117,10 +118,12 @@ def test_clone_subtree_clones_the_whole_component_and_rewires(write, tmp_path):
     source_head, source_section = _split_doc(tmp_path, "2-1")
     assert head == source_head
     assert section == (
-        "## Links\n\n- [[breaks_down, 3-2]]\n- [[breaks_down, 4-2]]\n"
+        "## Links\n\n- (Title of 3-1)[[3-2, breaks_down]]\n"
+        "- (Title of 4-1)[[4-2, breaks_down]]\n"
     )
     assert source_section == (
-        "## Links\n\n- [[breaks_down, 3-1]]\n- [[breaks_down, 4-1]]\n"
+        "## Links\n\n- (Title of 3-1)[[3-1, breaks_down]]\n"
+        "- (Title of 4-1)[[4-1, breaks_down]]\n"
     )
 
     # The original component is untouched and the clone is not wired into it.
@@ -197,13 +200,31 @@ def test_replace_swaps_middle_child_in_place(write, tmp_path):
     assert replace(tmp_path, "3-1", "3-2") == ("3-1", "links", "3-2")
 
     parent_text = (nodes / "1-1.md").read_text(encoding="utf-8")
-    assert "- [[breaks_down, 3-2]]" in parent_text
-    assert "- [[breaks_down, 3-1]]" not in parent_text
+    assert "[[3-2, breaks_down]]" in parent_text
+    assert "[[3-1, breaks_down]]" not in parent_text
     assert load(tmp_path).children("1-1") == ["2-1", "3-2", "4-1"]
     assert (nodes / "3-1.md").is_file()
     assert (nodes / "3-2.md").is_file()
 
     assert check(tmp_path).ok
+
+
+def test_replace_retitles_tokens_to_the_new_nodes_live_title(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(
+        nodes,
+        1,
+        links=[{"to": "3-1", "type": "breaks_down"}],
+        body="old target\n",
+    )
+    write(nodes, 3, title="Old title")
+    write(nodes, 3, version=2, title="New live title")
+
+    assert replace(tmp_path, "3-1", "3-2") == ("3-1", "links", "3-2")
+
+    text = (nodes / "1-1.md").read_text(encoding="utf-8")
+    assert "- (New live title)[[3-2, breaks_down]]" in text
+    assert "[[3-1, breaks_down]]" not in text
 
 
 def test_component_clone_then_replace_repoints_parent_at_new_root(write, tmp_path):
@@ -231,7 +252,7 @@ def test_component_clone_then_replace_repoints_parent_at_new_root(write, tmp_pat
 
     head, section = _split_doc(tmp_path, "1-1")
     assert head == "body\n\n"
-    assert section == "## Links\n\n- [[breaks_down, 2-2]]\n"
+    assert section == "## Links\n\n- (Title of 2-1)[[2-2, breaks_down]]\n"
     assert load(tmp_path).children("2-2") == ["3-2", "4-2"]
 
     assert check(tmp_path).ok
@@ -395,7 +416,8 @@ def test_new_uses_next_global_id_and_appends_to_parent(write, tmp_path):
     head, section = _split_doc(tmp_path, "1-1")
     assert head == "root body\n\n"  # parent body preserved outside the section
     assert section == (
-        "## Links\n\n- [[breaks_down, 2-1]]\n- [[breaks_down, 3-1]](New claim)\n"
+        "## Links\n\n- (Title of 2-1)[[2-1, breaks_down]]\n"
+        "- (New claim)[[3-1, breaks_down]]\n"
     )  # title is the new node's live title
     assert load(tmp_path).children("1-1") == ["2-1", "3-1"]
 
@@ -461,7 +483,8 @@ def test_new_appends_to_the_parent_version_only(write, tmp_path):
     head, section = _split_doc(tmp_path, "2-2")
     assert head == "body\n\n"
     assert section == (
-        "## Links\n\n- [[breaks_down, 3-1]]\n- [[breaks_down, 4-1]](Version child)\n"
+        "## Links\n\n- (Title of 3-1)[[3-1, breaks_down]]\n"
+        "- (Version child)[[4-1, breaks_down]]\n"
     )
 
 
@@ -539,13 +562,13 @@ def test_link_appends_tokens_in_call_order(write, tmp_path):
     link(tmp_path, "1-1", "2-1", link_type="supports")
     _, section = _split_doc(tmp_path, "1-1")
     assert section == (
-        "## Links\n- [[supports, 3-1]](Title of 3-1)\n"
-        "- [[supports, 2-1]](Title of 2-1)\n"
+        "## Links\n- (Title of 3-1)[[3-1, supports]]\n"
+        "- (Title of 2-1)[[2-1, supports]]\n"
     )
     # Monotone appends keep the section sorted by ref.
     link(tmp_path, "1-1", "4-1", link_type="supports")
     _, section = _split_doc(tmp_path, "1-1")
-    assert section.endswith("- [[supports, 4-1]](Title of 4-1)\n")
+    assert section.endswith("- (Title of 4-1)[[4-1, supports]]\n")
 
 
 def test_link_refuses_a_type_that_cannot_be_a_token(write, tmp_path):
@@ -638,7 +661,7 @@ def test_migrate_renames_rewrites_and_is_idempotent(write, tmp_path):
     assert "links" not in migrated.meta
     assert migrated.meta["layout"] == "flat"
     # Body preserved; the conversion only appends the trailing token section.
-    assert migrated.body == body + "\n## Links\n- [[breaks_down, 2-1]](Node 2)\n"
+    assert migrated.body == body + "\n## Links\n- (Node 2)[[2-1, breaks_down]]\n"
     assert (tmp_path / "ROOT").read_text(encoding="utf-8") == "1-1\n"
 
     store = load(tmp_path)
@@ -698,7 +721,8 @@ def test_migrate_strips_retired_placement_keys(tmp_path):
     head, section = _split_doc(tmp_path, "1-1")
     assert head == "body\n\n"
     assert section == (
-        "## Links\n- [[breaks_down, 2-1]](Node 2)\n- [[breaks_down, 3-1]](Node 3)\n"
+        "## Links\n- (Node 2)[[2-1, breaks_down]]\n"
+        "- (Node 3)[[3-1, breaks_down]]\n"
     )
     assert any("strip" in rewrite for rewrite in result.rewrites)
 
@@ -737,7 +761,8 @@ def test_migrate_cli_converts_front_matter_links_to_tokens(write, tmp_path, caps
     head, section = _split_doc(tmp_path, "1-1")
     assert head == "body\n\n"
     assert section == (
-        "## Links\n- [[realizes, 2-1]](Node 2)\n- [[implements, 3-1]](Node 3)\n"
+        "## Links\n- (Node 2)[[2-1, realizes]]\n"
+        "- (Node 3)[[3-1, implements]]\n"
     )
     assert _pairs(tmp_path, "1-1") == [
         ("2-1", "realizes"),
@@ -758,3 +783,128 @@ def test_migrate_fails_on_an_ambiguous_bare_ref(tmp_path):
 
     assert (nodes / "1.md").is_file()
     assert not (nodes / "1-1.md").exists()
+
+
+def test_migrate_converts_legacy_suffix_tokens_and_fills_titles(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(
+        nodes,
+        1,
+        body=(
+            "Prose [[breaks_down, 2-1]](Stale title), bare [[supports, 3-1]], "
+            "dangling [[9-1, verifies]].\n"
+        ),
+    )
+    write(nodes, 2, title="Live title")
+    write(nodes, 3, title="Third")
+    before = (nodes / "1-1.md").read_text(encoding="utf-8")
+
+    dry = migrate(tmp_path, dry_run=True)
+
+    assert dry.dry_run is True
+    assert (nodes / "1-1.md").read_text(encoding="utf-8") == before
+    assert any("suffix tokens -> prefix" in line for line in dry.rewrites)
+
+    result = migrate(tmp_path)
+
+    body = _doc(tmp_path, "1-1").body
+    assert "(Live title)[[2-1, breaks_down]]" in body
+    assert "(Third)[[3-1, supports]]" in body
+    assert "(9-1)[[9-1, verifies]]" in body  # dangling target falls back to ref
+    assert "Stale title" not in body
+    assert "[[breaks_down, 2-1]](Stale title)" not in body
+    assert any("suffix tokens -> prefix" in line for line in result.rewrites)
+
+    again = migrate(tmp_path)
+    assert again.rewrites == []
+
+
+def test_migrate_normalizes_component_order(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(
+        nodes,
+        1,
+        body=(
+            "Type-first bare [[breaks_down, 2-1]], "
+            "ref-first suffix [[3-1, supports]](Stale suffix title).\n"
+        ),
+    )
+    write(nodes, 2, title="Second")
+    write(nodes, 3, title="Third")
+
+    dry = migrate(tmp_path, dry_run=True)
+    assert any("tokens -> ref-first order" in line for line in dry.rewrites)
+
+    result = migrate(tmp_path)
+
+    body = _doc(tmp_path, "1-1").body
+    assert "(Second)[[2-1, breaks_down]]" in body
+    assert "(Third)[[3-1, supports]]" in body
+    assert "[[breaks_down, 2-1]]" not in body
+    assert "Stale suffix title" not in body
+    assert result.rewrites
+
+    assert migrate(tmp_path, dry_run=True).rewrites == []
+
+
+def test_migrate_normalizes_a_type_first_links_line(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, body="body\n\n## Links\n- [[supports, 2-1]]\n")
+    write(nodes, 2, title="Second")
+
+    migrate(tmp_path)
+
+    section = _split_doc(tmp_path, "1-1")[1]
+    assert section == "## Links\n- (Second)[[2-1, supports]]\n"
+
+
+def test_retitle_fills_and_refreshes_titles_in_prose_and_links(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(
+        nodes,
+        1,
+        body=(
+            "Prose (Stale)[[2-1, breaks_down]].\n\n"
+            "## Links\n- [[3-1, supports]]\n- [[9-1, verifies]]\n"
+        ),
+    )
+    write(nodes, 2, title="Live title")
+    write(nodes, 3, title="Third")
+    before = (nodes / "1-1.md").read_text(encoding="utf-8")
+
+    dry = retitle(tmp_path, dry_run=True)
+
+    assert dry.dry_run is True
+    assert dry.changed == 2
+    assert dry.nodes == ["1-1"]
+    assert (nodes / "1-1.md").read_text(encoding="utf-8") == before
+
+    result = retitle(tmp_path)
+
+    body = _doc(tmp_path, "1-1").body
+    assert "(Live title)[[2-1, breaks_down]]" in body
+    assert "- (Third)[[3-1, supports]]" in body
+    assert "[[9-1, verifies]]" in body  # unresolved target left untouched
+    assert "(9-1)" not in body
+    assert result.changed == 2 and result.dry_run is False
+
+    assert retitle(tmp_path).changed == 0
+
+
+def test_retitle_view_scope_touches_only_that_component(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, body="(Old)[[2-1, breaks_down]]\n")
+    write(nodes, 2, title="Two")
+    write(nodes, 9, body="(Old)[[10-1, breaks_down]]\n")
+    write(nodes, 10, title="Ten")
+
+    scoped = retitle(tmp_path, view="1-1")
+
+    assert scoped.nodes == ["1-1"]
+    assert "(Two)[[2-1, breaks_down]]" in _doc(tmp_path, "1-1").body
+    assert "(Old)[[10-1, breaks_down]]" in _doc(tmp_path, "9-1").body
+
+    whole = retitle(tmp_path)
+    assert whole.nodes == ["9-1"]
+    assert "(Ten)[[10-1, breaks_down]]" in _doc(tmp_path, "9-1").body
+

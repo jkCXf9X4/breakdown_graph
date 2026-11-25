@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from bd_tree import api
 from bd_tree.api import check, init_store
 from bd_tree.cli import main
 from bd_tree.frontmatter import parse_document
@@ -119,7 +118,6 @@ def test_init_default_graph_end_to_end(tmp_path, capsys):
         (project / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")
     ).meta
     assert meta == {"id": 1, "title": "Root"}
-    assert api.load(project).model == "graph"
 
     assert main(["graph", "--root", str(project)]) == 0
     assert "## 0 — 1-1" in capsys.readouterr().out
@@ -136,5 +134,5 @@ def test_init_default_graph_end_to_end(tmp_path, capsys):
         (project / ".bd_tree" / "nodes" / "1-1.md").read_text(encoding="utf-8")
     )
     assert "links" not in doc.meta
-    assert "[[breaks_down, 2-1]]" in doc.body
+    assert "[[2-1, breaks_down]]" in doc.body
     assert check(project).ok

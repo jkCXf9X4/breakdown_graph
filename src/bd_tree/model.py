@@ -126,37 +126,6 @@ class Node:
         return str(value) if value not in (None, "") else self.ref
 
     @property
-    def placement_name(self) -> str:
-        """Explicit ``name``, else the title slug, else the ref."""
-        return self.name or slugify(self.title) or self.ref
-
-    @property
-    def section(self) -> str | None:
-        """Best-effort read of the inert ``section`` key.
-
-        ``section`` is ordinary front matter and places nothing: membership and
-        order come from the undirected component and BFS distance.  The value
-        ``section: true`` still resolves to this node's placement name and a
-        leading ``/`` is stripped, but callers must not treat either as
-        structure.
-        """
-        value = self.meta.get("section")
-        if value is True:
-            return self.placement_name
-        if isinstance(value, str) and value.strip():
-            text = value.strip()
-            if text.startswith("/"):
-                return text.lstrip("/").rstrip("/") or None
-            return text
-        return None
-
-    @property
-    def section_rooted(self) -> bool:
-        """True when the inert ``section`` value starts with ``/``."""
-        value = self.meta.get("section")
-        return isinstance(value, str) and value.strip().startswith("/")
-
-    @property
     def summary(self) -> str:
         value = self.meta.get("summary")
         return str(value) if value not in (None, "") else ""
@@ -214,17 +183,6 @@ class Store:
     declared_root: str | None = None  # ref read from the store's ROOT file
 
     @property
-    def model(self) -> str:
-        """Topology family of this store: always ``"graph"``.
-
-        Kept as a property for internal compatibility.  Edges are ``links`` and
-        there is exactly one topology, so any stray ``contains`` key in
-        front matter is inert metadata (``bd check`` reports it as
-        ``contains-removed``).
-        """
-        return "graph"
-
-    @property
     def project_root(self) -> Path:
         """The project directory that owns this store.
 
@@ -251,22 +209,14 @@ class Store:
         roots = self.topology_roots()
         return roots[0].ref if roots else None
 
-    def structural_links(self, ref: str) -> list[Link]:
-        """The authored links of ``ref``.
-
-        Kept under its historical name.  There is one topology and every
-        authored link is structural; the method no longer filters.
-        """
-        node = self.nodes.get(ref)
-        if node is None:
-            return []
-        return list(node.links)
-
     def children(self, ref: str) -> list[str]:
         """Structural out-link targets of ``ref`` (full refs), authored order."""
         from .loader import is_full_ref
 
-        return [link.to for link in self.structural_links(ref) if is_full_ref(link.to)]
+        node = self.nodes.get(ref)
+        if node is None:
+            return []
+        return [link.to for link in node.links if is_full_ref(link.to)]
 
     def neighbors(self, ref: str) -> list[Neighbor]:
         """Undirected neighbours of ``ref`` over authored links.
@@ -407,11 +357,6 @@ class View:
     @property
     def root_ref(self) -> str:
         return self.ref
-
-    @property
-    def model(self) -> str:
-        """Topology family inherited from the store; always ``"graph"``."""
-        return self.store.model
 
     def current_ref(self, node_id: int) -> str | None:
         """The ref of logical ``node_id`` inside this view, else ``None``.

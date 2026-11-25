@@ -4,16 +4,26 @@ Fixture contract (the write unit consumes this — follow it):
 
 - ``write_node(directory, node_id, **fields)`` writes one node file.  Arbitrary
   front-matter fields are written as given.  Bodies are plain strings holding
-  link declarations directly as ``[[TYPE, REF]](TITLE)`` tokens.
+  link declarations directly as canonical ``(TITLE)[[REF, TYPE]]`` tokens.
 - ``write_node(..., links=[...])`` is accepted for backwards compatibility and
-  auto-converts a front-matter links list into body tokens plus a
+  auto-converts a front-matter links list into *prefix-form* body tokens plus a
   ``freshness:`` front-matter map (``to``/``type`` become the token,
   ``propagates``/``pinned`` become freshness entries; other link keys are
-  dropped).  Bare target ids are qualified to ``<id>-1`` unless
-  ``raw_refs=True``.
+  dropped).  The cached title is the target's live title when the target file
+  already exists, else the target's default title ``Title of <ref>``; pass
+  ``title=`` on the link to override.  Bare target ids are qualified to
+  ``<id>-1`` unless ``raw_refs=True``.
 - ``make_store(path)`` writes the default store: twelve nodes ``1-1``..``12-1``
-  mirroring ``examples/`` (same topology, same titles), every link declared as
-  a body token, empty freshness maps, so ``api.check`` is clean on it.
+  mirroring ``examples/`` (same topology, same titles), every link declared as a
+  prefix token, empty freshness maps, so ``api.check`` is clean on it.  It ends
+  with a finalize pass (``retitle_store``), so the default store is
+  title-clean: no ``link-title-stale`` and no ``inline-title-missing`` warnings.
+- ``retitle_store(directory)`` is the finalize pass: it re-reads every node's
+  live ``title`` and rewrites the cached title of every token targeting it.  A
+  test that writes a referenced node *after* its source and cares about a clean
+  check can call it once at the end; the default store fixture already does.
+  (Deliberately stale titles written through ``body=`` are left alone unless
+  this helper is called.)
 - ``add_token(store_path, ref, token_text)`` appends ``- <token_text>`` as a
   new list line under the trailing ``## Links`` section of ``nodes/<ref>.md``
   (creating the section, preceded by a blank line, when absent).
@@ -43,6 +53,7 @@ from bd_tree.frontmatter import (  # noqa: E402
     render_document,
     rewrite_freshness,
 )
+from bd_tree.inline import render_token, retitle_tokens  # noqa: E402
 
 
 def _qualify(value: Any, version: int) -> Any:
@@ -65,17 +76,33 @@ def _qualify(value: Any, version: int) -> Any:
     return value
 
 
-def _token_lines(links: list[Any], version: int) -> list[str]:
-    """Render a links list as token list lines for a ``## Links`` section."""
+def _live_titles(directory: Path) -> dict[str, str]:
+    """Every node file's live ``title``, keyed by ``<id>-<version>``."""
+    titles: dict[str, str] = {}
+    for path in sorted(Path(directory).glob("*.md")):
+        try:
+            document = parse_document(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        title = document.meta.get("title")
+        if isinstance(title, str) and title:
+            titles[path.stem] = title
+    return titles
+
+
+def _token_lines(
+    links: list[Any], version: int, titles: dict[str, str]
+) -> list[str]:
+    """Render a links list as prefix-form token list lines."""
     lines: list[str] = []
     for item in links:
         if not isinstance(item, dict) or "to" not in item:
             continue
-        target = _qualify(item["to"], version)
-        token = f"[[{item.get('type') or 'link'}, {target}]]"
+        target = str(_qualify(item["to"], version))
         title = item.get("title")
-        if title:
-            token = f"{token}({title})"
+        if not title:
+            title = titles.get(target, f"Title of {target}")
+        token = render_token(item.get("type") or "link", target, title)
         lines.append(f"- {token}")
     return lines
 
@@ -98,6 +125,7 @@ def _freshness_of(links: list[Any], version: int) -> dict[str, dict[str, Any]]:
 
 
 def _links_body(
+    directory: Path,
     links: list[Any] | None,
     body: str,
     version: int,
@@ -106,19 +134,20 @@ def _links_body(
     """Body plus freshness for the given links list.
 
     With ``raw_refs=True`` the token target text is written unchanged (for
-    bare-ref validation tests).
+    bare-ref validation tests).  Otherwise the cached title is the target's
+    live title when its file already exists, else its default title.
     """
     if links is None:
         return body, {}
     if raw_refs:
         lines = [
-            f"- [[{item.get('type') or 'link'}, {item['to']}]]"
+            f"- [[{item['to']}, {item.get('type') or 'link'}]]"
             if isinstance(item, dict) and "to" in item
-            else f"- [[link, {item}]]"
+            else f"- [[{item}, link]]"
             for item in links
         ]
     else:
-        lines = _token_lines(links, version)
+        lines = _token_lines(links, version, _live_titles(directory))
     freshness = _freshness_of(links, version)
     if not lines:
         return body, freshness
@@ -142,9 +171,10 @@ def write_node(
 ) -> Path:
     """Write one node.  Fields are arbitrary; only what you pass is written.
 
-    Link declarations belong in the body as ``[[TYPE, REF]](TITLE)`` tokens;
-    pass ``links=[...]`` to have the fixture auto-convert a front-matter-style
-    list into tokens plus freshness entries (see the module docstring).
+    Link declarations belong in the body as prefix-form
+    ``(TITLE)[[REF, TYPE]]`` tokens; pass ``links=[...]`` to have the fixture
+    auto-convert a front-matter-style list into tokens plus freshness entries
+    (see the module docstring).
 
     Convenience: when ``layer`` is given, set ``name`` to ``<ref>`` so path
     assertions stay readable.
@@ -161,7 +191,9 @@ def write_node(
         data.setdefault("name", ref)
     if meta:
         data.update(meta)
-    body_text, auto_freshness = _links_body(links, body, 1, raw_refs)
+    body_text, auto_freshness = _links_body(
+        directory, links, body, 1, raw_refs
+    )
     entries = dict(auto_freshness)
     if freshness:
         entries.update(freshness)
@@ -217,7 +249,7 @@ _DEFAULT_LINKS: dict[int, list[tuple[str, int]]] = {
 
 
 def _token_text(link_type: str, target: int) -> str:
-    return f"[[{link_type}, {target}-1]]({_DEFAULT_TITLES[target]})"
+    return render_token(link_type, f"{target}-1", _DEFAULT_TITLES[target])
 
 
 def _default_body(node_id: int) -> str:
@@ -230,12 +262,39 @@ def _default_body(node_id: int) -> str:
     return "\n".join(parts) + "\n"
 
 
+def retitle_store(directory: Path) -> int:
+    """Finalize pass: retitle every token from the target's live title.
+
+    Re-reads every node in ``directory`` (``<id>-<version>.md``), builds the
+    ref -> title map, and rewrites cached token titles in place.  Returns the
+    number of tokens changed.  Call this after writing nodes out of order when
+    the default store must be title-clean; ``make_store`` already does.
+    """
+    directory = Path(directory)
+    titles = _live_titles(directory)
+    if not titles:
+        return 0
+    changed = 0
+    for path in sorted(directory.glob("*.md")):
+        document = parse_document(path.read_text(encoding="utf-8"))
+        new_body, count = retitle_tokens(document.body, titles)
+        if count:
+            path.write_text(
+                document.opening + document.raw_fm + document.closing + new_body,
+                encoding="utf-8",
+                newline="",
+            )
+            changed += count
+    return changed
+
+
 def make_store(path: Path) -> Path:
     """Write the default twelve-node store at ``path/nodes/`` and return it.
 
     The nodes are ``(ref, title, body, freshness)`` mirroring ``examples/``:
-    same topology, same titles, every link declared as a body token, empty
-    freshness maps.  ``api.check`` is clean on it (0 errors, 0 warnings).
+    same topology, same titles, every link declared as a prefix token, empty
+    freshness maps.  A finalize pass (``retitle_store``) makes it title-clean,
+    so ``api.check`` is clean on it (0 errors, 0 warnings).
     """
     nodes = Path(path) / "nodes"
     nodes.mkdir(parents=True, exist_ok=True)
@@ -248,6 +307,7 @@ def make_store(path: Path) -> Path:
             encoding="utf-8",
             newline="",
         )
+    retitle_store(nodes)
     return nodes
 
 

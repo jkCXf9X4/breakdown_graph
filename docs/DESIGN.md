@@ -107,27 +107,34 @@ no schema.
 Link declarations are reserved tokens in the body, not front-matter keys:
 
 ```markdown
-The intent breaks down into [[breaks_down, 2-1]](Structural claims).
+The intent breaks down into (Structural claims)[[2-1, breaks_down]].
 
 ## Links
-- [[verifies, 12-1]](Verification core)
+- (Verification core)[[12-1, verifies]]
 ```
 
-- **Grammar:** `[[TYPE, REF]]`, optionally followed by spaces and `(TITLE)`.
-  `TYPE` matches `[A-Za-z][A-Za-z0-9_-]*`; `REF` is a full `id-version` ref and
-  never a bare id; `TITLE` is non-empty and excludes `)` and newlines.
-- **Two forms:** a token inside prose, or a `- [[TYPE, REF]](TITLE)` line in a
+- **Grammar:** `(TITLE)[[REF, TYPE]]`, with zero or more spaces between `)` and
+  `[[`. `REF` comes first and is a full `id-version` ref, never a bare id;
+  `TYPE` comes second and matches `[A-Za-z][A-Za-z0-9_-]*`; `TITLE` is
+  non-empty and excludes `)` and newlines; at most one space may sit on each
+  side of the comma. A bare `[[REF, TYPE]]` is valid but `bd check` warns
+  `inline-title-missing`. A type-first token is malformed (`inline-malformed`,
+  reason `reversed components`), and `bd migrate` normalizes either component
+  order to ref-first.
+- **Two forms:** a token inside prose, or a `- (TITLE)[[REF, TYPE]]` line in a
   trailing `## Links` section. `bd new --parent` appends to the parent,
-  `bd link` appends to the source, `bd unlink` removes, and `bd replace` /
-  `bd clone --subtree` rewrite refs in place. Authors may also write tokens
-  directly in sentences.
-- **Cached title:** `(TITLE)` is advisory. Rendering always uses the target's
-  live title; only `bd check` compares the cache and reports
-  `link-title-stale`.
+  `bd link` appends to the source, `bd unlink` removes, `bd replace` rewrites
+  inbound refs and titles, and `bd clone --subtree` rewrites refs in place.
+- **Cached title is tool-generated.** Authors write the bare token; the tool
+  fills the prefix from the target's live title. `bd new --parent`, `bd link`,
+  `bd replace`, `bd migrate`, and `bd retitle` write it. Rendering always uses
+  the live title; `bd check` compares the cache exactly (`link-title-stale`) or
+  warns when it is absent (`inline-title-missing`), and `bd retitle`
+  regenerates it. Never hand-edit the title.
 - **Ignored:** fenced code blocks, inline code spans, and the `\[[` escape.
   Indented code blocks and HTML comments are not handled.
 - **Back-references are authored.** There is no derived opposite: if `3-1`
-  writes `[[verifies, 8-1]]` and `8-1` should acknowledge it, `8-1` authors its
+  writes `[[8-1, verifies]]` and `8-1` should acknowledge it, `8-1` authors its
   own token with its own type. `bd in` still derives the reverse list from
   authored tokens and marks it `[derived]`.
 - **Front-matter `links` is retired.** A node that still declares it is
@@ -372,7 +379,8 @@ branch is checked out where; `bd work` remains the layout inside one checkout.
 
 Nothing in the tool knows a project's layer names. The only reserved vocabulary
 is structural: the front-matter keys `id`, `legacy`, and `freshness`, plus the
-body token grammar `[[TYPE, REF]]` and its optional cached `(TITLE)`. `name` and
+body token grammar `(TITLE)[[REF, TYPE]]`; a bare token is legal and its
+tool-generated title is filled by `bd retitle`. `name` and
 `title` are presentation metadata; `title` supplies the template slug. `group`,
 `section`, `folder`, and `home` are ordinary front matter: preserved, never
 read, with no effect on placement or validation.
@@ -392,8 +400,9 @@ wants a schema.
 3. **Versions as mandatory filename suffixes.** `5-1`, `5-2`; every node is a
    version and no unsuffixed file exists.
 4. **One topology: typed body tokens, undirected views.** A node authors edges
-   as `[[TYPE, REF]]` tokens in its body; in-edges are derived. A view is the
-   weakly connected component of the anchor, and distance is undirected BFS.
+   as `(TITLE)[[REF, TYPE]]` tokens in its body; in-edges are derived. A view
+   is the weakly connected component of the anchor, and distance is undirected
+   BFS.
    Direction survives as a label. `contains` is retired; `bd migrate` converts
    an older store, including front-matter `links`.
 5. **Views as components, not branches.** No branch names, branch directories,
@@ -403,9 +412,10 @@ wants a schema.
    derived opposite: a node that should acknowledge an edge authors its own
    token with its own type. Only `bd in` derives the reverse list, marked
    `[derived]`.
-7. **A cached token title is advisory.** `(TITLE)` saves a lookup but rendering
-   always uses the target's live title; only `bd check` reports
-   `link-title-stale`.
+7. **A cached token title is a tool-generated prefix.** `(TITLE)` saves a
+   lookup but rendering always uses the target's live title. Authors write the
+   bare token; `bd check` reports `inline-title-missing` or `link-title-stale`,
+   and `bd retitle` regenerates the cache.
 8. **Freshness is a per-node map.** Pins and `propagates` live in the
    `freshness:` front-matter map keyed by target ref, not inside edge objects;
    the pinned hash ignores reserved tokens and the `## Links` heading.
@@ -461,11 +471,24 @@ wants a schema.
     list. Symmetry is no longer inferred: each node authors every edge it
     asserts, so a back-reference is an ordinary token and no `inverse`,
     `[derived]` opposite, or one-master rule survives. The cached `(TITLE)` is
-    advisory only. Freshness moved out of the edge object into the top-level
+    a tool-generated prefix, never authored content. Freshness moved out of the
+    edge object into the top-level
     `freshness:` map, keyed by target ref, so pins survive token edits. Cost: a
     malformed token is a body-level error (`inline-malformed`) and indented code
     blocks and HTML comments are not shielded. Gain: one place for an assertion,
     no second copy to keep in sync, and no symmetric special case.
+20. **2026-11-25: the cached title moved to a token prefix and became
+    tool-maintained.** The legacy suffix `[[TYPE, REF]](TITLE)` (or
+    `[[REF, TYPE]](TITLE)`) made the
+    parenthetical read as prose, so it stopped being a token; the prefix
+    `(TITLE)[[REF, TYPE]]` keeps the cache adjacent to the token and leaves the
+    sentence around it intact. Authors write bare tokens; `bd new --parent`,
+    `bd link`, `bd replace`, `bd migrate`, and `bd retitle` fill the cache from
+    the target's live title. `bd check` reports `inline-title-missing` for a
+    bare token and `link-title-stale` for a mismatch, and `bd retitle`
+    regenerates every cache in scope. Cost: title maintenance is a tool
+    operation, not a manual edit. Gain: one command repairs the whole store and
+    the suffix text is no longer mistaken for authored prose.
 
 ## 8. Rejected alternatives
 
@@ -529,19 +552,25 @@ wants a schema.
 or front-matter-link store in place:
 
 1. Each `contains: [c0, c1, ...]` becomes a typed body token
-   `[[T, c0]]` in a trailing `## Links` section, in the same order, and the key
+   `[[c0, T]]` in a trailing `## Links` section, in the same order, and the key
    is removed. `T` is `--type`, default `breaks_down`.
-2. Front-matter `links` becomes one `- [[TYPE, REF]](TITLE)` line per edge,
+2. Front-matter `links` becomes one `- (TITLE)[[REF, TYPE]]` line per edge,
    sorted by ref; a retired scalar link gains an explicit type taken from the
    target. Per-link `pinned`/`propagates` values move to the node's top-level
    `freshness:` map. `symmetric` and `inverse` are dropped.
 3. Retired placement keys are stripped from every node (`band`, `subpath`,
    `layer`, `stage`, `order`) and from the ROOT node (`band_layout`,
    `band_order`). `section` stays as inert front matter and places nothing.
-4. `--dry-run` reports the plan; the default applies atomically. `--root` works.
+4. Legacy suffix tokens `[[TYPE, REF]](TITLE)` and `[[REF, TYPE]](TITLE)` become
+   the prefix form `(TITLE)[[REF, TYPE]]`; tokens in either component order are
+   normalized to ref-first, and missing titles are filled from the target's
+   live title.
+5. `--dry-run` reports the plan; the default applies atomically. `--root` works.
 
 There is no placement flag and no symmetry flag: the token carries only its
-type and ref.
+type and ref. `bd retitle` is the explicit post-migration refresh: it
+regenerates every cache in the store (or a view) from live titles, and leaves
+unresolved targets untouched.
 
 A store that still declares `contains` fails `bd check` with `contains-removed`
 until it is migrated. After migration `bd check` passes.
@@ -585,8 +614,10 @@ These are enforced or assumed:
     not interpreted.
 17. Front-matter `links` is not data either: a node that declares it is
     `links-removed` and is migrated into body tokens.
-18. A cached token title is advisory. All rendering reads the live title; only
-    `bd check` compares the cache and warns `link-title-stale`.
+18. A cached token title is a tool-generated prefix. Authors write bare
+    tokens; all rendering reads the live title; `bd check` reports
+    `inline-title-missing` or `link-title-stale`, and `bd retitle` regenerates
+    the cache.
 19. Freshness pins live in the `freshness:` map keyed by target ref; the pinned
     body hash excludes reserved tokens and the `## Links` heading.
 

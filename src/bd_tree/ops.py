@@ -1,6 +1,11 @@
 """Filesystem operations on the version-only numeric node store.
 
-Links are declared as reserved tokens in node bodies, not front matter.
+Links are declared as reserved tokens in node bodies, not front matter.  The
+canonical token is ``[[REF, TYPE]]``; an optional cached title is a PREFIX,
+``(TITLE)[[REF, TYPE]]``.  Cached titles are tool-written, never
+hand-maintained: writers fill the target's live title and :func:`retitle`
+regenerates them.
+
 Operating rule for structural edits: a structural edit changes only the
 source file, preserves unrelated front matter, and touches the body only
 inside ``## Links`` sections — appending or removing token lines — except
@@ -26,7 +31,13 @@ from .frontmatter import (
 )
 from .fsutil import atomic_copy, atomic_write, publish_new, store_lock
 from .graph import ring_distances
-from .inline import append_token, parse_inline_links, remove_token, repoint_token
+from .inline import (
+    append_token,
+    parse_inline_links,
+    remove_token,
+    repoint_token,
+    retitle_tokens,
+)
 from .loader import (
     ROOT_FILE,
     STORE_DIR,
@@ -145,12 +156,11 @@ def _serialized(func):
     return wrapper
 
 
-def init_store(root: str | Path = ".", *, graph: bool = False) -> Path:
+def init_store(root: str | Path = ".") -> Path:
     """Create the canonical project with a hidden store and return its root.
 
     The root node carries only identity metadata and no links; placement keys
-    are retired, so nothing declares a band or stage.  ``graph`` is accepted
-    and ignored for backwards compatibility.
+    are retired, so nothing declares a band or stage.
     """
     project = Path(root).resolve()
     hidden = project / STORE_DIR / "nodes"
@@ -292,7 +302,8 @@ def replace(
 ) -> tuple[str, str, str]:
     """Repoint every inbound link from ``old`` to ``new``.
 
-    Token refs are rewritten in place in every node body, and each node's
+    Token refs are rewritten in place in every node body, and each rewritten
+    token's cached title is set to the new node's live title.  Each node's
     ``freshness`` map is repointed from ``old`` to ``new`` keeping its values.
     The old node file is untouched, so it stays a peer version.  When ``old``
     is the store root, ``ROOT`` is repointed to ``new`` instead.  Returns
@@ -307,10 +318,13 @@ def replace(
     if old_ref == new_ref:
         raise BreakdownError(f"refusing to replace {old_ref} with itself")
 
+    new_title = store.nodes[new_ref].title
     repointed: list[str] = []
     for node in store.nodes.values():
         document = parse_document(node.path.read_text(encoding="utf-8"))
-        body, count = repoint_token(document.body, old_ref, new_ref)
+        body, count = repoint_token(
+            document.body, old_ref, new_ref, new_title=new_title
+        )
         raw_fm = document.raw_fm
         freshness = _fm_freshness(document.meta)
         if old_ref in freshness:
@@ -334,6 +348,59 @@ def replace(
             f"{old_ref} has no inbound links; wire {new_ref} with bd link"
         )
     return old_ref, "ROOT" if was_root else "links", new_ref
+
+
+@dataclass
+class RetitleResult:
+    """What :func:`retitle` did, or would do under ``--dry-run``."""
+
+    changed: int = 0
+    nodes: list[str] = field(default_factory=list)
+    dry_run: bool = False
+
+
+@_serialized
+def retitle(
+    root: str | Path,
+    *,
+    view: str | int | None = None,
+    dry_run: bool = False,
+) -> RetitleResult:
+    """Rewrite every cached token title to its target's live title.
+
+    The scope is the whole store by default, or the undirected view rooted at
+    ``view`` when given.  Inside each in-scope node every token is retitled
+    from the target's live title; a token whose target cannot be resolved is
+    left untouched.  Only the title text inside tokens changes.  Nothing is
+    written when no title differs; ``dry_run`` never writes and only reports.
+    """
+    root = resolve_store_root(root)
+    store = load(root)
+    if view is None:
+        refs = list(store.nodes)
+    else:
+        canonical = resolve_ref(store, view)
+        resolved = load_view(store, canonical)
+        refs = list(resolved.nodes)
+    titles = {ref: node.title for ref, node in store.nodes.items()}
+    result = RetitleResult(dry_run=dry_run)
+    order = sorted(
+        refs, key=lambda item: (store.nodes[item].id, store.nodes[item].version)
+    )
+    for ref in order:
+        node = store.nodes[ref]
+        document = parse_document(node.path.read_text(encoding="utf-8"))
+        body, count = retitle_tokens(document.body, titles)
+        if not count:
+            continue
+        result.changed += count
+        result.nodes.append(ref)
+        if not dry_run:
+            atomic_write(
+                node.path,
+                document.opening + document.raw_fm + document.closing + body,
+            )
+    return result
 
 
 @_serialized
@@ -611,6 +678,59 @@ CLASSIC_FILENAME = re.compile(
     r"^(?P<id>[1-9]\d*)(?:-(?P<version>[1-9]\d*))?\.md$"
 )
 
+# Two comma-separated components inside brackets, either order.
+_COMPONENT_TOKEN = re.compile(
+    r"\[\[[ ]*(?P<first>[^\[\],\n]*?)[ ]*,[ ]*(?P<second>[^\[\],\n]*?)[ ]*\]\]"
+)
+# The retired suffix form: ``[[TYPE, REF]](TITLE)`` or ``[[REF, TYPE]](TITLE)``.
+_LEGACY_TITLE_TOKEN = re.compile(
+    _COMPONENT_TOKEN.pattern + r"(?P<title>\([^)\n]+\))"
+)
+
+
+def _component_pair(first: str, second: str) -> tuple[str, str] | None:
+    """``(ref, type)`` when the two components are a ref/type pair, either order."""
+    first, second = first.strip(), second.strip()
+    if is_full_ref(first) and _TOKEN_TYPE.fullmatch(second):
+        return first, second
+    if _TOKEN_TYPE.fullmatch(first) and is_full_ref(second):
+        return second, first
+    return None
+
+
+def _prefix_legacy_titles(text: str) -> tuple[str, int]:
+    """Rewrite ``[[TYPE, REF]](TITLE)`` or ``[[REF, TYPE]](TITLE)`` to prefix form."""
+    changed = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal changed
+        pair = _component_pair(match.group("first"), match.group("second"))
+        if pair is None:
+            return match.group(0)
+        ref, type_ = pair
+        changed += 1
+        return f"{match.group('title')}[[{ref}, {type_}]]"
+
+    return _LEGACY_TITLE_TOKEN.sub(replace, text), changed
+
+
+def _normalize_token_order(text: str) -> tuple[str, int]:
+    """Rewrite every ``[[TYPE, REF]]`` to the canonical ``[[REF, TYPE]]``."""
+    changed = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal changed
+        pair = _component_pair(match.group("first"), match.group("second"))
+        if pair is None:
+            return match.group(0)
+        ref, type_ = pair
+        canonical = f"[[{ref}, {type_}]]"
+        if canonical != match.group(0):
+            changed += 1
+        return canonical
+
+    return _COMPONENT_TOKEN.sub(replace, text), changed
+
 
 def _map_data_ref(
     value: object,
@@ -689,8 +809,12 @@ def migrate(
 
     Classic bare filenames are versioned first.  Front-matter ``links`` and
     ``contains`` lists move into node bodies as a trailing ``## Links``
-    section of ``- [[TYPE, REF]](TITLE)`` token lines, sorted by target ref;
-    the token title is the target's live title at migration time.  Per-link
+    section of ``- (TITLE)[[REF, TYPE]]`` token lines, sorted by target ref;
+    the token title is the target's live title at migration time.  Every
+    token, in either component order, is normalized to ref-first; retired
+    suffix tokens ``[[TYPE, REF]](TITLE)`` and ``[[REF, TYPE]](TITLE)`` are
+    rewritten to the prefix form, and every token without a title is filled
+    from its target (the ref when the target is dangling).  Per-link
     ``pinned``/``propagates`` keys are stripped and recorded in the node's
     top-level ``freshness`` front-matter map.  Retired placement keys
     (``band``, ``subpath``, ``layer``, ``stage``, ``order``) are stripped
@@ -870,9 +994,28 @@ def migrate(
             )
             changed = True
 
-        body = document.body
+        body, legacy_count = _prefix_legacy_titles(document.body)
+        if legacy_count:
+            result.rewrites.append(
+                f"{where}: {legacy_count} suffix tokens -> prefix"
+            )
+        body, order_count = _normalize_token_order(body)
+        if order_count:
+            result.rewrites.append(
+                f"{where}: {order_count} tokens -> ref-first order"
+            )
         for etype, target_ref in entries:
             body = append_token(body, etype, target_ref, target_title(target_ref))
+        token_refs = dict.fromkeys(link.to for link in parse_inline_links(body))
+        retitled = 0
+        if token_refs:
+            body, retitled = retitle_tokens(
+                body, {target_ref: target_title(target_ref) for target_ref in token_refs}
+            )
+        if retitled:
+            result.rewrites.append(f"{where}: retitled {retitled} tokens")
+        if body != document.body:
+            changed = True
 
         if freshness != _fm_freshness(document.meta):
             raw_fm = rewrite_freshness(raw_fm, freshness)

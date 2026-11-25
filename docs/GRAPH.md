@@ -14,24 +14,30 @@ reports `contains-removed` and tells you to run `bd migrate` (§ Migration).
 A link is a reserved token in the node body:
 
 ```markdown
-The intent breaks down into [[breaks_down, 2-1]](Structural claims).
+The intent breaks down into (Structural claims)[[2-1, breaks_down]].
 
 ## Links
-- [[verifies, 12-1]](Verification core)
+- (Verification core)[[12-1, verifies]]
 ```
 
 Both forms declare the same thing: one typed out-edge from this node to a full
-ref. Authors write tokens inside prose; `bd new --parent`, `bd link`, and
-`bd migrate` maintain a trailing `## Links` section of
-`- [[TYPE, REF]](TITLE)` lines. `bd unlink` removes token lines, and
-`bd replace` / `bd clone --subtree` rewrite token refs in place.
+ref. Authors write the bare `[[REF, TYPE]]` inside prose; the tool generates the
+cached title prefix. `bd new --parent`, `bd link`, `bd replace`, `bd migrate`,
+and `bd retitle` write the title; `bd new`, `bd link`, and `bd migrate` also
+maintain a trailing `## Links` section of `- (TITLE)[[REF, TYPE]]` lines.
+`bd unlink` removes token lines, and `bd clone --subtree` rewrites token refs
+in place.
 
-- `TYPE` matches `[A-Za-z][A-Za-z0-9_-]*` and is never empty; `REF` is a full
-  `<id>-<version>` ref. A bare ref in a token fails the grammar
-  (`inline-malformed`); `bare-ref` is reported for a bare `ROOT` line.
-- `(TITLE)` is a cached copy of the target's live title and is advisory.
-  Rendering always reads the live title; only `bd check` compares the cache and
-  warns `link-title-stale`.
+- `REF` comes first and is a full `<id>-<version>` ref; `TYPE` comes second,
+  matches `[A-Za-z][A-Za-z0-9_-]*`, and is never empty. At most one optional
+  space may sit on each side of the comma. A type-first token is
+  `inline-malformed` with reason `reversed components`; a bare ref in a token
+  fails the grammar (`inline-malformed`); `bare-ref` is reported for a bare
+  `ROOT` line.
+- `(TITLE)` is a tool-generated cache of the target's live title. Authors never
+  edit it by hand. Rendering always reads the live title; `bd check` compares
+  the cache exactly (`link-title-stale`) or warns when it is absent
+  (`inline-title-missing`), and `bd retitle` regenerates it.
 - Tokens inside fenced code blocks, inline code spans, and escaped as `\[[` are
   ignored. Indented code blocks and HTML comments are not shielded: a token
   there is read as a link.
@@ -142,8 +148,9 @@ without an incoming edge.
 | `links-removed` | error | a node still declares front-matter `links`; run `bd migrate` |
 | `bare-ref` | error | a data ref is a bare id; use a full `<id>-<version>` ref |
 | `invalid-ref` | error | a data ref or CLI selector is malformed |
-| `inline-malformed` | error | a `[[...]]` fragment does not match `[[TYPE, REF]]` |
+| `inline-malformed` | error | a `[[...]]` fragment does not match `[[REF, TYPE]]`; a type-first token is `reversed components` |
 | `inline-duplicate` | warning | one node declares the same type and target twice |
+| `inline-title-missing` | warning | a token is bare; run `bd retitle` to fill the title |
 | `invalid-freshness` | error | the `freshness:` map or an entry has the wrong shape |
 | `link-title-stale` | warning | a cached token title differs from the target's live title |
 | `graph-dangling-link` | error | a link target does not exist |
@@ -196,21 +203,27 @@ An older store is converted by `bd migrate`:
    `## Links` section, and the key is removed. The edge type comes from
    `--type` (default `breaks_down`).
 3. Front-matter `links` moves into that section as sorted
-   `- [[TYPE, REF]](TITLE)` lines; a retired scalar link gains an explicit type.
+   `- (TITLE)[[REF, TYPE]]` lines; a retired scalar link gains an explicit type.
    Per-link `pinned`/`propagates` values move to the top-level `freshness:` map,
    and `symmetric`/`inverse` are dropped.
-4. Retired placement keys are stripped from every node (`band`, `subpath`,
+4. Legacy suffix tokens `[[TYPE, REF]](TITLE)` and `[[REF, TYPE]](TITLE)` become
+   the prefix form `(TITLE)[[REF, TYPE]]`; tokens in either component order are
+   normalized to ref-first, and missing titles are filled from the target's
+   live title.
+5. Retired placement keys are stripped from every node (`band`, `subpath`,
    `layer`, `stage`, `order`) and from the ROOT node (`band_layout`,
    `band_order`).
 
 `bd migrate --dry-run` prints the plan without writing; `bd migrate` applies it
-atomically; `--root` selects the store. After migration `bd check` passes.
-There is no placement flag; migration is idempotent, and a token-only store is
-left untouched.
+atomically; `--root` selects the store. After migration `bd check` passes, and
+`bd retitle` refreshes every cache in the store (or a view) from the live
+titles. There is no placement flag; migration is idempotent, and a token-only
+store is left untouched.
 
 ```sh
 bd migrate --root docs/breakdown --dry-run
 bd migrate --root docs/breakdown
+bd retitle --root docs/breakdown
 ```
 
 ## Scale notes
@@ -227,7 +240,7 @@ bd migrate --root docs/breakdown
 
 `examples/` is the default store: twelve nodes, one component, no `contains`,
 and no placement key. Its nine linked nodes carry their tokens inline in prose,
-each with a cached title. From `1-1` the rings are:
+each with a tool-generated cached title. From `1-1` the rings are:
 
 | Ring | Members |
 | --- | --- |

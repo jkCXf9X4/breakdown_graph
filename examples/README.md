@@ -3,11 +3,13 @@
 This folder is a complete `bd` project and the default store (`.bd_tree/`,
 `ROOT` `1-1`). The store has twelve nodes and no `contains`: typed body tokens
 are the one edge relation. Each linked node writes its outgoing edges inline in
-prose, for example [[breaks_down, 2-1]](Structural claims); tooling writes the
-same token as a `- [[TYPE, REF]](TITLE)` line under `## Links`. In-edges are
-derived by reversing authored tokens, and the cached title is advisory. There is
-no placement key: the view is the weakly connected component of the anchor, and
-ordering is the undirected BFS hop count from that anchor.
+prose, for example `(Structural claims)[[2-1, breaks_down]]`; tooling writes the
+same token as a `- (TITLE)[[REF, TYPE]]` line under `## Links`. Authors write
+the bare token; the cached title is tool-generated from the target's live title
+and refreshed by `bd retitle`, never hand-edited. In-edges are derived by
+reversing authored tokens. There is no placement key: the view is the weakly
+connected component of the anchor, and ordering is the undirected BFS hop count
+from that anchor.
 
 The store is one component. From `1-1` the rings are:
 
@@ -27,6 +29,7 @@ membership is the whole component.
 
 ```sh
 bd audit                                  # 0 errors, 0 warnings
+bd retitle --dry-run                      # would retitle 0 tokens in 0 nodes
 bd graph                                  # ring sections from 1-1
 bd graph 1-1 --depth 1                    # rings 0 and 1
 bd graph 1-1 --distance 2:3               # ring 0 plus rings 2 and 3

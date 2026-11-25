@@ -56,10 +56,13 @@ run from the repo root with `PYTHONPATH=src python3 -m bd_tree`.
 - Every read-only command works on a `View` or the anchored `Graph`; structural
   edits work on `Store` and write node files.
 - Link declaration is body-owned: `inline.scan_inline_links` reads
-  `[[TYPE, REF]]` tokens, ignoring fenced code, inline code, and `\[[`, and
-  `inline.append_token` / `remove_token` / `repoint_token` maintain the trailing
-  `## Links` section. A cached `(TITLE)` is advisory; rendering reads the live
-  title.
+  `(TITLE)[[REF, TYPE]]` tokens, ignoring fenced code, inline code, and `\[[`;
+  the title is an optional prefix, and a bare token is valid. The scanner
+  reports `inline-title-missing` for a bare token. `inline.append_token` /
+  `remove_token` / `repoint_token` maintain the trailing `## Links` section;
+  `retitle_tokens` rewrites the cached title. The cache is tool-generated from
+  the target's live title; rendering reads the live title, `checker` reports
+  `link-title-stale`, and `ops.retitle` drives the store-wide rewrite.
 
 Validation is global; export and agent context are view-scoped. The default
 anchor is `ROOT`, else the lowest member of the first component; an explicit ref
@@ -85,7 +88,7 @@ conversion path.
 | `exporter.py` | `graph`, `context`, `dot` projections, flat paths, path templates |
 | `work.py` | Single flat `<project>/bd_work/` area, `current`/`views`/`edit`, switching, `--status`, `--writeback`, git context |
 | `solutions.py` | Thin `git worktree` lifecycle wrapper |
-| `ops.py` | `init`, `new` (seeds empty `title`/`summary`), `link`, `unlink`, `clone`, `replace`, `delete`, `diff`, `migrate` |
+| `ops.py` | `init`, `new` (seeds empty `title`/`summary`), `link`, `unlink`, `clone`, `replace`, `delete`, `diff`, `migrate`, `retitle` |
 | `api.py` | Public Python functions |
 | `cli.py` | argparse wiring and output formatting |
 
@@ -217,7 +220,9 @@ Structural edits change body tokens and freshness front matter, not prose.
 
 - `parse_document(text)` keeps `opening`, `raw_fm`, `closing`, `body`.
 - `inline.append_token` / `remove_token` / `repoint_token` maintain the trailing
-  `## Links` section and leave every other body byte alone.
+  `## Links` section and leave every other body byte alone. `retitle_tokens`
+  rewrites the cached title prefix in place; `ops.retitle` is the store-wide
+  driver behind `bd retitle`.
 - `rewrite_freshness(raw_fm, freshness)` replaces only the `freshness:` map.
 - `document.with_raw_fm(new_fm)` reconstructs the file with the body untouched.
 - `render_document(meta, body)` is for new files or an intended full front-matter
@@ -235,8 +240,9 @@ Checklist:
    no `contains` list or front-matter `links` list to write; `migrate` is the
    only place that reads them.
 4. Preserve every token and title cache byte you are not deliberately touching;
-   `append_token` is a no-op for an identical line, and `remove_token` deletes
-   the section when it becomes empty.
+   `append_token` is a no-op for an identical line, `remove_token` deletes the
+   section when it becomes empty, and a title change belongs in `bd retitle`
+   or `retitle_tokens`, never in hand-written prose.
 5. Preserve unrelated front matter and the body outside the edited section.
 6. Test that all other body bytes are unchanged.
 
@@ -267,17 +273,20 @@ python3 -m pytest -q
   component, and a clean audit.
 - `test_refs.py` covers the filename/ref grammar: full refs, selectors, and
   invalid forms.
-- `test_inline.py` covers the token grammar, fences/code spans/escapes,
-  duplicate warnings, cached-title comparison, the `## Links` writers, and the
-  hash stripping that keeps token edits from invalidating a pin.
+- `test_inline.py` covers the token grammar, the prefix title, fences/code
+  spans/escapes, duplicate and missing-title warnings, stale-title comparison,
+  `retitle`, the `## Links` writers, and the hash stripping that keeps token
+  edits from invalidating a pin.
 - Root tests cover the precedence: explicit ref where a command takes one >
   `ROOT` > the lowest component member. They also cover `root-ref-missing`,
   `invalid-root`, and `check --view` narrowing only the report.
 - `contains-removed` tests declare `contains` and assert `bd check` fails with a
   message pointing at `bd migrate`.
 - Migration tests convert `contains` and front-matter `links` to sorted body
-  tokens, move per-link freshness into the `freshness:` map, strip retired
-  placement keys, and assert the migrated store checks clean.
+  tokens, rewrite legacy suffix tokens to the prefix form, fill missing titles,
+  move per-link freshness into the `freshness:` map, strip retired placement
+  keys, and assert the migrated store checks clean. `retitle` tests cover the
+  store and view scopes, unresolved targets, and `--dry-run`.
 - Git tests create a temporary repository, set local `user.name`/`user.email`, and
   use `pytest.mark.skipif(shutil.which("git") is None, ...)`.
 - Structural tests assert body bytes, not just field values.

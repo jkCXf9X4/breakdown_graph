@@ -37,14 +37,14 @@ def _tree(write, tmp_path, body_by_id=None):
         nodes,
         1,
         title="Root",
-        tokens=["[[breaks_down, 2-1]]", "[[breaks_down, 3-1]]"],
+        tokens=["[[2-1, breaks_down]]", "[[3-1, breaks_down]]"],
         body=bodies.get(1, "root body\n"),
     )
     _write_tokens(
         nodes,
         2,
         title="Child",
-        tokens=["[[breaks_down, 4-1]]"],
+        tokens=["[[4-1, breaks_down]]"],
         body=bodies.get(2, "child body\n"),
     )
     _write_tokens(nodes, 3, title="Sibling", tokens=[], body=bodies.get(3, "sibling body\n"))
@@ -104,8 +104,8 @@ def test_show_depth_two_uses_undirected_bfs_rings(write, tmp_path):
 
 def test_show_direction_labels(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="Root", tokens=["[[breaks_down, 2-1]]"], body="b\n")
-    _write_tokens(nodes, 3, title="Parent", tokens=["[[supports, 1-1]]"], body="b\n")
+    _write_tokens(nodes, 1, title="Root", tokens=["[[2-1, breaks_down]]"], body="b\n")
+    _write_tokens(nodes, 3, title="Parent", tokens=["[[1-1, supports]]"], body="b\n")
     _write_tokens(nodes, 2, title="Child", tokens=[], body="b\n")
     store = load(tmp_path)
     out = render_show(store, "1-1", depth=1)
@@ -135,7 +135,7 @@ def test_show_auto_cap_by_depth(write, tmp_path):
     nodes = tmp_path / "nodes"
     body = "x" * 5000
     _write_tokens(
-        nodes, 1, title="Root", tokens=["[[breaks_down, 2-1]]"], body=body + "\n"
+        nodes, 1, title="Root", tokens=["[[2-1, breaks_down]]"], body=body + "\n"
     )
     _write_tokens(nodes, 2, title="Child", tokens=[], body=body + "\n")
     store = load(tmp_path)
@@ -167,8 +167,8 @@ def test_path_command_prints_shortest_path_with_arrows(write, tmp_path, capsys):
 
 def _linked_tree(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="Root", tokens=["[[breaks_down, 2-1]]"], body="b\n")
-    _write_tokens(nodes, 2, title="Child", tokens=["[[history, 10-1]]"], body="b\n")
+    _write_tokens(nodes, 1, title="Root", tokens=["[[2-1, breaks_down]]"], body="b\n")
+    _write_tokens(nodes, 2, title="Child", tokens=["[[10-1, history]]"], body="b\n")
     _write_tokens(nodes, 10, title="Decisions", tokens=[], body="b\n")
     return load(tmp_path)
 
@@ -194,9 +194,9 @@ def test_cli_show_links_flag(write, tmp_path, capsys):
 
 def test_graph_default_uses_root_file(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="One", tokens=["[[x, 2-1]]"], body="b\n")
+    _write_tokens(nodes, 1, title="One", tokens=["[[2-1, x]]"], body="b\n")
     _write_tokens(nodes, 2, title="Two", tokens=[], body="b\n")
-    _write_tokens(nodes, 5, title="Five", tokens=["[[x, 2-1]]"], body="b\n")
+    _write_tokens(nodes, 5, title="Five", tokens=["[[2-1, x]]"], body="b\n")
     (tmp_path / "ROOT").write_text("5-1\n", encoding="utf-8")
     assert main(["graph", "--root", str(tmp_path)]) == 0
     out = capsys.readouterr().out
@@ -208,7 +208,7 @@ def test_graph_default_uses_root_file(write, tmp_path, capsys):
 
 def test_root_command_show_set_clear(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="One", tokens=["[[breaks_down, 2-1]]"], body="b\n")
+    _write_tokens(nodes, 1, title="One", tokens=["[[2-1, breaks_down]]"], body="b\n")
     _write_tokens(nodes, 2, title="Two", tokens=[], body="b\n")
     assert main(["root", "--root", str(tmp_path)]) == 0
     assert capsys.readouterr().out.split()[0] == "1-1"
@@ -228,7 +228,7 @@ def _find_tree(write, tmp_path):
         nodes,
         1,
         title="Root topic",
-        tokens=["[[breaks_down, 2-1]]"],
+        tokens=["[[2-1, breaks_down]]"],
         layer="intent",
         body="alpha\ncredibility appears here\n",
     )
@@ -289,11 +289,11 @@ def test_find_regex_opt_in(write, tmp_path):
 def _two_trees(write, tmp_path):
     nodes = tmp_path / "nodes"
     _write_tokens(
-        nodes, 1, title="First root", tokens=["[[breaks_down, 2-1]]"], body="b\n"
+        nodes, 1, title="First root", tokens=["[[2-1, breaks_down]]"], body="b\n"
     )
     _write_tokens(nodes, 2, title="First child", tokens=[], body="needle first\n")
     _write_tokens(
-        nodes, 5, title="Second root", tokens=["[[breaks_down, 6-1]]"], body="b\n"
+        nodes, 5, title="Second root", tokens=["[[6-1, breaks_down]]"], body="b\n"
     )
     _write_tokens(nodes, 6, title="Second child", tokens=[], body="needle second\n")
     return load(tmp_path)
@@ -352,7 +352,7 @@ def test_path_version_ref(write, tmp_path):
     _tree(write, tmp_path)
     _write_tokens(nodes, 2, title="Child v2", tokens=[], body="v2\n", version=2)
     _write_tokens(
-        nodes, 1, title="Root", tokens=["[[breaks_down, 2-2]]"], body="root body\n"
+        nodes, 1, title="Root", tokens=["[[2-2, breaks_down]]"], body="root body\n"
     )
     store = load(tmp_path)
     assert render_path(store, "2-2") == "1-1  Root\n→ 2-2  Child v2"
@@ -360,8 +360,8 @@ def test_path_version_ref(write, tmp_path):
 
 def test_path_follows_children_and_parents(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="Root", tokens=["[[verifies, 2-1]]"], body="b\n")
-    _write_tokens(nodes, 2, title="Claim", tokens=["[[supports, 3-1]]"], body="b\n")
+    _write_tokens(nodes, 1, title="Root", tokens=["[[2-1, verifies]]"], body="b\n")
+    _write_tokens(nodes, 2, title="Claim", tokens=["[[3-1, supports]]"], body="b\n")
     _write_tokens(nodes, 3, title="Evidence", tokens=[], body="b\n")
     store = load(tmp_path)
 
@@ -392,7 +392,7 @@ def test_view_roots_lists_one_representative_per_component(write, tmp_path):
         nodes,
         5,
         title="Second root v2",
-        tokens=["[[breaks_down, 6-1]]"],
+        tokens=["[[6-1, breaks_down]]"],
         body="b\n",
         version=2,
     )
@@ -403,7 +403,7 @@ def test_view_roots_lists_one_representative_per_component(write, tmp_path):
 
 def test_view_roots_survive_a_cycle(write, tmp_path):
     nodes = tmp_path / "nodes"
-    _write_tokens(nodes, 1, title="One", tokens=["[[x, 2-1]]"], body="b\n")
-    _write_tokens(nodes, 2, title="Two", tokens=["[[x, 1-1]]"], body="b\n")
+    _write_tokens(nodes, 1, title="One", tokens=["[[2-1, x]]"], body="b\n")
+    _write_tokens(nodes, 2, title="Two", tokens=["[[1-1, x]]"], body="b\n")
     store = load(nodes.parent)
     assert [node.ref for node in view_roots(store)] == ["1-1"]

@@ -1,7 +1,7 @@
 """YAML front-matter parsing and surgical rewriting.
 
 The body of a node is never parsed or re-serialised except for stripping the
-reserved ``[[TYPE, REF]]`` tokens, which must not affect freshness pins.
+reserved ``[[REF, TYPE]]`` tokens, which must not affect freshness pins.
 ``rewrite_freshness`` touches only the ``freshness:`` block of the front
 matter so key order and comments elsewhere survive byte for byte.
 """
@@ -126,8 +126,9 @@ def parse_document(text: str) -> Document:
 
 _TOKEN_LINE = re.compile(
     r"^[ \t]*(?:[-*+][ \t]+)?"
-    r"\[\[[A-Za-z][A-Za-z0-9_-]*[ \t]*,[ \t]*[0-9]+-[0-9]+\]\]"
-    r"(?:[ \t]*\([^)\n]*\))?[ \t]*$"
+    r"(?:\([^)\n]+\)[ \t]*)?"
+    r"\[\[[0-9]+-[0-9]+[ \t]*,[ \t]*[A-Za-z][A-Za-z0-9_-]*\]\]"
+    r"[ \t]*$"
 )
 
 

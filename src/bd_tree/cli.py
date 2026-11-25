@@ -2,7 +2,7 @@
 
 Front-matter fields are arbitrary user metadata.  Reserved meaning is
 ``id``, ``legacy`` and ``freshness`` in front matter, and the reserved
-``[[TYPE, REF]](TITLE)`` link tokens in node bodies; display choices are
+``(TITLE)[[REF, TYPE]]`` link tokens in node bodies; display choices are
 given on the command line.
 """
 
@@ -480,6 +480,15 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_retitle(args: argparse.Namespace) -> int:
+    root = _find_root(args.root)
+    view = args.view if args.view is not None else args.ref
+    result = api.retitle(root, view=view, dry_run=args.dry_run)
+    verb = "would retitle" if args.dry_run else "retitled"
+    print(f"{verb} {result.changed} tokens in {len(result.nodes)} nodes")
+    return 0
+
+
 def _cmd_diff(args: argparse.Namespace) -> int:
     root = _find_root(args.root)
     for entry in api.diff(root, args.left, args.right):
@@ -636,6 +645,8 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="Start with `bd work`: it builds a writable symlink tree over the "
         "store and is the primary editing interface.\n"
         "Edit through the symlinks; every node .md file there is the store file.\n"
+        "Link tokens are written bare as [[REF, TYPE]]; cached titles are a tool-written\n"
+        "prefix (TITLE)[[REF, TYPE]] that `bd retitle` regenerates.\n"
         "`bd export` is a read-only projection of the same nodes.\n"
         "Solutions are git worktrees (`bd solution`); layouts inside one are `bd work`.\n"
         "Repair a work tree with `bd work REF --status` or `--writeback`.",
@@ -948,11 +959,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     migrate = sub.add_parser(
         "migrate",
-        help="convert a legacy store to body link tokens",
+        help="convert a legacy store to prefix-form body link tokens",
         description="Version bare filenames, then move every front-matter "
-        "links and contains list into a trailing ## Links section of token "
-        "lines in each node body and strip retired placement keys (band, "
-        "subpath, layer, stage, order, band_layout, band_order).",
+        "links and contains list into a trailing ## Links section of "
+        "(TITLE)[[REF, TYPE]] token lines in each node body. Tokens in either "
+        "component order are normalized to ref-first; retired suffix tokens "
+        "[[TYPE, REF]](TITLE) and [[REF, TYPE]](TITLE) are rewritten to the "
+        "prefix form, missing "
+        "titles are filled from the target, and retired placement keys (band, "
+        "subpath, layer, stage, order, band_layout, band_order) are stripped.",
     )
     _add_root(migrate)
     migrate.add_argument(
@@ -983,12 +998,33 @@ def build_parser() -> argparse.ArgumentParser:
     reconcile.add_argument("--view", default=None, help="view ref (default: store root)")
     reconcile.set_defaults(func=_cmd_reconcile)
 
+    retitle = sub.add_parser(
+        "retitle",
+        help="regenerate cached token titles from live target titles",
+        description="Rewrite every cached title inside link tokens to its "
+        "target's live title, in prose and in ## Links lines. The cached title "
+        "is the prefix (TITLE)[[REF, TYPE]]. Tokens whose target is unresolved "
+        "are left untouched.",
+    )
+    _add_root(retitle)
+    retitle.add_argument(
+        "ref", nargs="?", default=None, help="view ref (default: the whole store)"
+    )
+    retitle.add_argument(
+        "--view", default=None, help="view ref (default: the whole store)"
+    )
+    retitle.add_argument(
+        "--dry-run", action="store_true", help="print the plan without touching disk"
+    )
+    retitle.set_defaults(func=_cmd_retitle)
+
     new = sub.add_parser(
         "new",
         help="create the next global id and link it from a parent",
-        description="Append the new ref as a typed edge of --parent. No "
-        "authored placement is written. Without --parent the node starts its "
-        "own component.",
+        description="Append the new ref as a typed edge token "
+        "(TITLE)[[REF, TYPE]] of --parent, titled with the new node's live "
+        "title. No authored placement is written. Without --parent the node "
+        "starts its own component.",
     )
     _add_root(new)
     new.add_argument(
@@ -1014,9 +1050,10 @@ def build_parser() -> argparse.ArgumentParser:
     link = sub.add_parser(
         "link",
         help="append a typed link edge token to the FROM node body",
-        description="Append a typed edge token in the FROM node's ## Links "
-        "body section. Back-edges, reciprocal edges and cycles are legal; "
-        "a self-loop is refused.",
+        description="Append a typed edge token (TITLE)[[REF, TYPE]] in the "
+        "FROM node's ## Links body section, titled with the target's live "
+        "title. Back-edges, reciprocal edges and cycles are legal; a self-loop "
+        "is refused.",
     )
     _add_root(link)
     link.add_argument("source", metavar="FROM")
