@@ -1,10 +1,10 @@
 # Graph views and ring layout
 
 This document is the reference for how a graph store turns one anchor and its
-authored tokens into a view, a ring ordering, and a flat work area. It covers
-component membership, BFS rings, direction labels, the tie-break rules, the
-generated `INDEX.md` and `REFS.md`, a worked example on the committed store,
-cycles, and the limits of using distance as layout.
+authored tokens into a view, a ring ordering, and a ring-folder work area.
+It covers component membership, BFS rings, direction labels, the tie-break
+rules, the generated `INDEX.md` and `REFS.md`, a worked example on the committed
+store, cycles, and the limits of using distance as layout.
 
 [`DESIGN.md`](DESIGN.md) owns the model and [`GRAPH.md`](GRAPH.md) owns the
 topology and commands. This document owns one question: **given an anchor, which
@@ -166,22 +166,53 @@ bdg graph 1-1 --rings 2:3         # ring 0 plus rings 2 and 3
 bdg graph 1-1 --type supports     # only supports edges are traversed
 ```
 
-## 8. The flat work area
+## 8. The work area
 
 `bdg work REF[+N]` writes the project's single work area, `<project>/bdg_work/`.
-It is flat: one relative symlink per materialized ref, using the store file's
-basename. There are no node directories and no nested folder layout.
+It groups nodes into ring folders by default: one relative symlink per
+materialized ref at `{distance}/{ref}_{title}.md`, plus generated `INDEX.md`,
+`REFS.md`, and `AGENTS.md` at the root.
 
 ```text
 bdg_work/
-├── 1-1.md        -> ../bdg_graph/nodes/1-1.md
-├── 2-1.md        -> ../bdg_graph/nodes/2-1.md
-├── 3-1.md        -> ../bdg_graph/nodes/3-1.md
-├── 4-1.md        -> ../bdg_graph/nodes/4-1.md
-├── INDEX.md      generated
-├── REFS.md       generated
-└── AGENTS.md     generated
+├── 0/
+│   ├── 1-1_Verify the undirected graph.md -> ../bdg_graph/nodes/1-1.md
+│   └── INDEX.md    generated
+├── 1/
+│   ├── 2-1_Structural claims.md -> ../bdg_graph/nodes/2-1.md
+│   ├── 3-1_Verification claims.md -> ../bdg_graph/nodes/3-1.md
+│   └── INDEX.md    generated
+├── 2/
+│   ├── 4-1_Two parents, one node.md -> ../bdg_graph/nodes/4-1.md
+│   ├── 5-1_The component view.md -> ../bdg_graph/nodes/5-1.md
+│   ├── 6-1_Direction is a label.md -> ../bdg_graph/nodes/6-1.md
+│   ├── 7-1_Derived in-edges.md -> ../bdg_graph/nodes/7-1.md
+│   └── INDEX.md    generated
+├── INDEX.md        generated
+├── REFS.md         generated
+└── AGENTS.md       generated
 ```
+
+`bdg work REF --path-template PATTERN` overrides the ring-folder layout.
+Placeholders are the built-ins `{ref}`, `{id}`, `{version}`, `{slug}`, `{title}`,
+`{distance}` plus any front-matter field, e.g. `'{group}/{ref}.md'` groups by a
+front-matter field. The template reads existing front matter; it introduces no
+placement key. The default is the template `{distance}/{ref}_{title}.md` (the
+title is literal, spaces included, and `{title}` falls back to the ref), and the
+chosen
+layout is recorded in `REFS.md` as `# Layout — <template>`
+(`# Layout — {distance}/{ref}_{title}.md` for the default), so a later plain
+`bdg work REF` — a view switch, `--clean`, or a `REF+N` rebuild — reuses it.
+`--flat` restores one symlink per node at its store basename, recorded as
+`# Layout — flat`; it sticks on later rebuilds and conflicts with
+`--path-template`.
+
+Every folder that directly holds node files gets its own generated `INDEX.md`
+with folder-relative links, so each ring folder has one; `bdg edit REF` resolves
+the nested path. Empty folders are not preserved: a folder exists only because a
+node in the current view materializes into it. The store's `nodes/` directory
+stays flat; this is the work-area projection only. `bdg pack` is unchanged: its
+default layout is flat basenames, and it nests only with `--path-template`.
 
 If two node files share a basename (possible only with `--path-template`), the
 ref is appended to the stem. `INDEX.md`, `AGENTS.md`, and `REFS.md` are
@@ -193,25 +224,26 @@ materialized depth as a suffix.
 
 ### 8.1 INDEX.md
 
-`INDEX.md` is one file at the work-area root. It carries a `nodes:` front-matter
-path to the store's real `nodes/` directory, a banner, the view label, a link to
-the real node folder, and ring sections:
+`INDEX.md` is one generated file at the work-area root, plus one in every folder
+that directly holds node files (with folder-relative links).
+It carries a `nodes:` front-matter path to the store's real `nodes/` directory, a
+banner, the view label, a link to the real node folder, and ring sections:
 
 ```markdown
 # View 1-1
 
 ## Active
 
-- [<title>](1-1.md) — [real file](../bdg_graph/nodes/1-1.md)
+- [<title>](0/1-1_Verify the undirected graph.md) — [real file](../bdg_graph/nodes/1-1.md)
 
 ## Distance 1 — children
 
-- [<title>](2-1.md) — [real file](../bdg_graph/nodes/2-1.md)
-- [<title>](3-1.md) — [real file](../bdg_graph/nodes/3-1.md)
+- [<title>](1/2-1_Structural claims.md) — [real file](../bdg_graph/nodes/2-1.md)
+- [<title>](1/3-1_Verification claims.md) — [real file](../bdg_graph/nodes/3-1.md)
 
 ## Distance 2
 
-- [<title>](4-1.md) — [real file](../bdg_graph/nodes/4-1.md)
+- [<title>](2/4-1_Two parents, one node.md) — [real file](../bdg_graph/nodes/4-1.md)
 ```
 
 Ring 1 is split into `children` and `parents`; deeper rings are
@@ -224,13 +256,14 @@ reader can open, copy, or delete the source instead of the symlink.
 
 ```markdown
 # References — view 1-1
+# Layout — {distance}/{ref}_{title}.md
 
 | Path | Ref | Kind | Distance | Title |
 | --- | --- | --- | --- | --- |
-| `1-1.md` | 1-1 | active | 0 | <title> |
-| `2-1.md` | 2-1 | child | 1 | <title> |
-| `3-1.md` | 3-1 | child | 1 | <title> |
-| `4-1.md` | 4-1 | - | 2 | <title> |
+| `0/1-1_Verify the undirected graph.md` | 1-1 | active | 0 | <title> |
+| `1/2-1_Structural claims.md` | 2-1 | child | 1 | <title> |
+| `1/3-1_Verification claims.md` | 3-1 | child | 1 | <title> |
+| `2/4-1_Two parents, one node.md` | 4-1 | - | 2 | <title> |
 ```
 
 Rows are sorted by `(distance, kind, ref)`. The header
@@ -303,16 +336,23 @@ appears once, in ring 3.
 Every step happens to be an authored child edge here, so every arrow is `→`.
 With a back-edge in the chain, the corresponding step is `←`.
 
-The work area for `bdg work 1-1` is flat:
+By default, the work area for `bdg work 1-1` is grouped into ring folders:
 
 ```text
-1-1.md  2-1.md  3-1.md  4-1.md  5-1.md  6-1.md
-7-1.md  8-1.md  9-1.md  10-1.md 11-1.md 12-1.md
-INDEX.md  REFS.md  AGENTS.md
+0/1-1_Verify the undirected graph.md
+1/2-1_Structural claims.md   1/3-1_Verification claims.md
+2/4-1_Two parents, one node.md   2/5-1_The component view.md   2/6-1_Direction is a label.md   2/7-1_Derived in-edges.md
+3/8-1_Verification fan-in.md   3/12-1_Verification core.md
+4/9-1_Operate the graph.md   4/10-1_Require sorted links.md   4/11-1_Verification fan-in 2.md
+0/INDEX.md  1/INDEX.md  2/INDEX.md  3/INDEX.md  4/INDEX.md
+INDEX.md    REFS.md    AGENTS.md
 ```
 
-`bdg work 1-1+2` writes only `1-1.md`, `2-1.md`, `3-1.md`, `4-1.md`, `5-1.md`,
-`6-1.md`, and `7-1.md`; `bdg current --view` then prints `1-1+2`.
+`bdg work 1-1+2` writes only `0/1-1_Verify the undirected graph.md`,
+`1/2-1_Structural claims.md`, `1/3-1_Verification claims.md`,
+`2/4-1_Two parents, one node.md`, `2/5-1_The component view.md`,
+`2/6-1_Direction is a label.md`, and `2/7-1_Derived in-edges.md`;
+`bdg current --view` then prints `1-1+2`.
 
 ## 10. Cycles and back-edges
 
@@ -349,12 +389,12 @@ None reads a layout file.
 | `bdg path REF` | Shortest undirected path from the anchor. |
 | `bdg find QUERY` | The anchor's component by default; `--view` picks another, `--all` searches the store. |
 | `bdg views` | One representative and size per component. |
-| `bdg work REF[+N]` | Flat symlinks plus ring-sorted `INDEX.md` and `REFS.md`. |
+| `bdg work REF[+N]` | Ring-folder symlinks by default (`{distance}/{ref}_{title}.md`; `--flat` uses store basenames, `--path-template` overrides) plus ring-sorted `INDEX.md` and `REFS.md`. |
 | `bdg current --status` | Reads the existing area and its declared view; no rebuild. |
 | `bdg work --repair` | Re-links detached files after validating their front matter. |
 | `bdg current [--path\|--view\|--status]` | Reports the area and its view; read-only. |
 | `bdg edit REF` | Path of the ref in the active view. |
-| `bdg pack REF --out DIR` | Regular-file copy of the flat view plus one ring-section `INDEX.md`. |
+| `bdg pack REF --out DIR` | Regular-file copy of the view (flat by default; `--path-template` nests) plus one ring-section `INDEX.md`. |
 | `bdg pack REF --fresh --out DIR` | Fresh nodes only, plus `STALE.md` and `AGENTS.md`. |
 | `bdg graph REF --format dot\|svg` | Flat DOT or rendered SVG; no clusters. |
 | `bdg clone REF --subtree [--depth N]` | Copies the undirected neighbourhood (rings `0..N`) and rewires cloned edges. |
@@ -409,7 +449,9 @@ None reads a layout file.
 - No authored placement field returns.
 - Full-ref data edges and sorted tokens.
 - The three generated names stay reserved.
-- `bdg_work/` stays flat.
+- `bdg_work/` remains one writable area, grouped into ring folders by default
+  (`{distance}/{ref}_{title}.md`);
+  `--flat` uses store basenames and `--path-template` overrides the layout.
 
 ## 13. Known limits
 

@@ -302,7 +302,7 @@ def migrate(
 
     Retired placement keys are stripped from every node and ROOT; front-matter
     links move into node bodies as ref-first prefix-form token lines.  Tokens
-    are normalized to ``(TITLE)[[REF, TYPE]]``, retired suffix tokens in
+    are normalized to ``(TITLE)[[REF,TYPE]]``, retired suffix tokens in
     either component order are rewritten, and missing titles are filled from
     the target.  Idempotent, so re-running the same migration is a no-op.
     """
@@ -444,6 +444,7 @@ def work(
     status: bool = False,
     writeback: bool = False,
     depth: int | None = None,
+    flat: bool = False,
 ) -> WorkResult:
     """Build, refresh, inspect or write back the single view work area."""
     return _work(
@@ -458,4 +459,5 @@ def work(
         status=status,
         writeback=writeback,
         depth=depth,
+        flat=flat,
     )

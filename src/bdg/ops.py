@@ -1,8 +1,9 @@
 """Filesystem operations on the version-only numeric node store.
 
 Links are declared as reserved tokens in node bodies, not front matter.  The
-canonical token is ``[[REF, TYPE]]``; an optional cached title is a PREFIX,
-``(TITLE)[[REF, TYPE]]``.  Cached titles are tool-written, never
+canonical token is ``[[REF,TYPE]]``; the legacy spaced ``[[REF, TYPE]]`` is
+still accepted on input.  An optional cached title is a PREFIX,
+``(TITLE)[[REF,TYPE]]``.  Cached titles are tool-written, never
 hand-maintained: writers fill the target's live title and :func:`retitle`
 regenerates them.
 
@@ -699,7 +700,7 @@ def _component_pair(first: str, second: str) -> tuple[str, str] | None:
 
 
 def _prefix_legacy_titles(text: str) -> tuple[str, int]:
-    """Rewrite ``[[TYPE, REF]](TITLE)`` or ``[[REF, TYPE]](TITLE)`` to prefix form."""
+    """Rewrite legacy suffix tokens to the prefix form ``(TITLE)[[REF,TYPE]]``."""
     changed = 0
 
     def replace(match: re.Match[str]) -> str:
@@ -709,13 +710,13 @@ def _prefix_legacy_titles(text: str) -> tuple[str, int]:
             return match.group(0)
         ref, type_ = pair
         changed += 1
-        return f"{match.group('title')}[[{ref}, {type_}]]"
+        return f"{match.group('title')}[[{ref},{type_}]]"
 
     return _LEGACY_TITLE_TOKEN.sub(replace, text), changed
 
 
 def _normalize_token_order(text: str) -> tuple[str, int]:
-    """Rewrite every ``[[TYPE, REF]]`` to the canonical ``[[REF, TYPE]]``."""
+    """Rewrite every ``[[TYPE, REF]]`` to the canonical ``[[REF,TYPE]]``."""
     changed = 0
 
     def replace(match: re.Match[str]) -> str:
@@ -724,7 +725,7 @@ def _normalize_token_order(text: str) -> tuple[str, int]:
         if pair is None:
             return match.group(0)
         ref, type_ = pair
-        canonical = f"[[{ref}, {type_}]]"
+        canonical = f"[[{ref},{type_}]]"
         if canonical != match.group(0):
             changed += 1
         return canonical
@@ -809,7 +810,7 @@ def migrate(
 
     Classic bare filenames are versioned first.  Front-matter ``links`` and
     ``contains`` lists move into node bodies as a trailing ``## Links``
-    section of ``- (TITLE)[[REF, TYPE]]`` token lines, sorted by target ref;
+    section of ``- (TITLE)[[REF,TYPE]]`` token lines, sorted by target ref;
     the token title is the target's live title at migration time.  Every
     token, in either component order, is normalized to ref-first; retired
     suffix tokens ``[[TYPE, REF]](TITLE)`` and ``[[REF, TYPE]](TITLE)`` are

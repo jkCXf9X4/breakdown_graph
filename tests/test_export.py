@@ -4,8 +4,9 @@ import shutil
 
 import pytest
 
-from bdg.api import check, pack
+from bdg.api import check, load_view, pack
 from bdg.errors import ExportError
+from bdg.exporter import _build_paths, _directory_indexes, _write_indexes
 from bdg.graph import build_graph, graph_view, render_dot, render_svg
 
 
@@ -248,6 +249,94 @@ def test_reserved_template_is_refused(write, tmp_path):
         pack(tmp_path, "1-1", out, fresh=True, path_template="INDEX.md")
     with pytest.raises(ExportError, match="collides with generated"):
         pack(tmp_path, "1-1", out, fresh=True, path_template="AGENTS.md")
+
+
+def test_nested_directory_indexes_cover_each_folder(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2", "type": "breaks_down"}], group="intro")
+    write(nodes, 2, links=[{"to": "3", "type": "breaks_down"}], group="body")
+    write(nodes, 3, group="body/deep")
+    view = load_view(tmp_path, "1-1")
+    graph = build_graph(tmp_path, anchor="1-1")
+    paths = _build_paths(view, "{group}/{ref}.md", list(view.nodes), graph=graph)
+    indexes = _directory_indexes(
+        view, paths, "title", "summary", graph=graph, label="1-1"
+    )
+
+    assert set(indexes) == {"", "intro", "body", "body/deep"}
+    assert "](1-1.md)" in indexes["intro"]
+    assert "](intro/1-1.md)" not in indexes["intro"]
+
+    body = indexes["body"]
+    assert "# Folder — body" in body
+    assert "[parent index](../INDEX.md)" in body
+    assert "](2-1.md)" in body
+    assert "](body/2-1.md)" not in body
+    # A node in a sub-subfolder belongs to that folder, not this one.
+    assert "3-1" not in body
+
+    deep = indexes["body/deep"]
+    assert "# Folder — body/deep" in deep
+    assert "](3-1.md)" in deep
+    assert "](body/deep/3-1.md)" not in deep
+    assert "[parent index](../INDEX.md)" in deep
+    assert "[root index](../../INDEX.md)" in deep
+
+
+def test_flat_directory_indexes_stay_root_only(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    _chain(write, nodes)
+    view = load_view(tmp_path, "1-1")
+    graph = build_graph(tmp_path, anchor="1-1")
+    paths = _build_paths(view, None, list(view.nodes), graph=graph)
+    indexes = _directory_indexes(
+        view, paths, "title", "summary", graph=graph, label="1-1"
+    )
+
+    assert list(indexes) == [""]
+    assert all("/" not in path for path in paths.values())
+    assert "\n# View 1-1\n" in indexes[""]
+
+
+def test_write_indexes_removes_stale_nested_indexes(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2", "type": "breaks_down"}], group="a")
+    write(nodes, 2, links=[{"to": "4", "type": "breaks_down"}], group="a/b")
+    write(nodes, 3, group="other")
+    write(nodes, 4, group="a/b")
+    view = load_view(tmp_path, "1-1")
+    graph = build_graph(tmp_path, anchor="1-1")
+    nested = _directory_indexes(
+        view,
+        _build_paths(view, "{group}/{ref}.md", list(view.nodes), graph=graph),
+        "title",
+        "summary",
+        graph=graph,
+    )
+    out = tmp_path / "work"
+    _write_indexes(out, nested)
+    assert (out / "a" / "INDEX.md").is_file()
+    assert (out / "a" / "b" / "INDEX.md").is_file()
+
+    flat = _directory_indexes(
+        view,
+        _build_paths(view, None, list(view.nodes), graph=graph),
+        "title",
+        "summary",
+        graph=graph,
+    )
+    _write_indexes(out, flat)
+    assert sorted(out.rglob("INDEX.md")) == [out / "INDEX.md"]
+    assert not list((out / "a").rglob("INDEX.md"))
+
+
+def test_nested_reserved_index_template_is_refused(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2", "type": "breaks_down"}], group="nested")
+    write(nodes, 2, group="nested")
+    out = tmp_path / "view"
+    with pytest.raises(ExportError, match="collides with generated"):
+        pack(tmp_path, "1-1", out, fresh=True, path_template="{group}/INDEX.md")
 
 
 def test_dot_color_and_shape_by_arbitrary_fields(write, tmp_path):

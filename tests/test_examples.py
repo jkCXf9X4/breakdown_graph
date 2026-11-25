@@ -127,29 +127,56 @@ def test_example_nodes_declare_no_placement_keys():
     }
 
 
-def test_example_work_is_flat_and_edit_resolves(tmp_path):
+RING = {
+    "1-1": 0,
+    "2-1": 1,
+    "3-1": 1,
+    "4-1": 2,
+    "5-1": 2,
+    "6-1": 2,
+    "7-1": 2,
+    "8-1": 3,
+    "12-1": 3,
+    "9-1": 4,
+    "10-1": 4,
+    "11-1": 4,
+}
+
+
+def test_example_work_groups_rings_and_edit_resolves(tmp_path):
     root = _example_store(tmp_path)
     out = root / "bdg_work"
     result = api.work(root, "1-1")
+    store = api.load(root)
 
     assert result.nodes == 12 and result.symlinks == 12
     for ref in REFS:
-        assert (out / f"{ref}.md").is_symlink()
+        assert (
+            out / str(RING[ref]) / f"{ref}_{store.nodes[ref].title}.md"
+        ).is_symlink()
     for name in ("INDEX.md", "REFS.md", "AGENTS.md"):
         assert (out / name).is_file() and not (out / name).is_symlink()
 
-    assert api.edit_path(root, "5-1") == out / "5-1.md"
-    assert api.edit_path(root, "7-1") == out / "7-1.md"
-    assert api.edit_path(root, "8-1") == out / "8-1.md"
-    assert api.edit_path(root, "12-1") == out / "12-1.md"
+    assert api.edit_path(root, "1-1") == (
+        out / "0" / "1-1_Verify the undirected graph.md"
+    )
+    assert api.edit_path(root, "5-1") == out / "2" / "5-1_The component view.md"
+    assert api.edit_path(root, "7-1") == out / "2" / "7-1_Derived in-edges.md"
+    assert api.edit_path(root, "8-1") == out / "3" / "8-1_Verification fan-in.md"
+    assert api.edit_path(root, "12-1") == out / "3" / "12-1_Verification core.md"
 
-    index = (out / "INDEX.md").read_text(encoding="utf-8")
-    assert "## Active" in index
-    assert "## Distance 1 — children" in index
-    assert "## Distance 2" in index
+    active = (out / "0" / "INDEX.md").read_text(encoding="utf-8")
+    assert "## Active" in active
+    children = (out / "1" / "INDEX.md").read_text(encoding="utf-8")
+    assert "## Distance 1 — children" in children
+    deeper = (out / "2" / "INDEX.md").read_text(encoding="utf-8")
+    assert "## Distance 2" in deeper
     refs = (out / "REFS.md").read_text(encoding="utf-8")
     assert "| Distance |" in refs
-    assert "| `1-1.md` | 1-1 | active | 0 |" in refs
+    assert "# Layout — {distance}/{ref}_{title}.md" in refs
+    assert (
+        "| `0/1-1_Verify the undirected graph.md` | 1-1 | active | 0 |" in refs
+    )
 
     status = api.work(root, status=True)
     assert status.ok

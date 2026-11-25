@@ -7,6 +7,13 @@ import pytest
 
 from bdg import api
 
+DEFAULT_PATH_TEMPLATE = "{distance}/{ref}_{title}.md"
+
+
+def _default(ref: str, distance: int) -> str:
+    """Default-layout path for a fixture node titled ``Title of <ref>``."""
+    return f"{distance}/{ref}_Title of {ref}.md"
+
 
 def _tree(write, tmp_path):
     """1 -> 2, 3; 2 -> 4.  The component is flat-ringed from 1-1."""
@@ -60,7 +67,7 @@ def test_work_links_every_node_and_writes_generated_files(write, tmp_path):
     assert set(by_ref) == set(store.nodes)
     for node in store.nodes.values():
         dest = out / by_ref[node.ref]
-        assert dest.parent == out
+        assert dest.parent.parent == out
         assert dest.is_symlink()
         assert dest.resolve() == node.path.resolve()
         assert not os.path.isabs(os.readlink(dest))
@@ -71,7 +78,7 @@ def test_work_links_every_node_and_writes_generated_files(write, tmp_path):
     assert "symlink" in agents and "repair path" in agents
     refs = (out / "REFS.md").read_text(encoding="utf-8")
     assert "| Path | Ref | Kind | Distance | Title |" in refs
-    assert "`2-1.md` | 2-1 | child | 1 |" in refs
+    assert f"`{_default('2-1', 1)}` | 2-1 | child | 1 |" in refs
 
 
 def test_work_index_uses_ring_sections(write, tmp_path):
@@ -83,20 +90,27 @@ def test_work_index_uses_ring_sections(write, tmp_path):
     assert index.startswith("---\nnodes: ../nodes\n---\n")
     assert "# View 1-1" in index
     assert "[nodes/](../nodes/)" in index
-    assert "## Active" in index
-    assert "## Distance 1 — children" in index
-    assert "## Distance 2" in index
-    assert index.index("## Active") < index.index("## Distance 1 — children")
-    assert index.index("## Distance 1 — children") < index.index("## Distance 2")
-    assert "[Title of 1-1](1-1.md)" in index
-    assert "[real file](../nodes/1-1.md)" in index
-    assert "[Title of 4-1](4-1.md)" in index
+
+    active = (out / "0" / "INDEX.md").read_text(encoding="utf-8")
+    assert "# Folder — 0" in active
+    assert "## Active" in active
+    assert "[Title of 1-1](1-1_Title of 1-1.md)" in active
+
+    children = (out / "1" / "INDEX.md").read_text(encoding="utf-8")
+    assert "# Folder — 1" in children
+    assert "## Distance 1 — children" in children
+    assert "[Title of 2-1](2-1_Title of 2-1.md)" in children
+
+    deeper = (out / "2" / "INDEX.md").read_text(encoding="utf-8")
+    assert "## Distance 2" in deeper
+    assert "[Title of 4-1](4-1_Title of 4-1.md)" in deeper
 
     refs = (out / "REFS.md").read_text(encoding="utf-8")
     assert refs.startswith("<!-- GENERATED FILE")
     assert "# References — view 1-1" in refs
-    assert "`1-1.md` | 1-1 | active | 0 |" in refs
-    assert "`4-1.md` | 4-1 | - | 2 |" in refs
+    assert f"# Layout — {DEFAULT_PATH_TEMPLATE}" in refs
+    assert f"`{_default('1-1', 0)}` | 1-1 | active | 0 |" in refs
+    assert f"`{_default('4-1', 2)}` | 4-1 | - | 2 |" in refs
 
 
 def test_work_cycle_appears_once_at_minimum_distance(write, tmp_path):
@@ -111,7 +125,7 @@ def test_work_cycle_appears_once_at_minimum_distance(write, tmp_path):
     # 3-1 is a neighbour of the anchor (3 -> 1), so it stays at distance 1.
     assert "| 3-1 | parent | 1 |" in refs
     assert "| 4-1 | - | 2 |" in refs
-    index = (out / "INDEX.md").read_text(encoding="utf-8")
+    index = (out / "1" / "INDEX.md").read_text(encoding="utf-8")
     assert index.count("[Title of 3-1]") == 1
     assert "## Distance 1 — parents" in index
     assert api.work(tmp_path, "1-1", out, status=True).ok
@@ -125,14 +139,14 @@ def test_work_cli_builds_the_same_tree(write, tmp_path, capsys):
     assert main(["work", "1-1", "--root", str(tmp_path)]) == 0
     output = capsys.readouterr().out
     assert "4 nodes, 4 symlinks" in output
-    assert (out / "2-1.md").is_symlink()
+    assert (out / _default("2-1", 1)).is_symlink()
 
 
 def test_write_through_edits_the_store_file(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
-    dest = out / "2-1.md"
+    dest = out / _default("2-1", 1)
     dest.write_text("edited through the link\n", encoding="utf-8")
     assert (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8") == (
         "edited through the link\n"
@@ -188,7 +202,7 @@ def test_area_and_edit_path_are_read_only(write, tmp_path):
         out / "INDEX.md",
         out / "REFS.md",
         out / "AGENTS.md",
-        out / "2-1.md",
+        out / _default("2-1", 1),
     ]
     before = {
         path: (path.stat().st_mtime_ns, path.read_bytes()) for path in watched
@@ -197,7 +211,9 @@ def test_area_and_edit_path_are_read_only(write, tmp_path):
     current = area(tmp_path)
     assert current.out == out
     assert current.ref == "1-1"
-    assert edit_path(tmp_path, "2") == out / "2-1.md"
+    assert current.layout_recorded
+    assert current.path_template == DEFAULT_PATH_TEMPLATE
+    assert edit_path(tmp_path, "2") == out / _default("2-1", 1)
 
     after = {
         path: (path.stat().st_mtime_ns, path.read_bytes()) for path in watched
@@ -209,7 +225,7 @@ def test_edit_path_returns_the_expected_path_without_building(write, tmp_path):
     _tree(write, tmp_path)
     api.work(tmp_path, "1-1")
     out = (tmp_path / "bdg_work").resolve()
-    dest = out / "2-1.md"
+    dest = out / _default("2-1", 1)
     dest.unlink()
     from bdg.work import edit_path
 
@@ -247,23 +263,23 @@ def test_status_reports_a_detached_file(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
-    dest = out / "2-1.md"
+    dest = out / _default("2-1", 1)
     original = (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8")
     dest.unlink()
     dest.write_text(original + "\nlocal note\n", encoding="utf-8")
 
     status = api.work(tmp_path, "1-1", out, status=True)
     assert not status.ok
-    assert _entry(status, "2-1.md").status == "detached"
-    assert _entry(status, "2-1.md").ref == "2-1"
-    assert _entry(status, "1-1.md").status == "ok"
+    assert _entry(status, _default("2-1", 1)).status == "detached"
+    assert _entry(status, _default("2-1", 1)).ref == "2-1"
+    assert _entry(status, _default("1-1", 0)).status == "ok"
 
 
 def test_current_status_reports_drift_and_exits_non_zero(write, tmp_path, capsys):
     _tree(write, tmp_path)
     api.work(tmp_path, "1-1")
     out = tmp_path / "bdg_work"
-    dest = out / "2-1.md"
+    dest = out / _default("2-1", 1)
     original = (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8")
     dest.unlink()
     dest.write_text(original + "\nlocal note\n", encoding="utf-8")
@@ -271,7 +287,7 @@ def test_current_status_reports_drift_and_exits_non_zero(write, tmp_path, capsys
 
     assert main(["current", "--status", "--root", str(tmp_path)]) == 1
     captured = capsys.readouterr()
-    assert "detached: 2-1.md" in captured.out
+    assert f"detached: {_default('2-1', 1)}" in captured.out
     assert "not ok" in captured.out
 
 
@@ -279,7 +295,7 @@ def test_writeback_restores_store_and_relinks(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
-    dest = out / "2-1.md"
+    dest = out / _default("2-1", 1)
     edited = (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8") + "\nlocal note\n"
     dest.unlink()
     dest.write_text(edited, encoding="utf-8")
@@ -335,7 +351,7 @@ def test_default_out_is_the_single_project_work_area(write, tmp_path):
     expected = (tmp_path / "bdg_work").resolve()
     assert result.out == expected
     assert expected.is_dir()
-    assert (expected / "2-1.md").is_symlink()
+    assert (expected / _default("2-1", 1)).is_symlink()
 
 
 def test_default_out_for_hidden_store_is_project_bdg_work(write, tmp_path):
@@ -345,8 +361,19 @@ def test_default_out_for_hidden_store_is_project_bdg_work(write, tmp_path):
     result = api.work(tmp_path, "1-1")
     expected = (tmp_path / "bdg_work").resolve()
     assert result.out == expected
-    assert (expected / "1-1.md").is_symlink()
-    assert (expected / "1-1.md").resolve() == (store / "1-1.md").resolve()
+    assert (expected / _default("1-1", 0)).is_symlink()
+    assert (expected / _default("1-1", 0)).resolve() == (store / "1-1.md").resolve()
+
+
+def test_untitled_node_uses_its_ref_as_the_stem(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, title="Root", links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2, title=None)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1-1", out)
+
+    assert (out / "1" / "2-1_2-1.md").is_symlink()
+    assert "`1/2-1_2-1.md`" in (out / "REFS.md").read_text(encoding="utf-8")
 
 
 def test_ref_switch_replaces_the_same_work_area(write, tmp_path):
@@ -359,18 +386,18 @@ def test_ref_switch_replaces_the_same_work_area(write, tmp_path):
     first = api.work(tmp_path, "1-1")
     out = first.out
     assert out == (tmp_path / "bdg_work").resolve()
-    old_link = out / "1-1.md"
+    old_link = out / _default("1-1", 0)
     assert old_link.is_symlink()
     assert old_link.resolve() == (nodes / "1-1.md").resolve()
 
     second = api.work(tmp_path, "1-2")
 
     assert second.out == out
-    assert not (out / "1-1.md").is_symlink()
-    assert not (out / "1-1.md").exists()
-    assert not (out / "2-1.md").is_symlink()
-    assert (out / "1-2.md").resolve() == (nodes / "1-2.md").resolve()
-    assert (out / "2-2.md").resolve() == (nodes / "2-2.md").resolve()
+    assert not (out / _default("1-1", 0)).is_symlink()
+    assert not (out / _default("1-1", 0)).exists()
+    assert not (out / _default("2-1", 1)).is_symlink()
+    assert (out / _default("1-2", 0)).resolve() == (nodes / "1-2.md").resolve()
+    assert (out / _default("2-2", 1)).resolve() == (nodes / "2-2.md").resolve()
     refs = (out / "REFS.md").read_text(encoding="utf-8")
     index = (out / "INDEX.md").read_text(encoding="utf-8")
     agents = (out / "AGENTS.md").read_text(encoding="utf-8")
@@ -411,7 +438,7 @@ def test_detached_file_blocks_a_ref_switch_until_clean(write, tmp_path):
 
     api.work(tmp_path, "1-1")
     out = tmp_path / "bdg_work"
-    dest = out / "1-1.md"
+    dest = out / _default("1-1", 0)
     dest.unlink()
     dest.write_text("detached\n", encoding="utf-8")
 
@@ -422,8 +449,8 @@ def test_detached_file_blocks_a_ref_switch_until_clean(write, tmp_path):
     assert dest.read_text(encoding="utf-8") == "detached\n"
 
     api.work(tmp_path, "1-2", clean=True)
-    assert not (out / "1-1.md").exists()
-    assert (out / "1-2.md").is_symlink()
+    assert not (out / _default("1-1", 0)).exists()
+    assert (out / _default("1-2", 0)).is_symlink()
 
 
 def test_path_template_uses_distance_and_ref(write, tmp_path):
@@ -446,8 +473,8 @@ def test_front_matter_name_does_not_change_the_link(write, tmp_path):
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
 
-    assert (out / "1-1.md").is_symlink()
-    assert (out / "2-1.md").is_symlink()
+    assert (out / _default("1-1", 0)).is_symlink()
+    assert (out / _default("2-1", 1)).is_symlink()
     assert not (out / "a.md").exists()
     assert not (out / "b.md").exists()
 
@@ -456,7 +483,7 @@ def test_status_and_writeback_use_refs_manifest_when_ref_changes(write, tmp_path
     _tree(write, tmp_path)
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
-    dest = out / "2-1.md"
+    dest = out / _default("2-1", 1)
     dest.unlink()
     dest.write_text(
         "---\n"
@@ -471,7 +498,7 @@ def test_status_and_writeback_use_refs_manifest_when_ref_changes(write, tmp_path
     )
 
     status = api.work(tmp_path, "1-1", out, status=True)
-    entry = _entry(status, "2-1.md")
+    entry = _entry(status, _default("2-1", 1))
     assert entry.ref == "2-1"
     assert entry.status == "detached"
     assert not status.ok
@@ -496,8 +523,8 @@ def test_two_work_dirs_share_the_same_nodes(write, tmp_path):
     api.work(tmp_path, "1-1", a)
     api.work(tmp_path, "2-1", b)
 
-    through_b = b / "2-1.md"
-    through_a = a / "2-1.md"
+    through_b = b / _default("2-1", 0)
+    through_a = a / _default("2-1", 1)
     assert through_b.is_symlink() and through_a.is_symlink()
     through_b.write_text("edited through b\n", encoding="utf-8")
 
@@ -525,16 +552,18 @@ def test_refresh_repairs_missing_and_wrong_target_links(write, tmp_path):
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
 
-    (out / "2-1.md").unlink()
-    wrong = out / "4-1.md"
+    (out / _default("2-1", 1)).unlink()
+    wrong = out / _default("4-1", 2)
     wrong.unlink()
     wrong.symlink_to(os.path.relpath(tmp_path / "nodes" / "3-1.md", out))
 
     result = api.work(tmp_path, "1-1", out)
 
     assert result.symlinks == 4
-    assert (out / "2-1.md").is_symlink()
-    assert (out / "4-1.md").resolve() == (tmp_path / "nodes" / "4-1.md").resolve()
+    assert (out / _default("2-1", 1)).is_symlink()
+    assert (out / _default("4-1", 2)).resolve() == (
+        tmp_path / "nodes" / "4-1.md"
+    ).resolve()
     assert api.work(tmp_path, "1-1", out, status=True).ok
 
 
@@ -547,9 +576,9 @@ def test_refresh_removes_stale_ref_links(write, tmp_path):
     result = api.work(tmp_path, "5-1", out)
 
     assert result.ref == "5-1"
-    assert not (out / "1-1.md").exists()
-    assert not (out / "3-1.md").exists()
-    assert (out / "5-1.md").is_symlink()
+    assert not (out / _default("1-1", 0)).exists()
+    assert not (out / _default("3-1", 1)).exists()
+    assert (out / _default("5-1", 0)).is_symlink()
     assert api.work(tmp_path, "5-1", out, status=True).ok
 
 
@@ -557,7 +586,7 @@ def test_detached_file_blocks_refresh_until_repair(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "bdg_work"
     api.work(tmp_path, "1-1")
-    dest = out / "2-1.md"
+    dest = out / _default("2-1", 1)
     original = dest.read_text(encoding="utf-8")
     dest.unlink()
     dest.write_text(original + "detached edit\n", encoding="utf-8")
@@ -645,7 +674,7 @@ def test_force_overwrites_a_detached_file(write, tmp_path):
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
     store_before = (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8")
-    dest = out / "2-1.md"
+    dest = out / _default("2-1", 1)
     dest.unlink()
     dest.write_text("detached edit\n", encoding="utf-8")
 
@@ -661,7 +690,7 @@ def test_writeback_refuses_a_detached_file_without_frontmatter(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
-    dest = out / "2-1.md"
+    dest = out / _default("2-1", 1)
     dest.unlink()
     dest.write_text("body only\n", encoding="utf-8")
     before = (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8")
@@ -669,7 +698,7 @@ def test_writeback_refuses_a_detached_file_without_frontmatter(write, tmp_path):
     result = api.work(tmp_path, "1-1", out, writeback=True)
 
     assert result.written == 0
-    assert result.invalid == ["2-1.md"]
+    assert result.invalid == [_default("2-1", 1)]
     assert (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8") == before
     assert not dest.is_symlink()
 
@@ -755,7 +784,9 @@ def test_write_through_is_visible_to_git_status(write, tmp_path):
     out = tmp_path / "work"
     api.work(repo, "1-1", out)
 
-    (out / "2-1.md").write_text("edited through the link\n", encoding="utf-8")
+    (out / _default("2-1", 1)).write_text(
+        "edited through the link\n", encoding="utf-8"
+    )
 
     porcelain = _run_git(repo, "status", "--porcelain")
     assert "nodes/2-1.md" in porcelain
@@ -769,10 +800,10 @@ def test_depth_limited_work_materializes_only_the_rings(write, tmp_path):
 
     assert result.depth == 1 and result.view_ref == "1-1+1"
     assert result.nodes == 3 and result.symlinks == 3
-    assert (out / "1-1.md").is_symlink()
-    assert (out / "2-1.md").is_symlink()
-    assert (out / "3-1.md").is_symlink()
-    assert not (out / "4-1.md").exists()
+    assert (out / _default("1-1", 0)).is_symlink()
+    assert (out / _default("2-1", 1)).is_symlink()
+    assert (out / _default("3-1", 1)).is_symlink()
+    assert not (out / _default("4-1", 2)).exists()
     for name in ("REFS.md", "INDEX.md", "AGENTS.md"):
         text = (out / name).read_text(encoding="utf-8")
         assert "1-1+1" in text
@@ -795,7 +826,7 @@ def test_depth_limited_work_edit_path_hides_excluded_refs(write, tmp_path):
     current = area(tmp_path)
     assert current.ref == "1-1" and current.depth == 1
     assert current.view_ref == "1-1+1"
-    assert edit_path(tmp_path, "2") == out / "2-1.md"
+    assert edit_path(tmp_path, "2") == out / _default("2-1", 1)
     with pytest.raises(ExportError, match=r"current view 1-1\+1"):
         edit_path(tmp_path, "4")
 
@@ -809,7 +840,7 @@ def test_full_work_restores_the_component_and_drops_the_suffix(write, tmp_path):
 
     assert result.depth is None and result.view_ref == "1-1"
     assert result.nodes == 4
-    assert (out / "4-1.md").is_symlink()
+    assert (out / _default("4-1", 2)).is_symlink()
     refs = (out / "REFS.md").read_text(encoding="utf-8")
     index = (out / "INDEX.md").read_text(encoding="utf-8")
     agents = (out / "AGENTS.md").read_text(encoding="utf-8")
@@ -839,12 +870,12 @@ def test_switching_depth_removes_and_restores_stale_links(write, tmp_path):
 
     api.work(tmp_path, "1-1", out, depth=1)
     assert _link_count(out) == 3
-    assert not (out / "4-1.md").exists()
+    assert not (out / _default("4-1", 2)).exists()
     assert api.work(tmp_path, "1-1", out, status=True).ok
 
     api.work(tmp_path, "1-1", out)
     assert _link_count(out) == 4
-    assert (out / "4-1.md").is_symlink()
+    assert (out / _default("4-1", 2)).is_symlink()
     assert api.work(tmp_path, "1-1", out, status=True).ok
 
 
@@ -855,8 +886,8 @@ def test_depth_zero_materializes_the_root_only(write, tmp_path):
 
     assert result.view_ref == "1-1+0" and result.nodes == 1
     assert _link_count(out) == 1
-    assert (out / "1-1.md").is_symlink()
-    assert not (out / "2-1.md").exists()
+    assert (out / _default("1-1", 0)).is_symlink()
+    assert not (out / _default("2-1", 1)).exists()
 
 
 def test_depth_limited_cycle_keeps_minimum_distance(write, tmp_path):
@@ -867,12 +898,12 @@ def test_depth_limited_cycle_keeps_minimum_distance(write, tmp_path):
 
     assert result.view_ref == "1-1+1"
     assert _link_count(out) == 3
-    assert (out / "3-1.md").is_symlink()
-    assert not (out / "4-1.md").exists()
+    assert (out / _default("3-1", 1)).is_symlink()
+    assert not (out / _default("4-1", 2)).exists()
     assert api.work(tmp_path, "1-1", out, status=True).ok
 
 
-def test_pack_and_work_agree_on_flat_paths(write, tmp_path):
+def test_pack_stays_flat_while_work_groups_rings(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(
         nodes,
@@ -900,17 +931,26 @@ def test_pack_and_work_agree_on_flat_paths(write, tmp_path):
             if path.name not in generated
         }
 
-    assert relpaths(graph) == relpaths(work)
-    assert relpaths(work) == {"1-1.md", "2-1.md", "3-1.md"}
+    assert relpaths(graph) == {"1-1.md", "2-1.md", "3-1.md"}
+    assert relpaths(work) == {
+        "0/1-1_Root.md",
+        "1/2-1_Title of 2-1.md",
+        "1/3-1_Plain.md",
+    }
 
 
-def test_work_writes_only_the_root_index(write, tmp_path):
+def test_work_writes_folder_indexes(write, tmp_path):
     _tree(write, tmp_path)
     out = tmp_path / "work"
     api.work(tmp_path, "1-1", out)
 
-    indexes = sorted(out.rglob("INDEX.md"))
-    assert indexes == [out / "INDEX.md"]
+    indexes = set(out.rglob("INDEX.md"))
+    assert indexes == {
+        out / "INDEX.md",
+        out / "0" / "INDEX.md",
+        out / "1" / "INDEX.md",
+        out / "2" / "INDEX.md",
+    }
     assert (out / "INDEX.md").is_file() and not (out / "INDEX.md").is_symlink()
     assert api.work(tmp_path, "1-1", out, status=True).ok
 
@@ -964,8 +1004,159 @@ def test_switching_components_removes_old_links_and_keeps_one_index(write, tmp_p
 
     api.work(tmp_path, "7-1")
 
-    assert not (out / "1-1.md").exists()
-    assert not (out / "2-1.md").exists()
-    assert (out / "7-1.md").is_symlink()
-    assert sorted(out.rglob("INDEX.md")) == [out / "INDEX.md"]
+    assert not (out / _default("1-1", 0)).exists()
+    assert not (out / _default("2-1", 1)).exists()
+    assert (out / _default("7-1", 0)).is_symlink()
+    assert not (out / "1").exists()
+    assert set(out.rglob("INDEX.md")) == {
+        out / "INDEX.md",
+        out / "0" / "INDEX.md",
+    }
     assert api.work(tmp_path, "7-1", status=True).ok
+
+
+NESTED = "{distance}/{ref}.md"
+
+
+def test_nested_layout_persists_through_a_plain_rebuild(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1-1", out, path_template=NESTED)
+
+    assert (out / "0" / "1-1.md").is_symlink()
+    assert (out / "1" / "2-1.md").is_symlink()
+    assert (out / "2" / "4-1.md").is_symlink()
+    refs = (out / "REFS.md").read_text(encoding="utf-8")
+    assert "# Layout — {distance}/{ref}.md" in refs
+
+    api.work(tmp_path, "1-1", out)
+
+    assert (out / "1" / "2-1.md").is_symlink()
+    assert not (out / "2-1.md").exists()
+    refs = (out / "REFS.md").read_text(encoding="utf-8")
+    assert "# Layout — {distance}/{ref}.md" in refs
+    assert "`1/2-1.md` | 2-1 | child | 1 |" in refs
+
+
+def test_flat_rebuild_resets_a_nested_layout(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1-1", out, path_template=NESTED)
+
+    api.work(tmp_path, "1-1", out, flat=True)
+
+    assert (out / "2-1.md").is_symlink()
+    assert not (out / "1").exists()
+    refs = (out / "REFS.md").read_text(encoding="utf-8")
+    assert "# Layout — flat" in refs
+    assert api.work(tmp_path, "1-1", out, status=True).ok
+
+
+def test_flat_layout_persists_through_a_plain_rebuild(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1-1", out, flat=True)
+
+    assert (out / "2-1.md").is_symlink()
+    assert "# Layout — flat" in (out / "REFS.md").read_text(encoding="utf-8")
+
+    api.work(tmp_path, "1-1", out)
+
+    assert (out / "2-1.md").is_symlink()
+    assert not (out / "1").exists()
+    assert "# Layout — flat" in (out / "REFS.md").read_text(encoding="utf-8")
+
+
+def test_legacy_area_without_layout_line_defaults_to_rings(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1-1", out, flat=True)
+    refs = out / "REFS.md"
+    lines = [
+        line
+        for line in refs.read_text(encoding="utf-8").splitlines()
+        if not line.startswith("# Layout")
+    ]
+    refs.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    api.work(tmp_path, "1-1", out)
+
+    assert (out / _default("1-1", 0)).is_symlink()
+    assert (out / _default("2-1", 1)).is_symlink()
+    assert not (out / "2-1.md").exists()
+    assert f"# Layout — {DEFAULT_PATH_TEMPLATE}" in refs.read_text(
+        encoding="utf-8"
+    )
+    assert api.work(tmp_path, "1-1", out, status=True).ok
+
+
+def test_nested_layout_edit_path_and_depth_rebuild(write, tmp_path):
+    from bdg.work import area, edit_path
+
+    _tree(write, tmp_path)
+    api.work(tmp_path, "1-1", path_template=NESTED)
+    out = (tmp_path / "bdg_work").resolve()
+
+    assert area(tmp_path).path_template == NESTED
+    assert edit_path(tmp_path, "2") == out / "1" / "2-1.md"
+
+    api.work(tmp_path, "1-1", depth=1)
+
+    assert (out / "1" / "2-1.md").is_symlink()
+    assert not (out / "2").exists()
+    assert area(tmp_path).path_template == NESTED
+    assert edit_path(tmp_path, "2") == out / "1" / "2-1.md"
+
+
+def test_status_and_writeback_keep_a_nested_layout(write, tmp_path):
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1-1", out, path_template=NESTED)
+    dest = out / "1" / "2-1.md"
+    original = (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8")
+    dest.unlink()
+    dest.write_text(original + "\nlocal note\n", encoding="utf-8")
+
+    status = api.work(tmp_path, "1-1", out, status=True)
+    assert not status.ok
+    assert _entry(status, "1/2-1.md").status == "detached"
+
+    result = api.work(tmp_path, "1-1", out, writeback=True)
+
+    assert result.written == 1
+    assert dest.is_symlink()
+    assert (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8") == (
+        original + "\nlocal note\n"
+    )
+    assert api.work(tmp_path, "1-1", out, status=True).ok
+
+
+def test_flat_and_path_template_are_mutually_exclusive(write, tmp_path):
+    from bdg.errors import BreakdownError
+
+    _tree(write, tmp_path)
+    with pytest.raises(BreakdownError, match="mutually exclusive"):
+        api.work(
+            tmp_path,
+            "1-1",
+            tmp_path / "work",
+            path_template=NESTED,
+            flat=True,
+        )
+
+
+def test_refs_layout_line_round_trips_through_area(write, tmp_path):
+    from bdg.work import area
+
+    _tree(write, tmp_path)
+    out = tmp_path / "work"
+    api.work(tmp_path, "1-1", out, flat=True)
+
+    flat = area(tmp_path, out)
+    assert flat.path_template is None and flat.layout_recorded
+    assert "# Layout — flat" in (out / "REFS.md").read_text(encoding="utf-8")
+
+    api.work(tmp_path, "1-1", out, path_template=NESTED)
+
+    nested = area(tmp_path, out)
+    assert nested.path_template == NESTED and nested.layout_recorded

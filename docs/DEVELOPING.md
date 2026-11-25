@@ -31,7 +31,7 @@ bdg_graph/nodes/*.md
    │                                                                  │
    ├─ checker / navigate / freshness ◄───────────────────────────────┤
    ├─ exporter (pack) ◄──────────────────────────────────────────────┤
-   └─ work (flat symlinks) ◄─────────────────────────────────────────┘
+   └─ work (symlinks, ring folders) ◄───────────────────────────────┘
 ```
 
 - `Store` is the full index: ref → node, all files, all edges, all issues.
@@ -57,7 +57,7 @@ bdg_graph/nodes/*.md
 - Every read-only command works on a `View` or the anchored `Graph`; structural
   edits work on `Store` and write node files.
 - Link declaration is body-owned: `inline.scan_inline_links` reads
-  `(TITLE)[[REF, TYPE]]` tokens, ignoring fenced code, inline code, and `\[[`;
+  `(TITLE)[[REF,TYPE]]` tokens, ignoring fenced code, inline code, and `\[[`;
   the title is an optional prefix, and a bare token is valid. The scanner
   reports `inline-title-missing` for a bare token. `inline.append_token` /
   `remove_token` / `repoint_token` maintain the trailing `## Links` section;
@@ -87,7 +87,7 @@ conversion path.
 | `freshness.py` | Pins, stale edges, pin repair |
 | `navigate.py` | `show`, `find`, `path` renderers over undirected neighbours |
 | `exporter.py` | Pack projections (graph and fresh context), flat paths, path templates |
-| `work.py` | Single flat `<project>/bdg_work/` area, `current`/`views`/`edit`, switching, `--status`, `--repair`, git context |
+| `work.py` | Single `<project>/bdg_work/` area (ring folders by default, `--flat`/`--path-template`), `current`/`views`/`edit`, switching, `--status`, `--repair`, git context |
 | `solutions.py` | Thin `git worktree` lifecycle wrapper |
 | `ops.py` | `init`, `new` (seeds empty `title`/`summary`), `link`, `unlink`, `clone`, `replace`, `delete`, `diff`, `migrate`, `retitle` |
 | `api.py` | Public Python functions |
@@ -172,8 +172,10 @@ There is one topology and one order: undirected BFS distance from the anchor.
    `navigate.py`, render through `render_show`, `render_path`, or
    `walk_neighbors`; there is no `bdg tree` and no second child relation.
 4. If the command materializes files, reuse `graph.layout_paths` and
-   `exporter._ring_layout` rather than constructing names; the work area is
-   flat and uses store basenames.
+   `exporter._ring_layout` rather than constructing names; the work area groups
+   nodes by `{distance}/{ref}_{title}.md` by default, uses store basenames with
+   `--flat`, and otherwise follows the recorded template. `bdg pack` keeps flat
+   basenames as its default and nests only with `--path-template`.
 5. If it filters, decide explicitly whether the filter stops traversal
    (`--depth`) or only hides output (`--rings`). A display filter keeps
    walking through hidden nodes.
@@ -207,8 +209,11 @@ Rules:
   but a `View` is the common seam.
 - Return `ExportResult`.
 - Preserve arbitrary front matter.
-- Paths are flat: each node uses the store file's basename. There are no node
-  directories. `graph.layout_paths` handles the collision suffix.
+- Pack paths are flat by default: each node uses the store file's basename. There
+  are no node directories unless a `--path-template` nests them. This differs
+  from `bdg work`, whose default is ring folders; a work-area template persists
+  in `REFS.md` and `--flat` restores store basenames.
+  `graph.layout_paths` handles the collision suffix.
 - In a path template, placeholders are `{ref}`, `{id}`, `{version}`,
   `{distance}`, `{slug}`, `{title}`, plus any front-matter key. `{slug}` is the
   title slug, else the ref.
@@ -263,12 +268,13 @@ python3 -m pytest -q
 - `test_navigate.py` covers `show` rings and arrows, `path` shortest chains,
   `find` scoping, `view_roots`, and the CLI wrappers.
 - `test_graph.py` covers `ring_distances`, cycle distance, reciprocal pairs,
-  dangling links, `--type`/`--rings`/`--depth`, flat `layout_paths` and
+  dangling links, `--type`/`--rings`/`--depth`, `layout_paths` and
   templates, ring headings, DOT, check warnings, and flat pack output.
 - `test_topology.py` covers the graph model, component roots, graph view,
   `show`/`path`/`find`, and that cycles and back-edges check clean.
-- `test_work.py` covers flat symlinks, generated `INDEX.md`/`REFS.md`, ring
-  grouping, a cycle appearing once, status/repair, and the single area.
+- `test_work.py` covers ring-folder and `--flat` symlinks, generated
+  `INDEX.md`/`REFS.md` (root and per folder), ring grouping, a cycle appearing
+  once, status/repair, and the single area.
 - `test_export.py`, `test_dot_render.py`, and `test_visual.py` cover the
   read-only projections and rendering.
 - `test_examples.py` runs the example at `examples/` (store under `bdg_graph/`)
@@ -301,7 +307,7 @@ Before a commit:
 python3 -m pytest -q
 bdg check                         # examples: 12 nodes
 bdg stale                         # stale or untracked propagating edges
-bdg work 1-1                      # flat work area, 12 symlinks
+bdg work 1-1                      # work area (ring folders), 12 symlinks
 git diff --check
 ```
 
@@ -385,8 +391,10 @@ Common mistakes:
     worktrees. An edge pins a full ref.
 13. Generated files are disposable and never committed.
 14. A project has exactly one writable work area, `<project>/bdg_work/`, holding
-    one view at a time. It is flat. Its view changes only with `bdg work`, not
-    with `bdg root`. Read-only projections never become a second work area.
+    one view at a time. It groups nodes into ring folders by default; `--flat`
+    opts into store basenames. Its view changes only with
+    `bdg work`, not with `bdg root`. Read-only projections never become a second
+    work area.
 15. One topology. `contains` is not data: a node declaring it is an error
     (`contains-removed`) until `bdg migrate` converts it.
 
@@ -408,8 +416,9 @@ The repo is documentation-driven. When behaviour changes:
 - `docs/DESIGN.md` — model, decisions, invariants, migration.
 - `docs/GRAPH.md` — the one topology: typed body tokens, undirected views,
   rings, checks, packing.
-- `docs/GRAPH-LAYOUT.md` — component membership, BFS rings, tie-breaks, the flat
-  work area, worked examples, diagnostics, command map, and test map.
+- `docs/GRAPH-LAYOUT.md` — component membership, BFS rings, tie-breaks, the
+  ring-folder work area, worked examples, diagnostics, command map, and test
+  map.
 - `docs/BRANCHES-AND-VERSIONS.md` — branch/version separation contract.
 - `AGENTS.md` — operating rules for agents.
 

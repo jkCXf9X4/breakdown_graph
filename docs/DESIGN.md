@@ -38,8 +38,9 @@ present.
 4. **No schema.** Front matter is arbitrary; the built-in keys are listed below.
    Layer names, types, and status values are user data.
 5. **Work in the store, through one work area.** The writable work area is a
-   flat symlink view, not a copy, and there is no sync-back. A project has
-   exactly one such area at a time; switching views replaces its contents.
+   symlink view grouped into ring folders by default, not a copy, and there is no
+   sync-back. A project has exactly one such area at a time; switching views
+   replaces its contents.
 6. **No sidecar state.** No JSON manifests, TOML view configs, persistent lock
    files, or active-branch files; the only pointers are the store-level `ROOT`,
    one ref on one line, and the folder-level `.bdg_root`, one store path on one
@@ -98,30 +99,33 @@ Reserved front-matter keys:
 Everything else is arbitrary and preserved in projections. Typical fields:
 `title`, `summary`, `type`, `status`, `date`, `phase`, `audience`, `tags`.
 
-`name` and `title` are presentation metadata. The default work-area path uses
-the store file's basename; a `--path-template` may read any field, and its
-`{slug}` is the title slug, else the ref. `group`, `section`, `folder`, and
-`home` are ordinary front matter: preserved, never read for layout, and they add
-no schema.
+`name` and `title` are presentation metadata. The default work-area path is
+`{distance}/{ref}_{title}.md`; `--flat` uses the store file's basename, and a
+`--path-template` may read any field, with its
+`{slug}` being the title slug, else the ref. `group`, `section`, `folder`, and
+`home` are ordinary front matter: preserved, read only when a template names
+them, and they add no schema or placement key.
 
 Link declarations are reserved tokens in the body, not front-matter keys:
 
 ```markdown
-The intent breaks down into (Structural claims)[[2-1, breaks_down]].
+The intent breaks down into (Structural claims)[[2-1,breaks_down]].
 
 ## Links
-- (Verification core)[[12-1, verifies]]
+- (Verification core)[[12-1,verifies]]
 ```
 
-- **Grammar:** `(TITLE)[[REF, TYPE]]`, with zero or more spaces between `)` and
+- **Grammar:** `(TITLE)[[REF,TYPE]]`, with zero or more spaces between `)` and
   `[[`. `REF` comes first and is a full `id-version` ref, never a bare id;
   `TYPE` comes second and matches `[A-Za-z][A-Za-z0-9_-]*`; `TITLE` is
-  non-empty and excludes `)` and newlines; at most one space may sit on each
-  side of the comma. A bare `[[REF, TYPE]]` is valid but `bdg check` warns
+  non-empty and excludes `)` and newlines; at most one space may sit on the left
+  of the comma, and the canonical form has none on the right, though a legacy
+  single space after the comma is still accepted. A bare `[[REF,TYPE]]` is
+  valid but `bdg check` warns
   `inline-title-missing`. A type-first token is malformed (`inline-malformed`,
   reason `reversed components`), and `bdg migrate` normalizes either component
   order to ref-first.
-- **Two forms:** a token inside prose, or a `- (TITLE)[[REF, TYPE]]` line in a
+- **Two forms:** a token inside prose, or a `- (TITLE)[[REF,TYPE]]` line in a
   trailing `## Links` section. `bdg new --parent` appends to the parent,
   `bdg link` appends to the source, `bdg unlink` removes, `bdg replace` rewrites
   inbound refs and titles, and `bdg clone --subtree` rewrites refs in place.
@@ -134,7 +138,7 @@ The intent breaks down into (Structural claims)[[2-1, breaks_down]].
 - **Ignored:** fenced code blocks, inline code spans, and the `\[[` escape.
   Indented code blocks and HTML comments are not handled.
 - **Back-references are authored.** There is no derived opposite: if `3-1`
-  writes `[[8-1, verifies]]` and `8-1` should acknowledge it, `8-1` authors its
+  writes `[[8-1,verifies]]` and `8-1` should acknowledge it, `8-1` authors its
   own token with its own type. `bdg in` still derives the reverse list from
   authored tokens and marks it `[derived]`.
 - **Front-matter `links` is retired.** A node that still declares it is
@@ -278,8 +282,8 @@ invalidates a pin.
 
 ## 5. Work folders
 
-A work folder is a flat symlink layout of one view inside one checkout, not a
-second copy. The flat node files are the merge unit; the containing git
+A work folder is a ring-folder symlink layout of one view inside one
+checkout, not a second copy. The flat node files are the merge unit; the containing git
 branch/worktree is the solution boundary.
 
 The project keeps exactly one writable work area:
@@ -295,14 +299,25 @@ The project keeps exactly one writable work area:
 the project root is `<dir>`, so the work area is still `<dir>/bdg_work/`.
 
 ```text
-bdg_work/4-1.md -> ../bdg_graph/nodes/4-1.md
+bdg_work/
+├── 0/1-1_Verify the undirected graph.md -> ../bdg_graph/nodes/1-1.md
+├── 1/2-1_Structural claims.md -> ../bdg_graph/nodes/2-1.md
+├── 1/3-1_Verification claims.md -> ../bdg_graph/nodes/3-1.md
+├── 2/4-1_Two parents, one node.md -> ../bdg_graph/nodes/4-1.md
+├── INDEX.md
+├── AGENTS.md
+└── REFS.md
 ```
 
 - Each node `.md` is a relative symlink to its node file; editing the link edits
-  the store, with no copy and no sync. The area is flat: one symlink per
-  materialized ref, named after the store file. `INDEX.md`, `AGENTS.md`, and
-  `REFS.md` are regular generated files. All views share one store, so an edit
-  is visible in every view that includes the node.
+  the store, with no copy and no sync. The area groups nodes into ring folders by
+  default, using the template `{distance}/{ref}_{title}.md`: one symlink per
+  materialized ref at `{distance}/{ref}_{title}.md` (ring 0 is
+  `0/1-1_Verify the undirected graph.md`, ring 1 is
+  `1/2-1_Structural claims.md`). The title is literal, spaces included, and
+  `{title}` falls back to the ref when a node has no `title` front matter.
+  `INDEX.md`, `AGENTS.md`, and `REFS.md` are regular generated files. All views
+  share one store, so an edit is visible in every view that includes the node.
 - `bdg work REF` writes the single `<project>/bdg_work`. A different ref replaces
   the content of that area: stale links are removed, and the generated
   `INDEX.md`, `REFS.md`, and `AGENTS.md` are rewritten for the new view. With no
@@ -326,11 +341,20 @@ bdg_work/4-1.md -> ../bdg_graph/nodes/4-1.md
   `bdg edit REF` prints the absolute path of a ref in the active view and errors
   if it is not there. `bdg views` lists component representatives and marks the
   store default with `*` and the work-area anchor.
-- File naming is flat: each node uses the store file's basename.
-  `--path-template` overrides the layout; the placeholders are `{ref}`, `{id}`,
-  `{version}`, `{distance}`, `{slug}`, `{title}`, plus any front-matter key.
-  `{slug}` is the title slug, else the ref. `group`, `section`, `folder`, and
-  `home` place nothing.
+- File naming is ring-folder by default: each node is a symlink at
+  `{distance}/{ref}_{title}.md` (ring 0 is
+  `0/1-1_Verify the undirected graph.md`, ring 1 is
+  `1/2-1_Structural claims.md`, ring 2 is
+  `2/4-1_Two parents, one node.md`). `--path-template` overrides the layout; the
+  placeholders are `{ref}`, `{id}`, `{version}`, `{distance}`, `{slug}`,
+  `{title}`, plus any front-matter key. `{slug}` is the title slug, else the
+  ref; `{title}` is the literal title, else the ref. The chosen layout
+  is recorded in `REFS.md` as `# Layout — <template>` (`# Layout —
+  {distance}/{ref}_{title}.md` for the default), so a later plain `bdg work REF`
+  reuses it. `--flat` restores one symlink per node at its store basename,
+  recorded as `# Layout — flat`; it sticks on later rebuilds and conflicts with
+  `--path-template`. `group`, `section`, `folder`, and `home` place nothing,
+  though a template may read them.
 - `bdg current --status` classifies paths as `ok`, `missing`, `wrong-target`,
   `detached`, `stray`, or `stale-ref`; `bdg work --repair` refuses invalid front
   matter or a mismatched `id`, then writes the detached file wholesale — its
@@ -340,8 +364,12 @@ bdg_work/4-1.md -> ../bdg_graph/nodes/4-1.md
   lost. Run `bdg work --repair` first to keep them, or `--clean` to discard
   them.
 - Generated files: one root `INDEX.md` with ring sections (`## Active`,
-  `## Distance 1 — children`, …), `REFS.md` (path, ref, kind, distance, title),
-  and `AGENTS.md`. The index carries a `nodes:` front-matter path to the store's
+  `## Distance 1 — children`, …) — and one `INDEX.md` in every folder that
+  directly holds node files (ring folders therefore always have one), with
+  folder-relative links — `REFS.md` (path, ref, kind, distance, title, and the
+  `# Layout — …` line), and `AGENTS.md`. Empty folders are not preserved: a
+  folder exists only because a node in the current view materializes into it.
+  The index carries a `nodes:` front-matter path to the store's
   real `nodes/` folder; every node entry also links straight to its real file,
   so the reader can open, copy, or delete the actual files instead of the
   symlinks. Inside a git checkout, `AGENTS.md` also records branch, short
@@ -380,11 +408,12 @@ branch is checked out where; `bdg work` remains the layout inside one checkout.
 
 Nothing in the tool knows a project's layer names. The only reserved vocabulary
 is structural: the front-matter keys `id`, `legacy`, and `freshness`, plus the
-body token grammar `(TITLE)[[REF, TYPE]]`; a bare token is legal and its
+body token grammar `(TITLE)[[REF,TYPE]]`; a bare token is legal and its
 tool-generated title is filled by `bdg retitle`. `name` and
 `title` are presentation metadata; `title` supplies the template slug. `group`,
 `section`, `folder`, and `home` are ordinary front matter: preserved, never
-read, with no effect on placement or validation.
+read as a placement key, with no effect on placement or validation unless a
+`--path-template` names them.
 
 Consequences: any workflow can define fields (`phase`, `status`, `stream`); the
 graph orders nodes by undirected distance from the anchor; path templates read
@@ -401,7 +430,7 @@ wants a schema.
 3. **Versions as mandatory filename suffixes.** `5-1`, `5-2`; every node is a
    version and no unsuffixed file exists.
 4. **One topology: typed body tokens, undirected views.** A node authors edges
-   as `(TITLE)[[REF, TYPE]]` tokens in its body; in-edges are derived. A view
+   as `(TITLE)[[REF,TYPE]]` tokens in its body; in-edges are derived. A view
    is the weakly connected component of the anchor, and distance is undirected
    BFS.
    Direction survives as a label. `contains` is retired; `bdg migrate` converts
@@ -423,8 +452,8 @@ wants a schema.
 9. **Arbitrary front matter.** The tool fits any workflow; projects opt into
    validation.
 10. **Freshness per edge, opt-in.** No hardcoded `serves`/`supports` semantics.
-11. **Work trees with symlinks are the primary interface.** Flat, no sync-back,
-   and exactly one writable work area.
+11. **Work trees with symlinks are the primary interface.** Flat by default, no
+    sync-back, and exactly one writable work area.
 12. **No JSON/TOML/lock/state sidecars.** The exceptions are the store-level
     `ROOT` file (one ref on one line) and the folder-level `.bdg_root` pointer
     (one store path on one line). The work-area view lives in generated
@@ -450,9 +479,18 @@ wants a schema.
     `bdg graph --format` renders are not a second work area. The area's view is
     independent of the store default anchor: `bdg root` sets the default,
     `bdg work` sets what is in the area.
-17. **Flat ring layout is the only layout.** The work area holds one symlink per
-    node at its store basename, plus one ring-section `INDEX.md` and one
-    `REFS.md`. `group`, `section`, `folder`, and `home` are inert.
+17. **Ring folders are the default work layout.** The work area holds each node
+    as a symlink at `{distance}/{ref}_{title}.md` (ring 0 is
+    `0/1-1_Verify the undirected graph.md`, ring 1 is
+    `1/2-1_Structural claims.md`) plus generated `INDEX.md`, `AGENTS.md`, and
+    `REFS.md`, and one
+    `INDEX.md` in every folder that holds node files. `--flat` opts into one
+    symlink per node at its store basename, recorded as `# Layout — flat`, and
+    sticks on later rebuilds; a `--path-template` opts into a different nested
+    projection recorded in `REFS.md`, and `--flat` with `--path-template` is an
+    error. The template reads existing front matter and adds no placement key,
+    so `group`, `section`, `folder`, and `home` remain inert. `bdg pack` is
+    unchanged: flat basenames by default, nesting only with `--path-template`.
 18. **2026-11-25: topology moved from a DAG with authored bands to an
     undirected component with a ring layout.** Cycles and back-edges broke the
     old assumptions: a cycle could leave a component with no root and no
@@ -462,9 +500,9 @@ wants a schema.
     component of the anchor; ordering is undirected BFS distance; direction is a
     label. The cost is that distance is graph nearness, not semantic order, and a
     cycle has no privileged entry point. The gain is one fewer schema, no
-    order-refusal class, legal cycles, and a work area that is a simple flat ring
-    projection. Existing stores are converted by `bdg migrate`, which strips the
-    retired placement fields.
+    order-refusal class, legal cycles, and a work area that is a simple
+    ring-folder projection. Existing stores are converted by
+    `bdg migrate`, which strips the retired placement fields.
 19. **2026-11-25: link declarations moved from front matter into body tokens,
     and symmetric masters were retired.** `links: [{to, type}]` split the
     assertion from the sentence it belonged to; a body token keeps the edge next
@@ -479,10 +517,10 @@ wants a schema.
     blocks and HTML comments are not shielded. Gain: one place for an assertion,
     no second copy to keep in sync, and no symmetric special case.
 20. **2026-11-25: the cached title moved to a token prefix and became
-    tool-maintained.** The legacy suffix `[[TYPE, REF]](TITLE)` (or
-    `[[REF, TYPE]](TITLE)`) made the
+    tool-maintained.** The legacy suffix `[[TYPE,REF]](TITLE)` (or
+    `[[REF,TYPE]](TITLE)`) made the
     parenthetical read as prose, so it stopped being a token; the prefix
-    `(TITLE)[[REF, TYPE]]` keeps the cache adjacent to the token and leaves the
+    `(TITLE)[[REF,TYPE]]` keeps the cache adjacent to the token and leaves the
     sentence around it intact. Authors write bare tokens; `bdg new --parent`,
     `bdg link`, `bdg replace`, `bdg migrate`, and `bdg retitle` fill the cache from
     the target's live title. `bdg check` reports `inline-title-missing` for a
@@ -553,17 +591,17 @@ wants a schema.
 or front-matter-link store in place:
 
 1. Each `contains: [c0, c1, ...]` becomes a typed body token
-   `[[c0, T]]` in a trailing `## Links` section, in the same order, and the key
+   `[[c0,T]]` in a trailing `## Links` section, in the same order, and the key
    is removed. `T` is `--type`, default `breaks_down`.
-2. Front-matter `links` becomes one `- (TITLE)[[REF, TYPE]]` line per edge,
+2. Front-matter `links` becomes one `- (TITLE)[[REF,TYPE]]` line per edge,
    sorted by ref; a retired scalar link gains an explicit type taken from the
    target. Per-link `pinned`/`propagates` values move to the node's top-level
    `freshness:` map. `symmetric` and `inverse` are dropped.
 3. Retired placement keys are stripped from every node (`band`, `subpath`,
    `layer`, `stage`, `order`) and from the ROOT node (`band_layout`,
    `band_order`). `section` stays as inert front matter and places nothing.
-4. Legacy suffix tokens `[[TYPE, REF]](TITLE)` and `[[REF, TYPE]](TITLE)` become
-   the prefix form `(TITLE)[[REF, TYPE]]`; tokens in either component order are
+4. Legacy suffix tokens `[[TYPE,REF]](TITLE)` and `[[REF,TYPE]](TITLE)` become
+   the prefix form `(TITLE)[[REF,TYPE]]`; tokens in either component order are
    normalized to ref-first, and missing titles are filled from the target's
    live title.
 5. `--dry-run` reports the plan; the default applies atomically. `--root` works.
@@ -598,7 +636,9 @@ These are enforced or assumed:
 8. Every link resolves in the store, and every authored link inside one view is
    an edge.
 9. Arbitrary front matter is preserved in projections.
-10. Work trees contain flat node `.md` symlinks plus regular generated files.
+10. Work trees contain node `.md` symlinks under ring folders by default
+    (`{distance}/{ref}_{title}.md`; `--flat` uses the store basename and a
+    `--path-template` nests differently) plus regular generated files.
 11. Generated files (`INDEX.md`, `AGENTS.md`, `REFS.md`) are never hand-edited.
 12. No generated artifact is committed.
 13. A view never crosses a branch, and neither does a version: a version is a

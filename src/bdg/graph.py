@@ -17,7 +17,14 @@ from pathlib import Path
 
 from .checker import path_problem
 from .errors import BreakdownError, ExportError
-from .exporter import BANNER, _prepare_out
+from .exporter import (
+    BANNER,
+    _folder_indexes,
+    _parent_index_line,
+    _prepare_out,
+    _relative_node_link,
+    _write_indexes,
+)
 from .frontmatter import render_document
 from .loader import load, parse_ref, parse_selector
 from .model import ExportResult, Issue, Link, Node, Store, View, slugify
@@ -760,16 +767,23 @@ def layout_paths(graph: Graph, template: str | None = None) -> dict[str, Path]:
 
 
 def _ring_index(
-    graph: Graph, anchor: str, refs: Iterable[str], paths: dict[str, Path]
+    graph: Graph,
+    anchor: str,
+    refs: Iterable[str],
+    paths: dict[str, Path],
+    *,
+    directory: str = "",
 ) -> str:
-    lines = [BANNER, "", f"# Graph {anchor}", ""]
-    for heading, members in _ring_sections(graph, refs):
-        lines.append(heading)
+    heading = f"# Graph {anchor}" if not directory else f"# Folder — {directory}"
+    lines = [BANNER, "", heading, ""]
+    if directory:
+        lines.extend([_parent_index_line(directory), ""])
+    for section, members in _ring_sections(graph, refs):
+        lines.append(section)
         for ref in members:
             node = graph.store.nodes[ref]
-            lines.append(
-                f"- [{ref} {node.title}]({paths[ref].as_posix()})"
-            )
+            target = _relative_node_link(paths[ref].as_posix(), directory)
+            lines.append(f"- [{ref} {node.title}]({target})")
         lines.append("")
     return "\n".join(lines).rstrip("\n") + "\n"
 
@@ -783,7 +797,7 @@ def export_graph(
     force: bool = False,
     clean: bool = False,
 ) -> ExportResult:
-    """Write a flat, read-only graph snapshot with one ring-section index."""
+    """Write a read-only graph snapshot with one index per folder holding nodes."""
     if isinstance(graph, View):
         store = graph.store
         target = graph.ref
@@ -812,11 +826,11 @@ def export_graph(
         )
         files.append(dest)
 
-    root_index = destination / "INDEX.md"
-    root_index.write_text(
-        _ring_index(built, target, refs, paths),
-        encoding="utf-8",
-        newline="",
+    indexes = _folder_indexes(
+        {ref: paths[ref].as_posix() for ref in refs},
+        lambda directory, members: _ring_index(
+            built, target, members, paths, directory=directory
+        ),
     )
-    files.append(root_index)
+    files.extend(_write_indexes(destination, indexes))
     return ExportResult("graph", destination, len(refs), files)

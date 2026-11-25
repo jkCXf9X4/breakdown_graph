@@ -1,10 +1,12 @@
 # Getting started
 
 This guide goes from the default example to a browsable, editable store with a
-flat work area, typed links, and a second solution in a git worktree. `bdg` has
-one topology: markdown nodes joined by typed link tokens in their bodies. A
-token is `(TITLE)[[REF, TYPE]]`, with the cached title as a prefix; authors
-write the bare `[[REF, TYPE]]` and the tool fills the title. In-edges are
+ring-folder work area, typed links, and a second solution in a git worktree.
+`bdg` has one topology: markdown nodes joined by typed link tokens in their
+bodies. A token is `(TITLE)[[REF,TYPE]]`, with the cached title as a prefix;
+authors write the bare `[[REF,TYPE]]` and the tool fills the title. The canonical
+form has no space after the comma; a legacy single-space `[[REF, TYPE]]` is still
+accepted. In-edges are
 derived by reversing authored tokens; a back-reference is an authored token in
 the other node, not a derived opposite. A view is the weakly connected component
 of its anchor, ordered by undirected BFS distance.
@@ -47,8 +49,8 @@ title: <the intent of this graph>
 ---
 # <the intent of this graph>
 
-The intent breaks down into (Structural claims)[[2-1, breaks_down]] and
-(Verification claims)[[3-1, breaks_down]].
+The intent breaks down into (Structural claims)[[2-1,breaks_down]] and
+(Verification claims)[[3-1,breaks_down]].
 ```
 
 The filename is identity and version: logical id `1`, version `1`. The rest of
@@ -57,7 +59,7 @@ the front matter is arbitrary. A token declares one typed edge to a full
 target's live title; authors write only the bare token and never edit the
 cache by hand. `bdg check` verifies it (`link-title-stale`,
 `inline-title-missing`) and `bdg retitle` regenerates it. Tooling appends the
-same token as a `- (TITLE)[[REF, TYPE]]` line under `## Links`. Front-matter
+same token as a `- (TITLE)[[REF,TYPE]]` line under `## Links`. Front-matter
 `links` is retired (`links-removed`). There is no placement field: membership
 and order come from the graph.
 
@@ -115,7 +117,7 @@ bdg check
 The graph checks make the undirected view meaningful:
 
 - tokens resolve to existing full refs and are kept in ascending target order;
-- a token that does not match `[[REF, TYPE]]` is `inline-malformed`, and the
+- a token that does not match `[[REF,TYPE]]` is `inline-malformed`, and the
   same type and target twice on one node warns `inline-duplicate`;
 - a bare token warns `inline-title-missing`, and a cached `(TITLE)` that
   differs from the target's live title warns `link-title-stale`; run
@@ -144,7 +146,7 @@ bdg unlink 2-1 8-1 --type supports
 `bdg new` allocates the next global id at version 1 and appends a typed token to
 the parent's `## Links` section; `--type` defaults to `breaks_down`. It has no
 placement flags. Without `--parent`, the node starts its own component.
-`bdg link` appends `- (TITLE)[[TO, TYPE]]` to the source in call order, writing
+`bdg link` appends `- (TITLE)[[TO,TYPE]]` to the source in call order, writing
 the target's live title; existing lines are untouched, so add targets in
 ascending order or re-sort the section. Back-edges and cycles are legal. A
 back-reference is a second authored token on the other node with its own type —
@@ -153,52 +155,69 @@ titles when a target's title changes.
 
 ## 4. Edit in the work area
 
-`bdg work` renders a view as a flat set of symlinks in the project's single
+`bdg work` renders a view as ring folders of symlinks in the project's single
 writable work area, `<project>/bdg_work/`. Editing a link edits the store.
 
 ```sh
 bdg work 1-1
 bdg current                 # <project>/bdg_work (view 1-1)
 work_dir=$(bdg current --path)
-ls "$work_dir"
+ls -R "$work_dir"
 ```
 
 ```
-1-1.md   2-1.md   3-1.md   4-1.md   5-1.md   6-1.md
-7-1.md   8-1.md   9-1.md   10-1.md  11-1.md  12-1.md
-INDEX.md  REFS.md  AGENTS.md
+0/1-1_Verify the undirected graph.md          0/INDEX.md
+1/2-1_Structural claims.md
+1/3-1_Verification claims.md                  1/INDEX.md
+2/4-1_Two parents, one node.md
+2/5-1_The component view.md                   2/INDEX.md
+   ... one symlink per node, rings 3-4 ...    3/INDEX.md  4/INDEX.md
+INDEX.md    REFS.md     AGENTS.md
 ```
 
-Every node `.md` is a symlink named after the store file. The area is flat:
-there are no node directories. `INDEX.md`, `REFS.md`, and `AGENTS.md` are
+Every node `.md` is a symlink at `{distance}/{ref}_{title}.md`, so ring 0 is
+`0/1-1_Verify the undirected graph.md`, ring 1 is
+`1/2-1_Structural claims.md`, and ring 2 is
+`2/4-1_Two parents, one node.md`. Titles are literal (spaces kept), and
+`{title}` falls back to the ref when a node has no `title` front matter (an
+untitled `2-1` is `2-1_2-1.md`). The layout is recorded in
+`REFS.md` as `# Layout — <template>`
+(`# Layout — {distance}/{ref}_{title}.md` for the
+default), so a later plain `bdg work REF` reuses it. `--path-template` overrides
+the ring folders and `--flat` restores one symlink per node at its store basename
+(recorded as `# Layout — flat`, sticking on later rebuilds; `--flat` with
+`--path-template` is an error). Every folder that directly holds node files gets
+its own `INDEX.md` with folder-relative links (so each ring folder has one), and
+empty folders are not preserved. `INDEX.md`, `REFS.md`, and `AGENTS.md` are
 regular generated files.
 
-`INDEX.md` has ring sections:
+The root `INDEX.md` has ring sections:
 
 ```markdown
 ## Active
 
-- [<title>](1-1.md) — [real file](../bdg_graph/nodes/1-1.md)
+- [<title>](0/1-1_Verify the undirected graph.md) — [real file](../bdg_graph/nodes/1-1.md)
 
 ## Distance 1 — children
 
-- [<title>](2-1.md) — [real file](../bdg_graph/nodes/2-1.md)
+- [<title>](1/2-1_Structural claims.md) — [real file](../bdg_graph/nodes/2-1.md)
 
 ## Distance 2
 
-- [<title>](4-1.md) — [real file](../bdg_graph/nodes/4-1.md)
+- [<title>](2/4-1_Two parents, one node.md) — [real file](../bdg_graph/nodes/4-1.md)
 ```
 
 `REFS.md` is the sorted navigation table:
 
 ```markdown
 # References — view 1-1
+# Layout — {distance}/{ref}_{title}.md
 
 | Path | Ref | Kind | Distance | Title |
 | --- | --- | --- | --- | --- |
-| `1-1.md` | 1-1 | active | 0 | <title> |
-| `2-1.md` | 2-1 | child | 1 | <title> |
-| `4-1.md` | 4-1 | - | 2 | <title> |
+| `0/1-1_Verify the undirected graph.md` | 1-1 | active | 0 | <title> |
+| `1/2-1_Structural claims.md` | 2-1 | child | 1 | <title> |
+| `2/4-1_Two parents, one node.md` | 4-1 | - | 2 | <title> |
 ```
 
 The `# References — view REF[+N]` header is the active node of the area.
@@ -239,9 +258,10 @@ bdg work 1-1        # restore the full component
 ```
 
 Read-only projections (`bdg pack`, `bdg graph --format dot|svg`) are separate
-disposable outputs, not a second work area. `bdg work` and `bdg pack`
-materialize the same flat view; `bdg pack` writes regular files plus a
-ring-section `INDEX.md`, while `bdg graph --format` writes a string render.
+disposable outputs, not a second work area. They render the same view but their
+default layouts differ: `bdg work` writes ring folders, while `bdg pack` writes
+flat regular files plus a ring-section `INDEX.md` and nests only with
+`--path-template`. `bdg graph --format` writes a string render.
 
 ## 5. Create a store
 
@@ -280,8 +300,11 @@ bdg check
 `bdg graph 1-1` renders rings `0` and `1`. `bdg new` appends a typed token to the
 parent's `## Links` section; it writes no position.
 
-The work area is flat: each node's path is its store basename. `group`,
-`section`, `folder`, and `home` are inert front matter: they place nothing.
+By default the work area groups nodes into ring folders named
+`{distance}/{ref}_{title}.md`; `--flat` uses each node's store basename instead.
+A `--path-template` may group by an existing field such as `{distance}` or
+`{group}`; the template adds no placement key. `group`, `section`, `folder`, and
+`home` are inert front matter: they place nothing unless a template names them.
 
 To change the view, edit the links. There is no separate move command: position
 is derived from edges and undirected distance.
@@ -453,7 +476,9 @@ There is no generic importer yet. The pattern is:
    order is BFS distance. If the tree must read as a hierarchy, encode the
    parent -> child tokens; a `child` label comes from the authored direction.
 4. Prose citations are separate; an edge is a link, not a bibliography entry.
-5. The flat work area uses store basenames; `--path-template` overrides naming.
+5. The work area groups nodes into ring folders by default
+   (`{distance}/{ref}_{title}.md`); `--path-template` overrides naming and
+   `--flat` restores store basenames.
 
 An older store that used `contains` or authored placement is converted in place:
 
@@ -465,8 +490,8 @@ bdg check                 # clean
 ```
 
 `bdg migrate` writes converted edges as sorted body tokens, converts legacy
-suffix tokens `[[TYPE, REF]](TITLE)` or `[[REF, TYPE]](TITLE)` to the prefix
-form `(TITLE)[[REF, TYPE]]`; it normalizes either component order to ref-first,
+suffix tokens `[[TYPE,REF]](TITLE)` or `[[REF,TYPE]](TITLE)` to the prefix
+form `(TITLE)[[REF,TYPE]]`; it normalizes either component order to ref-first,
 fills missing titles, uses `--type` (default `breaks_down`) for `contains` edges,
 moves per-link freshness into the `freshness:` map, removes the retired
 placement fields, and keeps `section` as inert front matter. It is idempotent
@@ -486,7 +511,7 @@ bodies, one component, rings 0 through 4 from `1-1`, and no `contains`.
 | `bdg check` sees the wrong store | `BDG_ROOT` or `--root` points elsewhere. `bdg` uses the nearest `nodes/` or `bdg_graph/nodes/` upward. |
 | `root-ref-missing` / `invalid-root` | The `ROOT` file names an absent ref or is malformed. Fix it, or run `bdg root --clear`. |
 | `contains-removed` / `links-removed` | The store still declares `contains` or front-matter `links`. Run `bdg migrate --dry-run`, then `bdg migrate`. |
-| `inline-malformed` | A `[[...]]` fragment is not `[[REF, TYPE]]` with a full ref. Fix the token; escape it as `\[[` to show it literally. |
+| `inline-malformed` | A `[[...]]` fragment is not `[[REF,TYPE]]` with a full ref. Fix the token; escape it as `\[[` to show it literally. |
 | `inline-duplicate` | One node declares the same type and target twice. Remove one with `bdg unlink`. |
 | `inline-title-missing` | A token is bare. Run `bdg retitle` to fill the cached title; do not hand-write it. |
 | `link-title-stale` | A cached `(TITLE)` differs from the target's live title. Run `bdg retitle`; rendering already uses the live title. |

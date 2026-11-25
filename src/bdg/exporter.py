@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import shutil
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -114,6 +114,43 @@ def _node_entry(
     return line
 
 
+def _relative_node_link(path: str, directory: str) -> str:
+    """A node file link from an index in ``directory`` (``""`` is the root)."""
+    if not directory:
+        return path
+    return path.rsplit("/", 1)[-1]
+
+
+def _parent_index_line(directory: str) -> str:
+    """Link a nested index to its parent index (and the root, when deeper)."""
+    depth = directory.count("/") + 1
+    links = ["[parent index](../INDEX.md)"]
+    if depth > 1:
+        links.append(f"[root index]({'../' * depth}INDEX.md)")
+    return "_Up: " + " · ".join(links) + "_"
+
+
+def _group_paths_by_directory(paths: dict[str, str]) -> dict[str, list[str]]:
+    """Group refs by the POSIX directory that directly holds each file."""
+    groups: dict[str, list[str]] = defaultdict(list)
+    for ref, path in sorted(paths.items(), key=lambda item: item[1]):
+        directory = path.rsplit("/", 1)[0] if "/" in path else ""
+        groups[directory].append(ref)
+    groups.setdefault("", [])
+    return {directory: groups[directory] for directory in sorted(groups)}
+
+
+def _folder_indexes(
+    paths: dict[str, str],
+    render: Callable[[str, list[str]], str],
+) -> dict[str, str]:
+    """One index per directory holding node files directly; root always present."""
+    return {
+        directory: render(directory, refs)
+        for directory, refs in _group_paths_by_directory(paths).items()
+    }
+
+
 _KIND_NOUN = {"child": "children", "parent": "parents"}
 _KIND_ORDER = ("child", "parent")
 
@@ -204,26 +241,43 @@ def _graph_index_text(
     banner: str | None = None,
     label: str | None = None,
     nodes_link: str | None = None,
+    directory: str = "",
+    refs: Iterable[str] | None = None,
 ) -> str:
-    """Root index for a flat ring view: ring sections, split at ring 1."""
+    """Index text for one output directory.
+
+    The root keeps the flat ring sections.  A nested folder lists only the refs
+    whose files sit directly in it, links them by basename, and points back at
+    the parent index.  ``nodes_link`` is root-relative, so it belongs on the
+    root index only.
+    """
     from .graph import build_graph
 
     if graph is None:
         graph = build_graph(view.store, anchor=view.ref)
+    if refs is None:
+        refs = view.nodes
     lines: list[str] = []
     if nodes_link is not None:
         lines.extend(["---", f"nodes: {nodes_link}", "---", ""])
+    heading = (
+        f"# Folder — {directory}"
+        if directory
+        else f"# View {view.ref if label is None else label}"
+    )
     lines.extend(
         [
             banner if banner is not None else BANNER.format(name="graph"),
             "",
-            f"# View {view.ref if label is None else label}",
+            heading,
             "",
         ]
     )
     if nodes_link is not None:
         lines.extend([_nodes_pointer(nodes_link), ""])
-    sections = _ring_layout(graph, view.nodes)
+    if directory:
+        lines.extend([_parent_index_line(directory), ""])
+    sections = _ring_layout(graph, refs)
     if not sections:
         lines.append("_No nodes in this view._")
     for heading, _kind, members in sections:
@@ -236,7 +290,7 @@ def _graph_index_text(
                 _node_entry(
                     node,
                     title,
-                    paths[ref],
+                    _relative_node_link(paths[ref], directory),
                     summary=summary,
                     nodes_link=nodes_link,
                 )
@@ -256,15 +310,21 @@ def _directory_indexes(
     label: str | None = None,
     nodes_link: str | None = None,
 ) -> dict[str, str]:
-    """Generated index text for the output root only.
+    """Generated index text for every directory that directly holds nodes.
 
-    The flat ring layout has no node directories, so there is exactly one
-    ``INDEX.md``.  ``nodes_link``, when given, is the path from the output root
-    to the store's ``nodes/`` folder; the index carries it in front matter and
-    as a clickable link back to the real files.
+    A flat layout has no node directories, so it returns exactly ``{"": ...}``.
+    A nested layout gets one index per folder, each listing only its direct
+    children and linking back to its parent.  ``nodes_link``, when given, is the
+    path from the output root to the store's ``nodes/`` folder; only the root
+    index carries it.
     """
-    return {
-        "": _graph_index_text(
+    from .graph import build_graph
+
+    if graph is None:
+        graph = build_graph(view.store, anchor=view.ref)
+
+    def render(directory: str, refs: list[str]) -> str:
+        return _graph_index_text(
             view,
             paths,
             title_field,
@@ -272,9 +332,12 @@ def _directory_indexes(
             graph=graph,
             banner=banner,
             label=label,
-            nodes_link=nodes_link,
+            nodes_link=nodes_link if directory == "" else None,
+            directory=directory,
+            refs=refs,
         )
-    }
+
+    return _folder_indexes(paths, render)
 
 
 def _write_indexes(out: Path, indexes: dict[str, str]) -> list[Path]:

@@ -306,20 +306,32 @@ def test_append_token_appends_and_is_idempotent():
     once = append_token(text, "a", "1-1", "Alpha")
     assert once == text
     twice = append_token(text, "b", "2-1", "Beta")
-    assert twice == text + "- (Beta)[[2-1, b]]\n"
+    assert twice == text + "- (Beta)[[2-1,b]]\n"
 
 
 def test_append_token_creates_the_section_with_a_blank_line():
     assert append_token("tail\n", "c", "3-1", "Gamma") == (
-        "tail\n\n## Links\n- (Gamma)[[3-1, c]]\n"
+        "tail\n\n## Links\n- (Gamma)[[3-1,c]]\n"
     )
-    assert append_token("", "c", "3-1", "Gamma") == "## Links\n- (Gamma)[[3-1, c]]\n"
+    assert append_token("", "c", "3-1", "Gamma") == "## Links\n- (Gamma)[[3-1,c]]\n"
 
 
 def test_append_token_skips_trailing_blank_lines():
     text = "## Links\n\n- (Alpha)[[1-1, a]]\n\n## Next\n"
     assert append_token(text, "b", "2-1", "Beta") == (
-        "## Links\n\n- (Alpha)[[1-1, a]]\n- (Beta)[[2-1, b]]\n\n## Next\n"
+        "## Links\n\n- (Alpha)[[1-1, a]]\n- (Beta)[[2-1,b]]\n\n## Next\n"
+    )
+
+
+def test_append_token_sees_a_legacy_spaced_token_as_the_same_edge():
+    text = "body\n\n## Links\n\n- (T)[[2-1, supports]]\n"
+    assert append_token(text, "supports", "2-1", "T") == text
+
+
+def test_append_token_appends_the_same_edge_with_a_different_title():
+    text = "body\n\n## Links\n\n- (T)[[2-1, supports]]\n"
+    assert append_token(text, "supports", "2-1", "U") == (
+        text + "- (U)[[2-1,supports]]\n"
     )
 
 
@@ -347,7 +359,7 @@ def test_repoint_token():
     new_text, count = repoint_token(text, "1-1", "5-1")
     assert count == 1
     assert new_text == (
-        "head\n\n## Links\n\n- (Alpha)[[5-1, a]]\n- (Beta)[[2-1, b]]\n"
+        "head\n\n## Links\n\n- (Alpha)[[5-1,a]]\n- (Beta)[[2-1, b]]\n"
     )
     assert repoint_token(text, "9-9", "5-1") == (text, 0)
 
@@ -356,9 +368,9 @@ def test_repoint_token_can_set_a_new_title():
     text = "it links (Alpha)[[1-1, a]] here.\n"
     new_text, count = repoint_token(text, "1-1", "5-2", "New title")
     assert count == 1
-    assert new_text == "it links (New title)[[5-2, a]] here.\n"
+    assert new_text == "it links (New title)[[5-2,a]] here.\n"
     bare, count = repoint_token("[[1-1, a]]\n", "1-1", "5-2", "Alpha")
-    assert (bare, count) == ("(Alpha)[[5-2, a]]\n", 1)
+    assert (bare, count) == ("(Alpha)[[5-2,a]]\n", 1)
 
 
 def test_remove_token_from_prose_joins_the_sentence():
@@ -383,7 +395,7 @@ def test_repoint_token_in_prose():
     text = "it links (Alpha)[[1-1, a]] here.\n"
     new_text, count = repoint_token(text, "1-1", "5-2")
     assert count == 1
-    assert new_text == "it links (Alpha)[[5-2, a]] here.\n"
+    assert new_text == "it links (Alpha)[[5-2,a]] here.\n"
     # Code and escapes are not rewritten.
     untouched = "`[[1-1, a]]` and \\[[1-1, a]]\n"
     assert repoint_token(untouched, "1-1", "5-2") == (untouched, 0)
@@ -398,11 +410,11 @@ def test_retitle_tokens_adds_replaces_and_leaves_unresolved_alone():
         text, {"1-1": "Alpha", "2-1": "New", "9-9": "Nope"}
     )
     assert count == 2
-    assert new_text == "a (Alpha)[[1-1, x]] b (New)[[2-1, y]] c [[3-1, z]]\n"
+    assert new_text == "a (Alpha)[[1-1,x]] b (New)[[2-1,y]] c [[3-1, z]]\n"
 
 
 def test_retitle_tokens_is_a_noop_when_the_title_matches():
-    text = "(Alpha)[[1-1, x]]\n"
+    text = "(Alpha)[[1-1,x]]\n"
     assert retitle_tokens(text, {"1-1": "Alpha"}) == (text, 0)
     assert retitle_tokens(text, {}) == (text, 0)
 
@@ -411,7 +423,7 @@ def test_retitle_tokens_skips_code_and_escapes():
     text = "`[[1-1, x]]` and \\[[1-1, x]] and (Alpha)[[1-1, x]]\n"
     new_text, count = retitle_tokens(text, {"1-1": "Beta"})
     assert count == 1
-    assert new_text == "`[[1-1, x]]` and \\[[1-1, x]] and (Beta)[[1-1, x]]\n"
+    assert new_text == "`[[1-1, x]]` and \\[[1-1, x]] and (Beta)[[1-1,x]]\n"
 
 
 # -- convenience helpers -----------------------------------------------------
@@ -427,7 +439,7 @@ def test_parse_inline_links_and_raw_alignment():
         "(Alpha)[[1-1, x]]",
         "[[2-1, y]]",
     ]
-    assert render_token("x", "1-1", "Alpha") == "(Alpha)[[1-1, x]]"
-    assert render_token("x", "1-1", None) == "[[1-1, x]]"
+    assert render_token("x", "1-1", "Alpha") == "(Alpha)[[1-1,x]]"
+    assert render_token("x", "1-1", None) == "[[1-1,x]]"
     assert token_title("(Alpha)[[1-1, x]]") == "Alpha"
     assert token_title("[[1-1, x]]") is None

@@ -72,8 +72,8 @@ def test_link_appends_an_edge_and_keeps_existing_fields(write, tmp_path):
     head, section = _split_doc(tmp_path, "1-1")
     assert head == BODIES[1] + "\n"  # outside-section bytes unchanged
     assert section == (
-        "## Links\n\n- (Title of 3-1)[[3-1, reviews]]\n"
-        "- (Title of 4-1)[[4-1, supports]]\n"
+        "## Links\n\n- (Title of 3-1)[[3-1,reviews]]\n"
+        "- (Title of 4-1)[[4-1,supports]]\n"
     )
     assert _pairs(tmp_path, "1-1") == [
         ("3-1", "reviews"),
@@ -86,7 +86,7 @@ def test_link_writes_the_token_when_the_section_is_absent(write, tmp_path):
     api.link(tmp_path, "1-1", "4-1", link_type="decision")
     head, section = _split_doc(tmp_path, "1-1")
     assert head == BODIES[1] + "\n"
-    assert section == "## Links\n- (Title of 4-1)[[4-1, decision]]\n"
+    assert section == "## Links\n- (Title of 4-1)[[4-1,decision]]\n"
     assert _pairs(tmp_path, "1-1") == [("4-1", "decision")]
 
 
@@ -103,7 +103,7 @@ def test_unlink_removes_a_token_by_type_and_by_target(write, tmp_path):
     api.unlink(tmp_path, "1-1", "10-1", link_type="decision")
     head, section = _split_doc(tmp_path, "1-1")
     assert head == BODIES[1] + "\n"
-    assert section == "## Links\n\n- (Title of 3-1)[[3-1, reviews]]\n"
+    assert section == "## Links\n\n- (Title of 3-1)[[3-1,reviews]]\n"
 
     nodes = _tree(write, tmp_path, links_1=[{"to": "10-1", "type": "decision"}])
     write(nodes, 10, band="main", order=4, body="decision body\n")
@@ -146,7 +146,7 @@ def test_link_propagates_pins_the_target_now(write, tmp_path):
     assert entry["pinned"] == body_hash(BODIES[4])
     assert entry["propagates"] is True
     _, section = _split_doc(tmp_path, "1-1")
-    assert "- (Title of 4-1)[[4-1, depends]]" in section
+    assert "- (Title of 4-1)[[4-1,depends]]" in section
     assert api.stale(tmp_path, "1-1") == []
 
 
@@ -176,8 +176,8 @@ def test_link_allows_a_backward_edge(write, tmp_path):
     head, section = _split_doc(tmp_path, "2-1")
     assert head == BODIES[2] + "\n"
     assert section == (
-        "## Links\n\n- (Title of 4-1)[[4-1, breaks_down]]\n"
-        "- (Title of 1-1)[[1-1, supports]]\n"
+        "## Links\n\n- (Title of 4-1)[[4-1,breaks_down]]\n"
+        "- (Title of 1-1)[[1-1,supports]]\n"
     )
     assert _pairs(tmp_path, "2-1") == [("4-1", "breaks_down"), ("1-1", "supports")]
 
@@ -195,12 +195,12 @@ def test_unlink_by_type_and_by_target(write, tmp_path):
     api.unlink(tmp_path, "1-1", "4-1", link_type="a")
     _, section = _split_doc(tmp_path, "1-1")
     assert section == (
-        "## Links\n\n- (Title of 4-1)[[4-1, b]]\n- (Title of 3-1)[[3-1, a]]\n"
+        "## Links\n\n- (Title of 4-1)[[4-1,b]]\n- (Title of 3-1)[[3-1,a]]\n"
     )
 
     api.unlink(tmp_path, "1-1", "4-1")
     _, section = _split_doc(tmp_path, "1-1")
-    assert section == "## Links\n\n- (Title of 3-1)[[3-1, a]]\n"
+    assert section == "## Links\n\n- (Title of 3-1)[[3-1,a]]\n"
 
     api.unlink(tmp_path, "1-1", "3-1")
     assert _split_doc(tmp_path, "1-1")[1] is None
@@ -228,7 +228,7 @@ def test_structural_edits_preserve_body_bytes_except_within_links(
     head, section = _split_doc(tmp_path, "1-1")
     before_head, before_section = _split_section(before["1-1"])
     assert head == before_head
-    assert section == before_section + "- (Title of 4-1)[[4-1, supports]]\n"
+    assert section == before_section + "- (Title of 4-1)[[4-1,supports]]\n"
     assert _doc(tmp_path, "3-1").body == before["3-1"]
     assert _doc(tmp_path, "4-1").body == before["4-1"]
 
@@ -239,7 +239,7 @@ def test_structural_edits_preserve_body_bytes_except_within_links(
     head, section = _split_doc(tmp_path, "2-1")
     assert head == _split_section(before["2-1"])[0]  # head bytes untouched
     assert section == (
-        _split_section(before["2-1"])[1] + "- (Title of 3-1)[[3-1, refines]]\n"
+        _split_section(before["2-1"])[1] + "- (Title of 3-1)[[3-1,refines]]\n"
     )
     assert _doc(tmp_path, "3-1").body == before["3-1"]
 
@@ -256,7 +256,7 @@ def test_prose_tokens_unlink_and_repoint_in_place(write, tmp_path):
     api.replace(tmp_path, "2-1", "2-2")
 
     assert _doc(tmp_path, "1-1").body == (
-        "Before (Second live)[[2-2, supports]] after.\n"
+        "Before (Second live)[[2-2,supports]] after.\n"
     )
 
     api.unlink(tmp_path, "1-1", "2-2")
@@ -271,7 +271,7 @@ def test_cli_structure_commands_and_exit_codes(write, tmp_path, capsys):
     assert main(["link", "1", "4-1", "--type", "supports", "--root", root]) == 0
     assert "linked 1-1 -> 4-1 (supports)" in capsys.readouterr().out
     _, section = _split_doc(tmp_path, "1-1")
-    assert section == "## Links\n- (Title of 4-1)[[4-1, supports]]\n"
+    assert section == "## Links\n- (Title of 4-1)[[4-1,supports]]\n"
 
     assert main(["link", "1", "4-1", "--type", "supports", "--root", root]) == 2
     assert "unlink first" in capsys.readouterr().err
@@ -291,4 +291,4 @@ def test_link_allows_a_cycle_between_distinct_nodes(write, tmp_path):
     api.link(tmp_path, "4-1", "1-1", link_type="history")
     head, section = _split_doc(tmp_path, "4-1")
     assert head == BODIES[4] + "\n"
-    assert section == "## Links\n- (Title of 1-1)[[1-1, history]]\n"
+    assert section == "## Links\n- (Title of 1-1)[[1-1,history]]\n"

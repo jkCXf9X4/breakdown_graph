@@ -4,7 +4,7 @@ Fixture contract (the write unit consumes this — follow it):
 
 - ``write_node(directory, node_id, **fields)`` writes one node file.  Arbitrary
   front-matter fields are written as given.  Bodies are plain strings holding
-  link declarations directly as canonical ``(TITLE)[[REF, TYPE]]`` tokens.
+  link declarations directly as canonical ``(TITLE)[[REF,TYPE]]`` tokens.
 - ``write_node(..., links=[...])`` is accepted for backwards compatibility and
   auto-converts a front-matter links list into *prefix-form* body tokens plus a
   ``freshness:`` front-matter map (``to``/``type`` become the token,
@@ -141,9 +141,9 @@ def _links_body(
         return body, {}
     if raw_refs:
         lines = [
-            f"- [[{item['to']}, {item.get('type') or 'link'}]]"
+            f"- [[{item['to']},{item.get('type') or 'link'}]]"
             if isinstance(item, dict) and "to" in item
-            else f"- [[{item}, link]]"
+            else f"- [[{item},link]]"
             for item in links
         ]
     else:
@@ -172,7 +172,7 @@ def write_node(
     """Write one node.  Fields are arbitrary; only what you pass is written.
 
     Link declarations belong in the body as prefix-form
-    ``(TITLE)[[REF, TYPE]]`` tokens; pass ``links=[...]`` to have the fixture
+    ``(TITLE)[[REF,TYPE]]`` tokens; pass ``links=[...]`` to have the fixture
     auto-convert a front-matter-style list into tokens plus freshness entries
     (see the module docstring).
 

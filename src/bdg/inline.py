@@ -3,7 +3,7 @@
 Link declarations live in node bodies as reserved tokens, not in front
 matter.  The token grammar is::
 
-    ( TITLE )[ REF , TYPE ]  or  [ REF , TYPE ]
+    (TITLE)[[REF,TYPE]]  or  [[REF,TYPE]]
 
 The cached title is a *prefix*: zero or more spaces may sit between ``)`` and
 ``[[``, the title is non-empty, and it excludes ``)`` and newline.  The title is
@@ -11,8 +11,10 @@ tool-generated cache, not authored content; an author writes only the bare
 token and tooling fills or refreshes the title.
 
 ``REF`` comes first and is a full ref only, ``[0-9]+-[0-9]+``; ``TYPE`` is
-``[A-Za-z][A-Za-z0-9_-]*``; at most one optional space may sit on each side of
-the comma, and none after ``[[`` or before ``]]``.
+``[A-Za-z][A-Za-z0-9_-]*``.  Emission is canonical with no space around the
+comma; the legacy spaced form ``[[REF, TYPE]]`` (at most one optional ASCII
+space on each side of the comma) is still accepted on input, and no space may
+sit after ``[[`` or before ``]]``.
 
 The legacy suffix form ``[[TYPE, REF]](TITLE)`` (and its ref-first variant) is
 *not* a token form: ``(TITLE)`` stays prose and a type-first bracket is an
@@ -264,8 +266,8 @@ def token_spans(body: str) -> list[tuple[int, int]]:
 
 
 def render_token(type: str, ref: str, title: str | None) -> str:
-    """The canonical token text: ``(TITLE)[[REF, TYPE]]`` or bare."""
-    token = f"[[{ref}, {type}]]"
+    """The canonical token text: ``(TITLE)[[REF,TYPE]]`` or bare."""
+    token = f"[[{ref},{type}]]"
     return f"({title}){token}" if title is not None else token
 
 
@@ -290,11 +292,29 @@ def _section_end(lines: list[str], start: int) -> int:
     return end
 
 
+def _token_identity(text: str) -> tuple[str, str, str | None] | None:
+    """``(ref, type, title)`` of a single token list line, else ``None``.
+
+    Comma spacing is not part of the identity, so a legacy ``[[REF, TYPE]]``
+    line and its canonical ``[[REF,TYPE]]`` form compare equal.
+    """
+    match = re.fullmatch(
+        rf"[-*+][ \t]+(?:\((?P<title>[^)\n]*)\)[ \t]*)?"
+        rf"\[\[(?P<ref>{_REF}) ?,( ?)(?P<type>{_TYPE})\]\]",
+        text.strip(),
+    )
+    if match is None:
+        return None
+    return match.group("ref"), match.group("type"), match.group("title")
+
+
 def append_token(text: str, type: str, ref: str, title: str) -> str:
-    """Append ``- (TITLE)[[REF, TYPE]]`` to the trailing ``## Links`` section.
+    """Append ``- (TITLE)[[REF,TYPE]]`` to the trailing ``## Links`` section.
 
     The section is created at the end of the text (preceded by a blank line)
-    when absent.  Appending an identical token line twice is a no-op.
+    when absent.  Appending an identical token line twice is a no-op; identity
+    ignores comma spacing, so a legacy ``[[REF, TYPE]]`` line is not duplicated
+    by its canonical form.
     """
     line = f"- {render_token(type, ref, title)}"
     if not text:
@@ -307,7 +327,8 @@ def append_token(text: str, type: str, ref: str, title: str) -> str:
         return f"{text}\n## Links\n{line}\n"
     end = _section_end(lines, index)
     body = lines[index + 1 : end]
-    if any(item.strip() == line for item in body):
+    identity = _token_identity(line)
+    if identity is not None and any(_token_identity(item) == identity for item in body):
         return text
     insert = end
     while insert > index + 1 and lines[insert - 1].strip() == "":
@@ -372,19 +393,21 @@ def repoint_token(
     """Replace ``REF`` inside every token targeting ``old_ref``.
 
     Prose and list tokens alike, without touching fenced code, code spans or
-    escapes.  When ``new_title`` is given, the cached title is set on every
-    rewritten token too.  Returns ``(new_text, changed_count)``.
+    escapes.  Rewritten tokens are emitted in canonical form (no space around
+    the comma); the cached title prefix is preserved.  When ``new_title`` is
+    given, the cached title is set on every rewritten token too.  Returns
+    ``(new_text, changed_count)``.
     """
     matches = [match for match in _scan_body(text)[0] if match.ref == old_ref]
     if not matches:
         return text, 0
-    pattern = re.compile(rf"(\[\[){re.escape(old_ref)}( ?,( ?){_TYPE})(?=\]\])")
+    pattern = re.compile(rf"(\[\[){re.escape(old_ref)} ?,( ?)({_TYPE})(?=\]\])")
     parts: list[str] = []
     cursor = 0
     for match in matches:
         parts.append(text[cursor : match.start])
         if new_title is None:
-            parts.append(pattern.sub(rf"\g<1>{new_ref}\g<2>", match.raw))
+            parts.append(pattern.sub(rf"\g<1>{new_ref},\g<3>", match.raw))
         else:
             parts.append(render_token(match.type, new_ref, new_title))
         cursor = match.end

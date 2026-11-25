@@ -14,17 +14,19 @@ reports `contains-removed` and tells you to run `bdg migrate` (§ Migration).
 A link is a reserved token in the node body:
 
 ```markdown
-The intent breaks down into (Structural claims)[[2-1, breaks_down]].
+The intent breaks down into (Structural claims)[[2-1,breaks_down]].
 
 ## Links
-- (Verification core)[[12-1, verifies]]
+- (Verification core)[[12-1,verifies]]
 ```
 
 Both forms declare the same thing: one typed out-edge from this node to a full
-ref. Authors write the bare `[[REF, TYPE]]` inside prose; the tool generates the
-cached title prefix. `bdg new --parent`, `bdg link`, `bdg replace`, `bdg migrate`,
+ref. Authors write the bare `[[REF,TYPE]]` inside prose; the tool generates the
+cached title prefix. The canonical form has no space after the comma; a legacy
+single-space `[[REF, TYPE]]` is still accepted. `bdg new --parent`, `bdg link`,
+`bdg replace`, `bdg migrate`,
 and `bdg retitle` write the title; `bdg new`, `bdg link`, and `bdg migrate` also
-maintain a trailing `## Links` section of `- (TITLE)[[REF, TYPE]]` lines.
+maintain a trailing `## Links` section of `- (TITLE)[[REF,TYPE]]` lines.
 `bdg unlink` removes token lines, and `bdg clone --subtree` rewrites token refs
 in place.
 
@@ -110,13 +112,19 @@ sections sorted by `(id, version)`. The canonical global key is
 `(distance, kind_rank, link type, id, version)`, where `kind_rank` is
 `child: 0`, `parent: 1`.
 
-`bdg work` materializes this as a **flat** directory: one symlink per
-materialized ref, named after the store file, plus a root `INDEX.md` with ring
-sections and a `REFS.md` table sorted by `(distance, kind, ref)`. There are no
-node directories. `REF+N` materializes rings `0..N`; the view stays the full
-component. `bdg pack REF --out DIR` writes the same flat view as regular files
-with one ring-section `INDEX.md`.
-
+`bdg work` materializes this as **ring folders**: one symlink per materialized
+ref at `{distance}/{ref}_{title}.md` (ring 0 is
+`0/1-1_Verify the undirected graph.md`, ring 1 is
+`1/2-1_Structural claims.md`), plus a
+root `INDEX.md` with ring sections, one `INDEX.md` in every folder that directly
+holds node files, and a `REFS.md` table sorted by `(distance, kind, ref)`. The
+default layout is the template `{distance}/{ref}_{title}.md` (`{title}` is the
+literal title and falls back to the ref); `--flat` uses store
+basenames and `--path-template` overrides. The layout is recorded in `REFS.md` as
+`# Layout — <template>` and reused by a later plain `bdg work REF`. `REF+N`
+materializes rings `0..N`; the view stays the full component. `bdg pack --out
+DIR` writes the same view as regular files, but its default layout stays flat
+basenames, and it nests only with `--path-template`.
 The active node of the work area is the view ref in the `REFS.md` header
 (`# References — view REF[+N]`). `bdg current`, `bdg edit`, `bdg current --status`,
 and `bdg work --repair` read it; there is no separate state file.
@@ -148,7 +156,7 @@ without an incoming edge.
 | `links-removed` | error | a node still declares front-matter `links`; run `bdg migrate` |
 | `bare-ref` | error | a data ref is a bare id; use a full `<id>-<version>` ref |
 | `invalid-ref` | error | a data ref or CLI selector is malformed |
-| `inline-malformed` | error | a `[[...]]` fragment does not match `[[REF, TYPE]]`; a type-first token is `reversed components` |
+| `inline-malformed` | error | a `[[...]]` fragment does not match `[[REF,TYPE]]`; a type-first token is `reversed components` |
 | `inline-duplicate` | warning | one node declares the same type and target twice |
 | `inline-title-missing` | warning | a token is bare; run `bdg retitle` to fill the title |
 | `invalid-freshness` | error | the `freshness:` map or an entry has the wrong shape |
@@ -176,13 +184,17 @@ without an incoming edge.
 
 `bdg pack REF --out DIR` writes a read-only copy of one view:
 
-- node files as regular files at their flat basename, using the store file's
-  name;
-- one root `INDEX.md` with ring sections and links to each real node file;
-- no node directories and no per-folder indexes.
+- node files as regular files at their flat basename by default, using the store
+  file's name; `--path-template` nests them instead. This default differs from
+  `bdg work`, which writes ring folders;
+- one root `INDEX.md` with ring sections and links to each real node file, plus
+  one per folder that directly holds node files when a template nests them;
+- no node directories by default; a nested template creates them.
 
-`bdg work` writes the same flat structure with symlinks instead of copies. The
-output is deterministic and byte-identical across runs. `--force` writes into a
+`bdg work` writes the same view with symlinks instead of copies, but groups
+nodes into ring folders by default; pass `--path-template` to either command
+when the layouts must match. The output is deterministic and byte-identical
+across runs. `--force` writes into a
 non-empty directory; `--clean` removes the output first. `--fresh` writes only
 fresh node bodies, plus `STALE.md` and `AGENTS.md`.
 
@@ -205,11 +217,11 @@ An older store is converted by `bdg migrate`:
    `## Links` section, and the key is removed. The edge type comes from
    `--type` (default `breaks_down`).
 3. Front-matter `links` moves into that section as sorted
-   `- (TITLE)[[REF, TYPE]]` lines; a retired scalar link gains an explicit type.
+   `- (TITLE)[[REF,TYPE]]` lines; a retired scalar link gains an explicit type.
    Per-link `pinned`/`propagates` values move to the top-level `freshness:` map,
    and `symmetric`/`inverse` are dropped.
-4. Legacy suffix tokens `[[TYPE, REF]](TITLE)` and `[[REF, TYPE]](TITLE)` become
-   the prefix form `(TITLE)[[REF, TYPE]]`; tokens in either component order are
+4. Legacy suffix tokens `[[TYPE,REF]](TITLE)` and `[[REF,TYPE]](TITLE)` become
+   the prefix form `(TITLE)[[REF,TYPE]]`; tokens in either component order are
    normalized to ref-first, and missing titles are filled from the target's
    live title.
 5. Retired placement keys are stripped from every node (`band`, `subpath`,

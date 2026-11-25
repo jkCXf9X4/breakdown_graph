@@ -1,7 +1,7 @@
 """YAML front-matter parsing and surgical rewriting.
 
 The body of a node is never parsed or re-serialised except for stripping the
-reserved ``[[REF, TYPE]]`` tokens, which must not affect freshness pins.
+reserved ``[[REF,TYPE]]`` tokens, which must not affect freshness pins.
 ``rewrite_freshness`` touches only the ``freshness:`` block of the front
 matter so key order and comments elsewhere survive byte for byte.
 """

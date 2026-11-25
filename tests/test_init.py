@@ -134,5 +134,5 @@ def test_init_default_graph_end_to_end(tmp_path, capsys):
         (project / "bdg_graph" / "nodes" / "1-1.md").read_text(encoding="utf-8")
     )
     assert "links" not in doc.meta
-    assert "[[2-1, breaks_down]]" in doc.body
+    assert "[[2-1,breaks_down]]" in doc.body
     assert check(project).ok

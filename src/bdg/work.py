@@ -1,11 +1,13 @@
-"""Materialize one view as a flat ring projection of per-file symlinks.
+"""Materialize one view as a ring projection of per-file symlinks.
 
-The work directory is the primary editing interface: it is a flat directory
-holding one symlink per materialized ref back to its original
-``nodes/<ref>.md`` file.  Ring 0 is the active node, ring 1 is split into
-children, parents and peers, deeper rings are numbered.  Editing a file in the
-work area therefore edits the store directly: there is no sync layer, no state
-file and no copied content.
+The work directory is the primary editing interface: by default it holds one
+symlink per materialized ref back to its original ``nodes/<ref>.md`` file, in a
+folder named for its ring (``0/1-1.md``, ``1/2-1.md``, ...).  Ring 0 is the
+active node, ring 1 is split into children and parents, deeper rings are
+numbered.  ``--flat`` restores the older one-file-per-node layout at the root,
+and the chosen layout is recorded in ``REFS.md``.  Editing a file in the work
+area therefore edits the store directly: there is no sync layer, no state file
+and no copied content.
 
 There is one fixed work area per project, ``<project>/bdg_work``.  Building a
 different view replaces its contents, so a single area always shows exactly one
@@ -59,6 +61,9 @@ _VIEW_IN_REFS = re.compile(
     r"^#\s*References\b.*\bview\s+(\d+(?:-\d+)?)(?:\+(\d+))?\s*$"
 )
 _VIEW_IN_INDEX = re.compile(r"^#\s*View\s+(\d+(?:-\d+)?)(?:\+(\d+))?\s*$")
+_LAYOUT_IN_REFS = re.compile(r"^#\s*Layout\s+[—–-]\s*(?P<template>.*?)\s*$")
+LAYOUT_FLAT = "flat"
+DEFAULT_PATH_TEMPLATE = "{distance}/{ref}_{title}.md"
 
 GIT_TIMEOUT = 5.0
 
@@ -110,6 +115,8 @@ class WorkArea:
     out: Path
     ref: str | None
     depth: int | None = None
+    path_template: str | None = None
+    layout_recorded: bool = False
 
     @property
     def view_ref(self) -> str | None:
@@ -230,6 +237,17 @@ def _expected(
 ) -> dict[str, str]:
     if graph is None:
         graph = _graph(view)
+    if path_template is not None:
+        # A ring template needs a distance for every ref it formats.  Narrow
+        # the graph to this view so unrelated components (for example version
+        # peers outside the closure) cannot resolve to an empty ring.
+        from dataclasses import replace
+
+        store = replace(
+            view.store,
+            nodes={ref: view.nodes[ref] for ref in view.nodes},
+        )
+        graph = replace(graph, store=store)
     return _build_paths(
         view,
         path_template,
@@ -312,6 +330,27 @@ def _view_header(
     return None
 
 
+def _layout_header(path: Path) -> tuple[bool, str | None]:
+    """The persisted layout as ``(recorded, template)``.
+
+    ``recorded`` distinguishes an area with no layout line from one that
+    explicitly records a flat layout; ``template`` is ``None`` for flat and
+    otherwise the template to reuse verbatim.
+    """
+    if not path.is_file():
+        return False, None
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return False, None
+    for line in lines:
+        match = _LAYOUT_IN_REFS.match(line.strip())
+        if match:
+            template = match.group("template")
+            return True, (None if template in ("", LAYOUT_FLAT) else template)
+    return False, None
+
+
 def area(root: str | Path, out: str | Path | None = None) -> WorkArea:
     """Return the work area and the view its own headers declare.
 
@@ -325,16 +364,26 @@ def area(root: str | Path, out: str | Path | None = None) -> WorkArea:
         out_path = Path(out).resolve()
     ref: str | None = None
     depth: int | None = None
+    path_template: str | None = None
+    layout_recorded = False
     if out_path.is_dir():
+        refs_path = out_path / "REFS.md"
         for header, pattern in (
-            (out_path / "REFS.md", _VIEW_IN_REFS),
+            (refs_path, _VIEW_IN_REFS),
             (out_path / "INDEX.md", _VIEW_IN_INDEX),
         ):
             parsed = _view_header(header, pattern)
             if parsed is not None:
                 ref, depth = parsed
                 break
-    return WorkArea(out=out_path, ref=ref, depth=depth)
+        layout_recorded, path_template = _layout_header(refs_path)
+    return WorkArea(
+        out=out_path,
+        ref=ref,
+        depth=depth,
+        path_template=path_template,
+        layout_recorded=layout_recorded,
+    )
 
 
 def _current_area(root: str | Path, out: str | Path | None = None) -> WorkArea:
@@ -411,15 +460,19 @@ def _refs_text(
     title_field: str,
     label: str,
     graph: Any | None = None,
+    *,
+    path_template: str | None = None,
 ) -> str:
     """Flat ring table sorted by ``(distance, kind, ref)``."""
     if graph is None:
         graph = _graph(view)
     distance = graph.distance or {}
+    layout = path_template if path_template is not None else LAYOUT_FLAT
     lines = [
         BANNER.format(ref=label),
         "",
         f"# References — view {label}",
+        f"# Layout — {layout}",
         "",
         "| Path | Ref | Kind | Distance | Title |",
         "| --- | --- | --- | --- | --- |",
@@ -448,6 +501,7 @@ def _agents_text(
     depth: int | None = None,
     *,
     nodes_link: str | None = None,
+    path_template: str | None = None,
 ) -> str:
     ref = label
     lines = [
@@ -455,11 +509,19 @@ def _agents_text(
         "",
         "This work directory is the primary editing interface for the store.",
         "",
-        (
+    ]
+    if path_template is None:
+        lines.append(
             "- Every `.md` file here is a symlink to its node under `nodes/`; "
             "editing it edits the store directly."
-        ),
-    ]
+        )
+    else:
+        lines.append(
+            "- Nodes live in generated subfolders, each folder has its own "
+            "`INDEX.md`, and the layout is recorded in `REFS.md`. Every `.md` "
+            "file is still a symlink to its node under `nodes/`; editing it "
+            "edits the store directly."
+        )
     if nodes_link is not None:
         lines.append(
             f"- The real node files are in [nodes/]({nodes_link}/); each "
@@ -594,7 +656,14 @@ def _build(
     _prune_empty_dirs(out)
     refs_path = out / "REFS.md"
     refs_path.write_text(
-        _refs_text(view, paths, title_field, label, graph),
+        _refs_text(
+            view,
+            paths,
+            title_field,
+            label,
+            graph,
+            path_template=path_template,
+        ),
         encoding="utf-8",
         newline="",
     )
@@ -606,6 +675,7 @@ def _build(
             git,
             depth,
             nodes_link=nodes_link,
+            path_template=path_template,
         ),
         encoding="utf-8",
         newline="",
@@ -700,7 +770,12 @@ def edit_path(
         for rel, mapped in manifest.items():
             if mapped == wanted:
                 return current.out / rel
-    return current.out / _expected(view, None)[wanted]
+    template = (
+        current.path_template
+        if current.layout_recorded
+        else DEFAULT_PATH_TEMPLATE
+    )
+    return current.out / _expected(view, template)[wanted]
 
 
 def work(
@@ -716,6 +791,7 @@ def work(
     status: bool = False,
     writeback: bool = False,
     depth: int | None = None,
+    flat: bool = False,
 ) -> WorkResult:
     """Build, refresh, inspect or write back the single view work area."""
     if status and writeback:
@@ -726,12 +802,34 @@ def work(
         view = _depth_view(_resolve_view(root, current.ref), current.depth)
         depth = current.depth
         out_path = current.out
+        if path_template is None:
+            path_template = (
+                current.path_template
+                if current.layout_recorded
+                else DEFAULT_PATH_TEMPLATE
+            )
     else:
         view = _depth_view(_resolve_view(root, ref), depth)
         if out is not None:
             out_path = Path(out).resolve()
         else:
             out_path = (view.store.project_root / "bdg_work").resolve()
+        if flat:
+            if path_template is not None:
+                raise BreakdownError(
+                    "--flat and --path-template are mutually exclusive"
+                )
+            path_template = None
+        elif path_template is None:
+            # A layout is a property of the area: a plain rebuild, a view
+            # switch, `--clean` and a `+N` refresh keep the recorded one.  A
+            # fresh or legacy area with no layout line defaults to ring folders.
+            recorded = area(root, out_path)
+            path_template = (
+                recorded.path_template
+                if recorded.layout_recorded
+                else DEFAULT_PATH_TEMPLATE
+            )
 
     if status:
         entries = _inspect(view, out_path, path_template)

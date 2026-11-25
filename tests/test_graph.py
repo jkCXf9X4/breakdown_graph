@@ -318,6 +318,57 @@ def test_graph_export_is_flat_with_ring_sections_and_byte_stable(write, tmp_path
     assert first == second
 
 
+def test_graph_pack_nested_template_writes_per_folder_indexes(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2", "type": "breaks_down"}], group="ring-0")
+    write(nodes, 2, links=[{"to": "3", "type": "supports"}], group="ring-1")
+    write(nodes, 3, group="ring-1/deep")
+    out = tmp_path / "graph"
+    result = api.pack(
+        tmp_path, "1-1", out, fresh=False, path_template="{group}/{ref}.md"
+    )
+
+    assert result.nodes == 3
+    assert (out / "ring-0" / "1-1.md").is_file()
+    assert (out / "ring-1" / "2-1.md").is_file()
+    assert (out / "ring-1" / "deep" / "3-1.md").is_file()
+    assert sorted(
+        path.relative_to(out).as_posix() for path in out.rglob("INDEX.md")
+    ) == [
+        "INDEX.md",
+        "ring-0/INDEX.md",
+        "ring-1/INDEX.md",
+        "ring-1/deep/INDEX.md",
+    ]
+
+    root = (out / "INDEX.md").read_text(encoding="utf-8")
+    assert "# Graph 1-1" in root
+    ring_one = (out / "ring-1" / "INDEX.md").read_text(encoding="utf-8")
+    assert "# Folder — ring-1" in ring_one
+    assert "[parent index](../INDEX.md)" in ring_one
+    assert "](2-1.md)" in ring_one
+    assert "](ring-1/2-1.md)" not in ring_one
+    # A node in a sub-subfolder belongs to that folder, not this one.
+    assert "3-1" not in ring_one
+    deep = (out / "ring-1" / "deep" / "INDEX.md").read_text(encoding="utf-8")
+    assert "](3-1.md)" in deep
+    assert "[root index](../../INDEX.md)" in deep
+
+
+def test_graph_pack_nested_reserved_index_template_is_refused(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2", "type": "breaks_down"}], group="nested")
+    write(nodes, 2, group="nested")
+    with pytest.raises(ExportError, match="collides with generated"):
+        api.pack(
+            tmp_path,
+            "1-1",
+            tmp_path / "graph",
+            fresh=False,
+            path_template="{group}/INDEX.md",
+        )
+
+
 # -- selectors and CLI -------------------------------------------------------
 
 

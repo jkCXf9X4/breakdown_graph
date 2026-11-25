@@ -313,7 +313,9 @@ def test_current_views_and_edit_cli(write, tmp_path, capsys):
     assert "anchor 1-1" in out
 
     assert main(["edit", "2-1", "--root", str(tmp_path)]) == 0
-    assert capsys.readouterr().out == f"{(tmp_path / 'bdg_work' / '2-1.md')}\n"
+    assert capsys.readouterr().out == (
+        f"{(tmp_path / 'bdg_work' / '1' / '2-1_Title of 2-1.md')}\n"
+    )
 
 
 def test_current_path_without_area_is_an_error(write, tmp_path, capsys):
@@ -354,7 +356,7 @@ def test_retitle_dry_run_cli(write, tmp_path, capsys):
 
     assert main(["retitle", "--root", str(tmp_path)]) == 0
     assert "retitled 1 tokens in 1 nodes" in capsys.readouterr().out
-    assert "(Two)[[2-1, breaks_down]]" in node.read_text(encoding="utf-8")
+    assert "(Two)[[2-1,breaks_down]]" in node.read_text(encoding="utf-8")
 
 
 def test_removed_subcommands_and_flags_exit_2(write, tmp_path):
@@ -446,16 +448,16 @@ def test_work_depth_option_overrides_a_suffix(write, tmp_path, capsys):
 
     assert main(["work", "1-1+0", "--depth", "1", "--root", str(tmp_path)]) == 0
     assert "(view 1-1+1)" in capsys.readouterr().out
-    assert (out / "2-1.md").is_symlink()
-    assert not (out / "3-1.md").exists()
+    assert (out / "1" / "2-1_Title of 2-1.md").is_symlink()
+    assert not (out / "2" / "3-1_Title of 3-1.md").exists()
 
     assert main(["work", "1-1", "--depth", "0", "--root", str(tmp_path)]) == 0
     assert "(view 1-1+0)" in capsys.readouterr().out
-    assert not (out / "2-1.md").exists()
+    assert not (out / "1" / "2-1_Title of 2-1.md").exists()
 
     assert main(["work", "1-1+0", "--root", str(tmp_path)]) == 0
     assert "1 nodes, 1 symlinks" in capsys.readouterr().out
-    assert not (out / "2-1.md").exists()
+    assert not (out / "1" / "2-1_Title of 2-1.md").exists()
 
 
 def test_work_malformed_depth_suffix_exits_2(write, tmp_path, capsys):
@@ -479,13 +481,13 @@ def test_edit_respects_materialized_depth(write, tmp_path, capsys):
     capsys.readouterr()
 
     assert main(["edit", "2-1", "--root", str(tmp_path)]) == 0
-    assert capsys.readouterr().out.endswith("2-1.md\n")
+    assert capsys.readouterr().out.endswith("2-1_Title of 2-1.md\n")
 
     assert main(["edit", "3-1", "--root", str(tmp_path)]) == 2
     assert "current view 1-1+1" in capsys.readouterr().err
 
 
-def test_edit_prints_a_flat_basename(write, tmp_path, capsys):
+def test_edit_prints_the_ring_path(write, tmp_path, capsys):
     nodes = tmp_path / "nodes"
     write(
         nodes,
@@ -499,8 +501,29 @@ def test_edit_prints_a_flat_basename(write, tmp_path, capsys):
     capsys.readouterr()
 
     assert main(["edit", "2-1", "--root", str(tmp_path)]) == 0
-    expected = tmp_path / "bdg_work" / "2-1.md"
+    expected = tmp_path / "bdg_work" / "1" / "2-1_Title of 2-1.md"
     assert capsys.readouterr().out == f"{expected}\n"
+
+
+def test_edit_and_refs_carry_a_title_with_spaces(write, tmp_path, capsys):
+    nodes = tmp_path / "nodes"
+    write(
+        nodes,
+        1,
+        title="A spaced title",
+        links=[{"to": "2-1", "type": "breaks_down"}],
+    )
+    write(nodes, 2, title="Child title")
+
+    assert main(["work", "1-1", "--root", str(tmp_path)]) == 0
+    capsys.readouterr()
+    out = tmp_path / "bdg_work"
+    refs = (out / "REFS.md").read_text(encoding="utf-8")
+    assert "# Layout — {distance}/{ref}_{title}.md" in refs
+    assert "| `0/1-1_A spaced title.md` | 1-1 | active | 0 |" in refs
+
+    assert main(["edit", "1-1", "--root", str(tmp_path)]) == 0
+    assert capsys.readouterr().out == f"{out / '0' / '1-1_A spaced title.md'}\n"
 
 
 def test_help_texts_are_topology_neutral(capsys):
@@ -543,3 +566,54 @@ def test_help_texts_are_topology_neutral(capsys):
     assert "undirected distance rings" in out
     assert "component representatives" in out
     assert "containment views" not in out
+
+
+def test_work_flat_flag_resets_a_nested_layout(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1, links=[{"to": "2-1", "type": "breaks_down"}])
+    write(nodes, 2)
+    out = tmp_path / "bdg_work"
+
+    assert (
+        main(
+            [
+                "work",
+                "1-1",
+                "--root",
+                str(tmp_path),
+                "--path-template",
+                "{distance}/{ref}.md",
+            ]
+        )
+        == 0
+    )
+    assert (out / "1" / "2-1.md").is_symlink()
+    assert "# Layout — {distance}/{ref}.md" in (out / "REFS.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert main(["work", "1-1", "--root", str(tmp_path), "--flat"]) == 0
+
+    assert (out / "2-1.md").is_symlink()
+    assert not (out / "1").exists()
+    assert "# Layout — flat" in (out / "REFS.md").read_text(encoding="utf-8")
+
+
+def test_work_flat_flag_conflicts_with_path_template(write, tmp_path):
+    nodes = tmp_path / "nodes"
+    write(nodes, 1)
+
+    assert (
+        main(
+            [
+                "work",
+                "1-1",
+                "--root",
+                str(tmp_path),
+                "--flat",
+                "--path-template",
+                "{ref}.md",
+            ]
+        )
+        == 2
+    )

@@ -2,7 +2,7 @@
 
 Front-matter fields are arbitrary user metadata.  Reserved meaning is
 ``id``, ``legacy`` and ``freshness`` in front matter, and the reserved
-``(TITLE)[[REF, TYPE]]`` link tokens in node bodies; display choices are
+``(TITLE)[[REF,TYPE]]`` link tokens in node bodies; display choices are
 given on the command line.
 """
 
@@ -92,12 +92,24 @@ def _add_root(
     )
 
 
-def _add_display(parser: argparse.ArgumentParser) -> None:
+def _add_display(
+    parser: argparse.ArgumentParser, *, work_layout: bool = False
+) -> None:
+    if work_layout:
+        template_help = (
+            "output path template: {ref} {id} {version} {distance} {slug} "
+            "{title} or any field (default: {distance}/{ref}_{title}.md ring "
+            "folders; a layout already recorded in REFS.md is reused)"
+        )
+    else:
+        template_help = (
+            "output path template: {ref} {id} {version} {distance} {slug} "
+            "{title} or any field (default: the store file basename)"
+        )
     parser.add_argument(
         "--path-template",
         default=None,
-        help="output path template: {ref} {id} {version} {distance} {slug} "
-        "{title} or any field (default: the store file basename)",
+        help=template_help,
     )
     parser.add_argument(
         "--title-field",
@@ -230,6 +242,7 @@ def _cmd_work(args: argparse.Namespace) -> int:
         force=args.force,
         clean=args.clean,
         writeback=args.repair,
+        flat=args.flat,
         **_display_opts(args),
     )
     if args.repair:
@@ -627,8 +640,9 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="Start with `bdg work`: it builds a writable symlink tree over the "
         "store and is the primary editing interface.\n"
         "Edit through the symlinks; every node .md file there is the store file.\n"
-        "Link tokens are written bare as [[REF, TYPE]]; cached titles are a tool-written\n"
-        "prefix (TITLE)[[REF, TYPE]] that `bdg retitle` regenerates.\n"
+        "Link tokens are written bare as [[REF,TYPE]] (legacy [[REF, TYPE]] is\n"
+        "still accepted on input); cached titles are a tool-written\n"
+        "prefix (TITLE)[[REF,TYPE]] that `bdg retitle` regenerates.\n"
         "`bdg pack` materializes a read-only projection of the same nodes.\n"
         "Solutions are git worktrees (`bdg solution`); layouts inside one are `bdg work`.\n"
         "Inspect a work tree with `bdg current --status`; repair it with `bdg work --repair`.",
@@ -650,8 +664,9 @@ def build_parser() -> argparse.ArgumentParser:
         "work",
         help="primary interface: writable symlink tree over the store",
         description="Build the single writable work area for one undirected "
-        "view. A different REF replaces its contents; the flat layout holds "
-        "one symlink per node plus ring-sorted INDEX.md and REFS.md.",
+        "view. A different REF replaces its contents; the default layout groups "
+        "nodes into ring folders ({distance}/{ref}_{title}.md) with an INDEX.md in each, "
+        "and --flat restores store basenames at the root.",
     )
     _add_root(work)
     work.add_argument(
@@ -667,9 +682,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="link hops to materialize (default: full closure; 0: root only)",
     )
-    _add_display(work)
+    _add_display(work, work_layout=True)
     work.add_argument("--force", action="store_true", help="overwrite detached files")
     work.add_argument("--clean", action="store_true", help="remove the output first")
+    work.add_argument(
+        "--flat",
+        action="store_true",
+        help="restore store basenames at the root, discarding the ring-folder "
+        "layout (default: {distance}/{ref}_{title}.md folders)",
+    )
     work.add_argument(
         "--repair",
         action="store_true",
@@ -913,7 +934,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="convert a legacy store to prefix-form body link tokens",
         description="Version bare filenames, then move every front-matter "
         "links and contains list into a trailing ## Links section of "
-        "(TITLE)[[REF, TYPE]] token lines in each node body. Tokens in either "
+        "(TITLE)[[REF,TYPE]] token lines in each node body. Tokens in either "
         "component order are normalized to ref-first; retired suffix tokens "
         "[[TYPE, REF]](TITLE) and [[REF, TYPE]](TITLE) are rewritten to the "
         "prefix form, missing "
@@ -953,7 +974,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="regenerate cached token titles from live target titles",
         description="Rewrite every cached title inside link tokens to its "
         "target's live title, in prose and in ## Links lines. The cached title "
-        "is the prefix (TITLE)[[REF, TYPE]]. Tokens whose target is unresolved "
+        "is the prefix (TITLE)[[REF,TYPE]]. Tokens whose target is unresolved "
         "are left untouched.",
     )
     _add_root(retitle)
@@ -969,7 +990,7 @@ def build_parser() -> argparse.ArgumentParser:
         "new",
         help="create the next global id and link it from a parent",
         description="Append the new ref as a typed edge token "
-        "(TITLE)[[REF, TYPE]] of --parent, titled with the new node's live "
+        "(TITLE)[[REF,TYPE]] of --parent, titled with the new node's live "
         "title. No authored placement is written. Without --parent the node "
         "starts its own component.",
     )
@@ -997,7 +1018,7 @@ def build_parser() -> argparse.ArgumentParser:
     link = sub.add_parser(
         "link",
         help="append a typed link edge token to the FROM node body",
-        description="Append a typed edge token (TITLE)[[REF, TYPE]] in the "
+        description="Append a typed edge token (TITLE)[[REF,TYPE]] in the "
         "FROM node's ## Links body section, titled with the target's live "
         "title. Back-edges, reciprocal edges and cycles are legal; a self-loop "
         "is refused.",
