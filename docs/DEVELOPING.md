@@ -305,6 +305,22 @@ bdg work 1-1                      # flat work area, 12 symlinks
 git diff --check
 ```
 
+## Releasing
+
+`pyproject.toml` reads the version dynamically from `__version__` in
+`src/bdg/__init__.py`. To publish:
+
+1. Bump `__version__`, commit, and push `main`.
+2. Tag the commit and push the tag:
+   `git tag -a v0.2.0 -m v0.2.0 && git push origin v0.2.0`.
+3. `.github/workflows/release.yml` runs the suite, refuses a tag that does not
+   match `v<__version__>`, builds the sdist and wheel, installs the wheel in a
+   clean venv, and attaches both files to the GitHub release for the tag.
+
+A manual `workflow_dispatch` run builds and smoke-tests the artifacts without
+creating a release. `dist/` is gitignored; release files are built from the tag,
+never from a dirty working tree.
+
 ## Debugging
 
 - `PYTHONPATH=src python3 -m bdg ...` is identical to `bdg`.

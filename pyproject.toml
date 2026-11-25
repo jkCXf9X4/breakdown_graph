@@ -17,6 +17,10 @@ classifiers = [
   "Topic :: Documentation",
 ]
 
+[project.urls]
+Homepage = "https://github.com/jkCXf9X4/breakdown_graph"
+Repository = "https://github.com/jkCXf9X4/breakdown_graph"
+
 [project.scripts]
 bdg = "bdg.cli:main"
 

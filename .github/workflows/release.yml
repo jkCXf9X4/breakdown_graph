@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Test and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the project and build tooling
+        run: python3 -m pip install --upgrade build -e '.[test]'
+
+      - name: Check the tag matches bdg.__version__
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          python3 - <<'PY'
+          import ast
+          import os
+          import pathlib
+
+          tree = ast.parse(pathlib.Path("src/bdg/__init__.py").read_text())
+          version = next(
+              ast.literal_eval(node.value)
+              for node in tree.body
+              if isinstance(node, ast.Assign)
+              for target in node.targets
+              if isinstance(target, ast.Name) and target.id == "__version__"
+          )
+          tag = os.environ["GITHUB_REF_NAME"]
+          expected = f"v{version}"
+          if tag != expected:
+              raise SystemExit(f"tag {tag} does not match {expected}")
+          PY
+
+      - name: Run the test suite
+        run: python3 -m pytest -q
+
+      - name: Build sdist and wheel
+        run: python3 -m build
+
+      - name: Smoke-test the wheel
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --quiet dist/*.whl
+          "$RUNNER_TEMP/venv/bin/python" -c "import bdg; print('bdg', bdg.__version__)"
+          "$RUNNER_TEMP/venv/bin/bdg" --help > /dev/null
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Attach artifacts to the GitHub release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+          fi

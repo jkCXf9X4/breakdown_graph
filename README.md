@@ -95,6 +95,10 @@ bdg --help
 Without installing, run from the repository root:
 `PYTHONPATH=src python3 -m bdg --help`.
 
+Prebuilt wheels and sdists are attached to each
+[release](https://github.com/jkCXf9X4/breakdown_graph/releases); install one with
+`pip install <path-or-url-to-wheel>`.
+
 ## Five-minute tour
 
 The repository ships a small example at `examples/`, the default store (`ROOT`
