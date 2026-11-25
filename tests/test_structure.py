@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from bd_tree import api
-from bd_tree.cli import main
-from bd_tree.errors import BreakdownError
-from bd_tree.frontmatter import body_hash, parse_document
+from bdg import api
+from bdg.cli import main
+from bdg.errors import BreakdownError
+from bdg.frontmatter import body_hash, parse_document
 
 BODIES = {
     1: "root body\n\nwith a blank line\n\n\n",

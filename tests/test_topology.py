@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from bd_tree import api
-from bd_tree.cli import main
-from bd_tree.frontmatter import render_document
-from bd_tree.graph import build_graph, default_anchor
-from bd_tree.loader import load
-from bd_tree.navigate import render_find, render_path, render_show
+from bdg import api
+from bdg.cli import main
+from bdg.frontmatter import render_document
+from bdg.graph import build_graph, default_anchor
+from bdg.loader import load
+from bdg.navigate import render_find, render_path, render_show
 
 
 def _write_tokens(nodes, node_id, *, title, tokens, body, **fields):

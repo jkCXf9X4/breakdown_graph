@@ -5,7 +5,7 @@ import shutil
 
 import pytest
 
-from bd_tree import api
+from bdg import api
 
 
 def _tree(write, tmp_path):
@@ -119,8 +119,8 @@ def test_work_cycle_appears_once_at_minimum_distance(write, tmp_path):
 
 def test_work_cli_builds_the_same_tree(write, tmp_path, capsys):
     _tree(write, tmp_path)
-    out = tmp_path / "bd_work"
-    from bd_tree.cli import main
+    out = tmp_path / "bdg_work"
+    from bdg.cli import main
 
     assert main(["work", "1-1", "--root", str(tmp_path)]) == 0
     output = capsys.readouterr().out
@@ -168,21 +168,21 @@ def test_status_inspects_the_areas_view_not_the_requested_ref(write, tmp_path):
 
 @pytest.mark.parametrize("mode", ["status", "writeback"])
 def test_status_and_writeback_require_a_built_area(write, tmp_path, mode):
-    from bd_tree.errors import ExportError
+    from bdg.errors import ExportError
 
     _tree(write, tmp_path)
     kwargs = {mode: True}
 
-    with pytest.raises(ExportError, match="bd work"):
+    with pytest.raises(ExportError, match="bdg work"):
         api.work(tmp_path, "1-1", **kwargs)
-    assert not (tmp_path / "bd_work").exists()
+    assert not (tmp_path / "bdg_work").exists()
 
 
 def test_area_and_edit_path_are_read_only(write, tmp_path):
     _tree(write, tmp_path)
     api.work(tmp_path, "1-1")
-    out = (tmp_path / "bd_work").resolve()
-    from bd_tree.work import area, edit_path
+    out = (tmp_path / "bdg_work").resolve()
+    from bdg.work import area, edit_path
 
     watched = [
         out / "INDEX.md",
@@ -208,18 +208,18 @@ def test_area_and_edit_path_are_read_only(write, tmp_path):
 def test_edit_path_returns_the_expected_path_without_building(write, tmp_path):
     _tree(write, tmp_path)
     api.work(tmp_path, "1-1")
-    out = (tmp_path / "bd_work").resolve()
+    out = (tmp_path / "bdg_work").resolve()
     dest = out / "2-1.md"
     dest.unlink()
-    from bd_tree.work import edit_path
+    from bdg.work import edit_path
 
     assert edit_path(tmp_path, "2") == dest
     assert not dest.exists()
 
 
 def test_edit_path_rejects_an_out_of_view_ref(write, tmp_path):
-    from bd_tree.navigate import NavigationError
-    from bd_tree.work import edit_path
+    from bdg.navigate import NavigationError
+    from bdg.work import edit_path
 
     nodes = tmp_path / "nodes"
     write(nodes, 1, links=[{"to": "2-1", "type": "breaks_down"}])
@@ -235,11 +235,11 @@ def test_edit_path_rejects_an_out_of_view_ref(write, tmp_path):
 
 
 def test_edit_path_requires_a_built_area(write, tmp_path):
-    from bd_tree.errors import ExportError
-    from bd_tree.work import edit_path
+    from bdg.errors import ExportError
+    from bdg.work import edit_path
 
     _tree(write, tmp_path)
-    with pytest.raises(ExportError, match="bd work"):
+    with pytest.raises(ExportError, match="bdg work"):
         edit_path(tmp_path, "1")
 
 
@@ -262,12 +262,12 @@ def test_status_reports_a_detached_file(write, tmp_path):
 def test_current_status_reports_drift_and_exits_non_zero(write, tmp_path, capsys):
     _tree(write, tmp_path)
     api.work(tmp_path, "1-1")
-    out = tmp_path / "bd_work"
+    out = tmp_path / "bdg_work"
     dest = out / "2-1.md"
     original = (tmp_path / "nodes" / "2-1.md").read_text(encoding="utf-8")
     dest.unlink()
     dest.write_text(original + "\nlocal note\n", encoding="utf-8")
-    from bd_tree.cli import main
+    from bdg.cli import main
 
     assert main(["current", "--status", "--root", str(tmp_path)]) == 1
     captured = capsys.readouterr()
@@ -332,18 +332,18 @@ def test_clean_rebuilds_without_touching_store_files(write, tmp_path):
 def test_default_out_is_the_single_project_work_area(write, tmp_path):
     _tree(write, tmp_path)
     result = api.work(tmp_path, "1-1")
-    expected = (tmp_path / "bd_work").resolve()
+    expected = (tmp_path / "bdg_work").resolve()
     assert result.out == expected
     assert expected.is_dir()
     assert (expected / "2-1.md").is_symlink()
 
 
-def test_default_out_for_hidden_store_is_project_bd_work(write, tmp_path):
-    store = tmp_path / ".bd_tree" / "nodes"
+def test_default_out_for_hidden_store_is_project_bdg_work(write, tmp_path):
+    store = tmp_path / "bdg_graph" / "nodes"
     write(store, 1, links=[{"to": "2-1", "type": "breaks_down"}])
     write(store, 2)
     result = api.work(tmp_path, "1-1")
-    expected = (tmp_path / "bd_work").resolve()
+    expected = (tmp_path / "bdg_work").resolve()
     assert result.out == expected
     assert (expected / "1-1.md").is_symlink()
     assert (expected / "1-1.md").resolve() == (store / "1-1.md").resolve()
@@ -358,7 +358,7 @@ def test_ref_switch_replaces_the_same_work_area(write, tmp_path):
 
     first = api.work(tmp_path, "1-1")
     out = first.out
-    assert out == (tmp_path / "bd_work").resolve()
+    assert out == (tmp_path / "bdg_work").resolve()
     old_link = out / "1-1.md"
     assert old_link.is_symlink()
     assert old_link.resolve() == (nodes / "1-1.md").resolve()
@@ -401,7 +401,7 @@ def test_unexpected_store_symlink_is_cleaned_without_refs_manifest(write, tmp_pa
 
 
 def test_detached_file_blocks_a_ref_switch_until_clean(write, tmp_path):
-    from bd_tree.errors import ExportError
+    from bdg.errors import ExportError
 
     nodes = tmp_path / "nodes"
     write(nodes, 1, version=1, links=[{"to": "2-1", "type": "breaks_down"}])
@@ -410,7 +410,7 @@ def test_detached_file_blocks_a_ref_switch_until_clean(write, tmp_path):
     write(nodes, 2, version=2)
 
     api.work(tmp_path, "1-1")
-    out = tmp_path / "bd_work"
+    out = tmp_path / "bdg_work"
     dest = out / "1-1.md"
     dest.unlink()
     dest.write_text("detached\n", encoding="utf-8")
@@ -555,13 +555,13 @@ def test_refresh_removes_stale_ref_links(write, tmp_path):
 
 def test_detached_file_blocks_refresh_until_repair(write, tmp_path):
     _tree(write, tmp_path)
-    out = tmp_path / "bd_work"
+    out = tmp_path / "bdg_work"
     api.work(tmp_path, "1-1")
     dest = out / "2-1.md"
     original = dest.read_text(encoding="utf-8")
     dest.unlink()
     dest.write_text(original + "detached edit\n", encoding="utf-8")
-    from bd_tree.cli import main
+    from bdg.cli import main
 
     assert main(["work", "1-1", "--root", str(tmp_path)]) == 2
     assert not dest.is_symlink()
@@ -587,7 +587,7 @@ def test_detached_file_blocks_refresh_until_repair(write, tmp_path):
 
 
 def test_stray_blocks_refresh_and_clean_discards(write, tmp_path):
-    from bd_tree.errors import ExportError
+    from bdg.errors import ExportError
 
     _tree(write, tmp_path)
     out = tmp_path / "work"
@@ -608,8 +608,8 @@ def test_stray_blocks_refresh_and_clean_discards(write, tmp_path):
 def test_current_path_is_read_only(write, tmp_path, capsys):
     _tree(write, tmp_path)
     api.work(tmp_path, "1-1")
-    out = (tmp_path / "bd_work").resolve()
-    from bd_tree.cli import main
+    out = (tmp_path / "bdg_work").resolve()
+    from bdg.cli import main
 
     def snapshot():
         return {
@@ -633,7 +633,7 @@ def test_current_path_is_read_only(write, tmp_path, capsys):
 
 def test_current_path_and_view_are_mutually_exclusive(write, tmp_path):
     _tree(write, tmp_path)
-    from bd_tree.cli import main
+    from bdg.cli import main
 
     with pytest.raises(SystemExit) as exc:
         main(["current", "--path", "--view", "--root", str(tmp_path)])
@@ -711,7 +711,7 @@ def test_work_without_git_omits_git_context(write, tmp_path, capsys):
     agents = (out / "AGENTS.md").read_text(encoding="utf-8")
     assert "Git branch:" not in agents
 
-    from bd_tree.cli import main
+    from bdg.cli import main
 
     assert main(["work", "1-1", "--root", str(tmp_path)]) == 0
     assert "branch " not in capsys.readouterr().out
@@ -743,7 +743,7 @@ def test_work_records_git_branch_commit_and_toplevel(write, tmp_path):
 def test_work_cli_prints_the_branch(write, tmp_path, capsys):
     repo = _git_repo(write, tmp_path)
     branch = _run_git(repo, "rev-parse", "--abbrev-ref", "HEAD")
-    from bd_tree.cli import main
+    from bdg.cli import main
 
     assert main(["work", "1-1", "--root", str(repo)]) == 0
     assert f"branch {branch}" in capsys.readouterr().out
@@ -781,15 +781,15 @@ def test_depth_limited_work_materializes_only_the_rings(write, tmp_path):
 
     agents = (out / "AGENTS.md").read_text(encoding="utf-8")
     assert "first 1 descendant levels" in agents
-    assert "run `bd work 1-1` for the full closure" in agents
+    assert "run `bdg work 1-1` for the full closure" in agents
 
 
 def test_depth_limited_work_edit_path_hides_excluded_refs(write, tmp_path):
-    from bd_tree.errors import ExportError
-    from bd_tree.work import area, edit_path
+    from bdg.errors import ExportError
+    from bdg.work import area, edit_path
 
     _tree(write, tmp_path)
-    out = (tmp_path / "bd_work").resolve()
+    out = (tmp_path / "bdg_work").resolve()
     api.work(tmp_path, "1-1", depth=1)
 
     current = area(tmp_path)
@@ -925,7 +925,7 @@ def test_work_writes_only_the_root_index(write, tmp_path):
 
 
 def test_work_index_name_collision_is_refused(write, tmp_path):
-    from bd_tree.errors import ExportError
+    from bdg.errors import ExportError
 
     _tree(write, tmp_path)
     out = tmp_path / "work"
@@ -960,7 +960,7 @@ def test_switching_components_removes_old_links_and_keeps_one_index(write, tmp_p
     write(nodes, 7)
 
     api.work(tmp_path, "1-1")
-    out = (tmp_path / "bd_work").resolve()
+    out = (tmp_path / "bdg_work").resolve()
 
     api.work(tmp_path, "7-1")
 

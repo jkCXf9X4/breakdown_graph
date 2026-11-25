@@ -4,9 +4,9 @@ import shutil
 
 import pytest
 
-from bd_tree.api import check, pack
-from bd_tree.errors import ExportError
-from bd_tree.graph import build_graph, graph_view, render_dot, render_svg
+from bdg.api import check, pack
+from bdg.errors import ExportError
+from bdg.graph import build_graph, graph_view, render_dot, render_svg
 
 
 def _chain(write, nodes):

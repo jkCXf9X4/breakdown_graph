@@ -69,12 +69,12 @@ both. A declared but missing ref is an error (`root-ref-missing`); the view is
 not silently re-anchored.
 
 ```sh
-bd views                    # one line per component: representative, size, title
-bd graph 2-1                # the same component, focused on 2-1
-bd work 4-1                 # the same component, materialized around 4-1
+bdg views                    # one line per component: representative, size, title
+bdg graph 2-1                # the same component, focused on 2-1
+bdg work 4-1                 # the same component, materialized around 4-1
 ```
 
-`bd views` marks the store default with `*` and the active work-area anchor with
+`bdg views` marks the store default with `*` and the active work-area anchor with
 `anchor REF`.
 
 ## 4. Distance and rings
@@ -84,8 +84,8 @@ bd work 4-1                 # the same component, materialized around 4-1
 returns an empty map when the anchor is missing. Because a ref is enqueued at
 most once, cycles need no special handling.
 
-A view is the anchor's whole component, not a depth prefix. `bd work REF+N` and
-`bd graph --depth N` materialize or traverse rings `0..N`; the view behind them
+A view is the anchor's whole component, not a depth prefix. `bdg work REF+N` and
+`bdg graph --depth N` materialize or traverse rings `0..N`; the view behind them
 is still the full component.
 
 Ring 0 is the anchor. Ring 1 is split by direction. Rings 2 and deeper are not
@@ -119,7 +119,7 @@ follows:
 - `show`: rings by distance, then arrival kind rank, then link type, then
   `(id, version)`;
 - `REFS.md`: rows by `(distance, kind_rank, id, version)`;
-- `bd graph --format dot`: nodes by `(distance, id, version)`.
+- `bdg graph --format dot`: nodes by `(distance, id, version)`.
 
 No ordering depends on file order, filesystem order, or a YAML mapping order.
 
@@ -133,22 +133,22 @@ membership filter.
 | `→` | child: the current node authors the edge to the next node |
 | `←` | parent: the next node authors the edge back to the current node |
 
-`bd show REF+N` labels each node with the direction of the step that reached it
-from the previous ring. `bd show --links` prints one row per undirected
-neighbour, deduped, with the arrow on the queried node's side. `bd path REF`
-labels every step of the shortest undirected path from the anchor. `bd out` and
-`bd in` remain explicitly directional: authored out-edges and derived in-edges.
+`bdg show REF+N` labels each node with the direction of the step that reached it
+from the previous ring. `bdg show --links` prints one row per undirected
+neighbour, deduped, with the arrow on the queried node's side. `bdg path REF`
+labels every step of the shortest undirected path from the anchor. `bdg out` and
+`bdg in` remain explicitly directional: authored out-edges and derived in-edges.
 
 ```sh
-bd show 1-1+2 --no-body --links
-bd path 10-1
-bd out 3-1
-bd in 4-1
+bdg show 1-1+2 --no-body --links
+bdg path 10-1
+bdg out 3-1
+bdg in 4-1
 ```
 
 ## 7. Filters
 
-`bd graph` accepts three independent controls:
+`bdg graph` accepts three independent controls:
 
 - `--depth N` stops traversal after `N` link hops;
 - `--type T` follows only edges with that type (repeatable);
@@ -161,23 +161,23 @@ reachable. The anchor is always included, even when it is
 outside the requested range.
 
 ```sh
-bd graph 1-1 --depth 1           # rings 0 and 1
-bd graph 1-1 --rings 2:3         # ring 0 plus rings 2 and 3
-bd graph 1-1 --type supports     # only supports edges are traversed
+bdg graph 1-1 --depth 1           # rings 0 and 1
+bdg graph 1-1 --rings 2:3         # ring 0 plus rings 2 and 3
+bdg graph 1-1 --type supports     # only supports edges are traversed
 ```
 
 ## 8. The flat work area
 
-`bd work REF[+N]` writes the project's single work area, `<project>/bd_work/`.
+`bdg work REF[+N]` writes the project's single work area, `<project>/bdg_work/`.
 It is flat: one relative symlink per materialized ref, using the store file's
 basename. There are no node directories and no nested folder layout.
 
 ```text
-bd_work/
-├── 1-1.md        -> ../.bd_tree/nodes/1-1.md
-├── 2-1.md        -> ../.bd_tree/nodes/2-1.md
-├── 3-1.md        -> ../.bd_tree/nodes/3-1.md
-├── 4-1.md        -> ../.bd_tree/nodes/4-1.md
+bdg_work/
+├── 1-1.md        -> ../bdg_graph/nodes/1-1.md
+├── 2-1.md        -> ../bdg_graph/nodes/2-1.md
+├── 3-1.md        -> ../bdg_graph/nodes/3-1.md
+├── 4-1.md        -> ../bdg_graph/nodes/4-1.md
 ├── INDEX.md      generated
 ├── REFS.md       generated
 └── AGENTS.md     generated
@@ -202,16 +202,16 @@ the real node folder, and ring sections:
 
 ## Active
 
-- [<title>](1-1.md) — [real file](../.bd_tree/nodes/1-1.md)
+- [<title>](1-1.md) — [real file](../bdg_graph/nodes/1-1.md)
 
 ## Distance 1 — children
 
-- [<title>](2-1.md) — [real file](../.bd_tree/nodes/2-1.md)
-- [<title>](3-1.md) — [real file](../.bd_tree/nodes/3-1.md)
+- [<title>](2-1.md) — [real file](../bdg_graph/nodes/2-1.md)
+- [<title>](3-1.md) — [real file](../bdg_graph/nodes/3-1.md)
 
 ## Distance 2
 
-- [<title>](4-1.md) — [real file](../.bd_tree/nodes/4-1.md)
+- [<title>](4-1.md) — [real file](../bdg_graph/nodes/4-1.md)
 ```
 
 Ring 1 is split into `children` and `parents`; deeper rings are
@@ -234,15 +234,15 @@ reader can open, copy, or delete the source instead of the symlink.
 ```
 
 Rows are sorted by `(distance, kind, ref)`. The header
-`# References — view REF[+N]` is the active node of the work area: `bd current`,
-`bd edit`, `bd current --status`, and `bd work --repair` read it. There is no
+`# References — view REF[+N]` is the active node of the work area: `bdg current`,
+`bdg edit`, `bdg current --status`, and `bdg work --repair` read it. There is no
 separate state file and no per-node pointer.
 
 ### 8.3 AGENTS.md
 
 `AGENTS.md` explains that every node `.md` is a symlink, that `INDEX.md`,
 `REFS.md`, and itself are generated, that this is the only writable area, and
-that `bd current --status` / `bd work --repair` are the repair path. Inside git
+that `bdg current --status` / `bdg work --repair` are the repair path. Inside git
 it also records the branch, short commit, and worktree. Outside git those lines
 are omitted and the layout is unchanged.
 
@@ -290,7 +290,7 @@ The text render is:
 `8-1` has five inbound edges (`4-1`, `5-1`, `6-1`, `7-1`, `12-1`) and still
 appears once, in ring 3.
 
-`bd path 10-1` prints the shortest undirected chain from the anchor:
+`bdg path 10-1` prints the shortest undirected chain from the anchor:
 
 ```text
 1-1  <title>
@@ -303,7 +303,7 @@ appears once, in ring 3.
 Every step happens to be an authored child edge here, so every arrow is `→`.
 With a back-edge in the chain, the corresponding step is `←`.
 
-The work area for `bd work 1-1` is flat:
+The work area for `bdg work 1-1` is flat:
 
 ```text
 1-1.md  2-1.md  3-1.md  4-1.md  5-1.md  6-1.md
@@ -311,8 +311,8 @@ The work area for `bd work 1-1` is flat:
 INDEX.md  REFS.md  AGENTS.md
 ```
 
-`bd work 1-1+2` writes only `1-1.md`, `2-1.md`, `3-1.md`, `4-1.md`, `5-1.md`,
-`6-1.md`, and `7-1.md`; `bd current --view` then prints `1-1+2`.
+`bdg work 1-1+2` writes only `1-1.md`, `2-1.md`, `3-1.md`, `4-1.md`, `5-1.md`,
+`6-1.md`, and `7-1.md`; `bdg current --view` then prints `1-1+2`.
 
 ## 10. Cycles and back-edges
 
@@ -343,21 +343,21 @@ None reads a layout file.
 
 | Command | What it consumes |
 | --- | --- |
-| `bd graph [REF]` | The component as ring sections; `--depth`, `--rings`, and `--type` narrow traversal or display. |
-| `bd graph --format dot` / `--format svg` | The same view as a flat Graphviz graph, nodes ordered by distance. |
-| `bd show REF[+N]` | BFS rings `0..N`, each node once, with direction arrows. |
-| `bd path REF` | Shortest undirected path from the anchor. |
-| `bd find QUERY` | The anchor's component by default; `--view` picks another, `--all` searches the store. |
-| `bd views` | One representative and size per component. |
-| `bd work REF[+N]` | Flat symlinks plus ring-sorted `INDEX.md` and `REFS.md`. |
-| `bd current --status` | Reads the existing area and its declared view; no rebuild. |
-| `bd work --repair` | Re-links detached files after validating their front matter. |
-| `bd current [--path\|--view\|--status]` | Reports the area and its view; read-only. |
-| `bd edit REF` | Path of the ref in the active view. |
-| `bd pack REF --out DIR` | Regular-file copy of the flat view plus one ring-section `INDEX.md`. |
-| `bd pack REF --fresh --out DIR` | Fresh nodes only, plus `STALE.md` and `AGENTS.md`. |
-| `bd graph REF --format dot\|svg` | Flat DOT or rendered SVG; no clusters. |
-| `bd clone REF --subtree [--depth N]` | Copies the undirected neighbourhood (rings `0..N`) and rewires cloned edges. |
+| `bdg graph [REF]` | The component as ring sections; `--depth`, `--rings`, and `--type` narrow traversal or display. |
+| `bdg graph --format dot` / `--format svg` | The same view as a flat Graphviz graph, nodes ordered by distance. |
+| `bdg show REF[+N]` | BFS rings `0..N`, each node once, with direction arrows. |
+| `bdg path REF` | Shortest undirected path from the anchor. |
+| `bdg find QUERY` | The anchor's component by default; `--view` picks another, `--all` searches the store. |
+| `bdg views` | One representative and size per component. |
+| `bdg work REF[+N]` | Flat symlinks plus ring-sorted `INDEX.md` and `REFS.md`. |
+| `bdg current --status` | Reads the existing area and its declared view; no rebuild. |
+| `bdg work --repair` | Re-links detached files after validating their front matter. |
+| `bdg current [--path\|--view\|--status]` | Reports the area and its view; read-only. |
+| `bdg edit REF` | Path of the ref in the active view. |
+| `bdg pack REF --out DIR` | Regular-file copy of the flat view plus one ring-section `INDEX.md`. |
+| `bdg pack REF --fresh --out DIR` | Fresh nodes only, plus `STALE.md` and `AGENTS.md`. |
+| `bdg graph REF --format dot\|svg` | Flat DOT or rendered SVG; no clusters. |
+| `bdg clone REF --subtree [--depth N]` | Copies the undirected neighbourhood (rings `0..N`) and rewires cloned edges. |
 
 ## 12. Extension guide
 
@@ -365,16 +365,16 @@ None reads a layout file.
 
 | Piece | Location |
 | --- | --- |
-| `Store.neighbors`, `Store.components`, `Store.topology_roots` | `src/bd_tree/model.py` |
-| `View`, including `distance` | `src/bd_tree/model.py` |
-| `ring_distances`, `build_graph` | `src/bd_tree/graph.py` |
-| `graph_view` (traversal and filters) | `src/bd_tree/graph.py` |
-| `_ring_sections`, `render_graph` | `src/bd_tree/graph.py` |
-| `layout_paths`, `export_graph` | `src/bd_tree/graph.py` |
-| `_load_graph_view` | `src/bd_tree/loader.py` |
-| `walk_neighbors`, `render_show`, `render_path` | `src/bd_tree/navigate.py` |
-| `_ring_layout`, `_build`, `_refs_text`, `_agents_text`, `area` | `src/bd_tree/work.py` |
-| `_directory_indexes`, `_graph_index_text` | `src/bd_tree/exporter.py` |
+| `Store.neighbors`, `Store.components`, `Store.topology_roots` | `src/bdg/model.py` |
+| `View`, including `distance` | `src/bdg/model.py` |
+| `ring_distances`, `build_graph` | `src/bdg/graph.py` |
+| `graph_view` (traversal and filters) | `src/bdg/graph.py` |
+| `_ring_sections`, `render_graph` | `src/bdg/graph.py` |
+| `layout_paths`, `export_graph` | `src/bdg/graph.py` |
+| `_load_graph_view` | `src/bdg/loader.py` |
+| `walk_neighbors`, `render_show`, `render_path` | `src/bdg/navigate.py` |
+| `_ring_layout`, `_build`, `_refs_text`, `_agents_text`, `area` | `src/bdg/work.py` |
+| `_directory_indexes`, `_graph_index_text` | `src/bdg/exporter.py` |
 
 ### 12.2 Invariants to preserve
 
@@ -382,10 +382,10 @@ None reads a layout file.
 - One view per anchor: membership is the whole weak component, not one direction.
 - Distance is the only ordering primitive; direction is a label.
 - Deterministic output: sort every set by the documented keys before emitting.
-- Projection only: no node file is rewritten by browsing, packing, or `bd work`.
+- Projection only: no node file is rewritten by browsing, packing, or `bdg work`.
 - Full-ref edges: neighbours come from authored full-ref tokens; in-edges are
   computed by reversing them and never stored.
-- One work area: `bd work` replaces the contents of `<project>/bd_work/`.
+- One work area: `bdg work` replaces the contents of `<project>/bdg_work/`.
 - The active node is the `REFS.md` header, not an extra file.
 
 ### 12.3 Adding a ring-aware command
@@ -409,7 +409,7 @@ None reads a layout file.
 - No authored placement field returns.
 - Full-ref data edges and sorted tokens.
 - The three generated names stay reserved.
-- `bd_work/` stays flat.
+- `bdg_work/` stays flat.
 
 ## 13. Known limits
 
@@ -421,10 +421,10 @@ None reads a layout file.
   ring number.
 - **Cycles shorten distances.** A closing edge can put a distant node in ring 1.
   The order is still deterministic; it is just not a topological order.
-- **Multiple shortest paths.** `bd path` prints one shortest path, chosen by the
+- **Multiple shortest paths.** `bdg path` prints one shortest path, chosen by the
   deterministic neighbour order. Other equally short paths exist.
 - **Disconnected stores.** Removing the last edge between two groups creates two
-  components. `bd views` lists both; the default anchor stays in one.
+  components. `bdg views` lists both; the default anchor stays in one.
 - **No authored hierarchy.** If a project needs a declared parent/child reading
   order, encode it with typed tokens and direction, not with positional
   fields.

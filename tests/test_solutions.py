@@ -1,4 +1,4 @@
-"""Lifecycle tests for the ``bd solution`` wrapper over git worktrees."""
+"""Lifecycle tests for the ``bdg solution`` wrapper over git worktrees."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from bd_tree.api import solution_list, solution_new, solution_remove
-from bd_tree.cli import main
-from bd_tree.errors import BreakdownError
+from bdg.api import solution_list, solution_new, solution_remove
+from bdg.cli import main
+from bdg.errors import BreakdownError
 
 pytestmark = pytest.mark.skipif(
     shutil.which("git") is None, reason="git is not available"
@@ -45,10 +45,10 @@ def _store(write, repo: Path) -> None:
 
 
 def _hidden_store(write, repo: Path) -> None:
-    nodes = repo / ".bd_tree" / "nodes"
+    nodes = repo / "bdg_graph" / "nodes"
     write(nodes, 1, links=[{"to": "2", "type": "breaks_down"}])
     write(nodes, 2)
-    (repo / ".bd_tree" / "ROOT").write_text("2-1\n", encoding="utf-8")
+    (repo / "bdg_graph" / "ROOT").write_text("2-1\n", encoding="utf-8")
 
 
 def test_new_creates_default_sibling_branch(write, tmp_path, capsys):
@@ -67,8 +67,8 @@ def test_new_creates_default_sibling_branch(write, tmp_path, capsys):
     assert "branch sol-a" in out
     assert "project ." in out
     assert f"cd {target}" in out
-    assert "bd work 1-1" in out
-    assert "BD_ROOT=" not in out
+    assert "bdg work 1-1" in out
+    assert "BDG_ROOT=" not in out
 
 
 def test_list_marks_main_and_store(write, tmp_path, capsys):
@@ -165,13 +165,13 @@ def test_new_and_list_expose_hidden_store_project_and_view(write, tmp_path):
     _hidden_store(write, tmp_path)
     _commit(tmp_path)
 
-    result = solution_new(tmp_path / ".bd_tree", "sol-hidden")
+    result = solution_new(tmp_path / "bdg_graph", "sol-hidden")
 
-    assert result.store == ".bd_tree"
+    assert result.store == "bdg_graph"
     assert result.project == "."
     assert result.view == "2-1"
 
-    entries = solution_list(tmp_path / ".bd_tree")
+    entries = solution_list(tmp_path / "bdg_graph")
     solved = next(entry for entry in entries if entry.branch == "sol-hidden")
     assert solved.store is True
     assert solved.project == "."

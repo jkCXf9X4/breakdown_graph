@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from bd_tree import api
-from bd_tree.cli import main
-from bd_tree.errors import ExportError
-from bd_tree.graph import (
+from bdg import api
+from bdg.cli import main
+from bdg.errors import ExportError
+from bdg.graph import (
     audit,
     build_graph,
     graph_view,

@@ -3,7 +3,7 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "breakdown-tree"
+name = "breakdown-graph"
 description = "Flat markdown typed-link topology with git solutions and one work area"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -18,7 +18,7 @@ classifiers = [
 ]
 
 [project.scripts]
-bd = "bd_tree.cli:main"
+bdg = "bdg.cli:main"
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
@@ -30,4 +30,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.dynamic]
-version = {attr = "bd_tree.__version__"}
+version = {attr = "bdg.__version__"}

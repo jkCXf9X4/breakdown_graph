@@ -4,7 +4,7 @@ import shutil
 
 import pytest
 
-from bd_tree.cli import main
+from bdg.cli import main
 
 
 def test_check_exit_status(write, tmp_path):
@@ -179,7 +179,7 @@ def test_replace_cli_swaps_and_prints_canonical_message(write, tmp_path, capsys)
     assert main(["replace", "3-1", "3-2", "--root", str(tmp_path)]) == 0
     assert capsys.readouterr().out == "replaced 3-1 with 3-2 in links\n"
 
-    from bd_tree.api import load
+    from bdg.api import load
 
     assert load(tmp_path).children("1-1") == ["2-1", "3-2"]
 
@@ -223,8 +223,8 @@ def test_new_with_arbitrary_field_cli(write, tmp_path):
         )
         == 0
     )
-    from bd_tree.api import load
-    from bd_tree.frontmatter import parse_document
+    from bdg.api import load
+    from bdg.frontmatter import parse_document
 
     doc = parse_document((nodes / "2-1.md").read_text(encoding="utf-8"))
     assert doc.meta["phase"] == "build"
@@ -239,7 +239,7 @@ def test_new_prefills_title_and_summary_cli(write, tmp_path):
     write(nodes, 1)
     assert main(["new", "--parent", "1", "--root", str(tmp_path)]) == 0
 
-    from bd_tree.frontmatter import parse_document
+    from bdg.frontmatter import parse_document
 
     doc = parse_document((nodes / "2-1.md").read_text(encoding="utf-8"))
     assert doc.meta["title"] == ""
@@ -296,13 +296,13 @@ def test_current_views_and_edit_cli(write, tmp_path, capsys):
 
     assert main(["current", "--root", str(tmp_path)]) == 0
     out = capsys.readouterr().out
-    assert out == f"{(tmp_path / 'bd_work').resolve()} (view 1-1)\n"
+    assert out == f"{(tmp_path / 'bdg_work').resolve()} (view 1-1)\n"
 
     assert main(["current", "--root", str(tmp_path), "--view"]) == 0
     assert capsys.readouterr().out == "1-1\n"
 
     assert main(["current", "--root", str(tmp_path), "--path"]) == 0
-    assert capsys.readouterr().out == f"{(tmp_path / 'bd_work').resolve()}\n"
+    assert capsys.readouterr().out == f"{(tmp_path / 'bdg_work').resolve()}\n"
 
     assert main(["views", "--root", str(tmp_path)]) == 0
     out = capsys.readouterr().out
@@ -313,7 +313,7 @@ def test_current_views_and_edit_cli(write, tmp_path, capsys):
     assert "anchor 1-1" in out
 
     assert main(["edit", "2-1", "--root", str(tmp_path)]) == 0
-    assert capsys.readouterr().out == f"{(tmp_path / 'bd_work' / '2-1.md')}\n"
+    assert capsys.readouterr().out == f"{(tmp_path / 'bdg_work' / '2-1.md')}\n"
 
 
 def test_current_path_without_area_is_an_error(write, tmp_path, capsys):
@@ -442,7 +442,7 @@ def test_work_depth_option_overrides_a_suffix(write, tmp_path, capsys):
     write(nodes, 1, band="intent", links=[{"to": "2-1", "type": "breaks_down"}])
     write(nodes, 2, band="claims", links=[{"to": "3-1", "type": "breaks_down"}])
     write(nodes, 3, band="evidence")
-    out = tmp_path / "bd_work"
+    out = tmp_path / "bdg_work"
 
     assert main(["work", "1-1+0", "--depth", "1", "--root", str(tmp_path)]) == 0
     assert "(view 1-1+1)" in capsys.readouterr().out
@@ -466,7 +466,7 @@ def test_work_malformed_depth_suffix_exits_2(write, tmp_path, capsys):
         err = capsys.readouterr().err
         assert "invalid depth" in err
         assert "Traceback" not in err
-    assert not (tmp_path / "bd_work").exists()
+    assert not (tmp_path / "bdg_work").exists()
 
 
 def test_edit_respects_materialized_depth(write, tmp_path, capsys):
@@ -499,7 +499,7 @@ def test_edit_prints_a_flat_basename(write, tmp_path, capsys):
     capsys.readouterr()
 
     assert main(["edit", "2-1", "--root", str(tmp_path)]) == 0
-    expected = tmp_path / "bd_work" / "2-1.md"
+    expected = tmp_path / "bdg_work" / "2-1.md"
     assert capsys.readouterr().out == f"{expected}\n"
 
 

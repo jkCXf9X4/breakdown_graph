@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from bd_tree import api
-from bd_tree.inline import (
+from bdg import api
+from bdg.inline import (
     InlineAnomaly,
     InlineLink,
     append_token,
@@ -18,7 +18,7 @@ from bd_tree.inline import (
     scan_inline_links,
     token_title,
 )
-from bd_tree.loader import load
+from bdg.loader import load
 
 
 def _links(body: str) -> list[InlineLink]:
@@ -171,7 +171,7 @@ def test_empty_title_prefix_is_malformed():
 
 
 def _write_node(nodes, node_id, body, *, version=1, **fields):
-    from bd_tree.frontmatter import render_document
+    from bdg.frontmatter import render_document
 
     data = {"id": node_id, **fields}
     data.setdefault("title", f"Title of {node_id}-{version}")
@@ -242,7 +242,7 @@ def test_fm_links_key_is_removed_with_a_migrate_hint(write, tmp_path):
     # Raw front matter: the fixture auto-converts links, so write it by hand.
     nodes = tmp_path / "nodes"
     nodes.mkdir(parents=True)
-    from bd_tree.frontmatter import render_document
+    from bdg.frontmatter import render_document
 
     (nodes / "1-1.md").write_text(
         render_document(
@@ -257,7 +257,7 @@ def test_fm_links_key_is_removed_with_a_migrate_hint(write, tmp_path):
     result = api.check(tmp_path)
     issues = [issue for issue in result.errors if issue.code == "links-removed"]
     assert len(issues) == 1
-    assert "bd migrate" in issues[0].message
+    assert "bdg migrate" in issues[0].message
 
 
 def test_unresolved_target_dangles(write, tmp_path):

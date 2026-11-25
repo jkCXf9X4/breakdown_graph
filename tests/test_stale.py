@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from bd_tree.api import load, reconcile, stale
-from bd_tree.cli import main
-from bd_tree.errors import BreakdownError
-from bd_tree.frontmatter import parse_document
+from bdg.api import load, reconcile, stale
+from bdg.cli import main
+from bdg.errors import BreakdownError
+from bdg.frontmatter import parse_document
 from conftest import add_token, set_freshness
 
 

@@ -1,13 +1,13 @@
 # The graph
 
-`bd` has one topology: a graph of markdown nodes joined by typed link tokens in
+`bdg` has one topology: a graph of markdown nodes joined by typed link tokens in
 their bodies. A node declares edges, in-edges are derived, and a view is the
 weakly connected component of one anchor over the authored links. Direction
 survives as a label, not as a membership rule. The default example at
 `examples/` is a twelve-node graph with `ROOT` `1-1` and rings 0 through 4.
 
-A node that still declares `contains` is not a different topology: `bd check`
-reports `contains-removed` and tells you to run `bd migrate` (§ Migration).
+A node that still declares `contains` is not a different topology: `bdg check`
+reports `contains-removed` and tells you to run `bdg migrate` (§ Migration).
 
 ## Model
 
@@ -22,10 +22,10 @@ The intent breaks down into (Structural claims)[[2-1, breaks_down]].
 
 Both forms declare the same thing: one typed out-edge from this node to a full
 ref. Authors write the bare `[[REF, TYPE]]` inside prose; the tool generates the
-cached title prefix. `bd new --parent`, `bd link`, `bd replace`, `bd migrate`,
-and `bd retitle` write the title; `bd new`, `bd link`, and `bd migrate` also
+cached title prefix. `bdg new --parent`, `bdg link`, `bdg replace`, `bdg migrate`,
+and `bdg retitle` write the title; `bdg new`, `bdg link`, and `bdg migrate` also
 maintain a trailing `## Links` section of `- (TITLE)[[REF, TYPE]]` lines.
-`bd unlink` removes token lines, and `bd clone --subtree` rewrites token refs
+`bdg unlink` removes token lines, and `bdg clone --subtree` rewrites token refs
 in place.
 
 - `REF` comes first and is a full `<id>-<version>` ref; `TYPE` comes second,
@@ -35,29 +35,29 @@ in place.
   fails the grammar (`inline-malformed`); `bare-ref` is reported for a bare
   `ROOT` line.
 - `(TITLE)` is a tool-generated cache of the target's live title. Authors never
-  edit it by hand. Rendering always reads the live title; `bd check` compares
+  edit it by hand. Rendering always reads the live title; `bdg check` compares
   the cache exactly (`link-title-stale`) or warns when it is absent
-  (`inline-title-missing`), and `bd retitle` regenerates it.
+  (`inline-title-missing`), and `bdg retitle` regenerates it.
 - Tokens inside fenced code blocks, inline code spans, and escaped as `\[[` are
   ignored. Indented code blocks and HTML comments are not shielded: a token
   there is read as a link.
 - A malformed token is `inline-malformed`; the same type and target declared
   twice is `inline-duplicate`.
 - Front-matter `links` is retired: a node that still declares it fails with
-  `links-removed`, and `bd migrate` moves the list into the body.
+  `links-removed`, and `bdg migrate` moves the list into the body.
 
 The authored data is the **out-edge token list** on each node. **In-edges are
 always derived** by reversing those tokens. There is no symmetric master and no
 derived opposite: a node that should acknowledge an edge authors its own token,
-with its own type. `bd in` labels every computed line `[derived]`; nothing else
+with its own type. `bdg in` labels every computed line `[derived]`; nothing else
 is marked derived.
 
 Tokens are expected in ascending target-ref order; `graph-unsorted-links`
-warns otherwise. `bd clone --subtree` follows the undirected component.
+warns otherwise. `bdg clone --subtree` follows the undirected component.
 
 A node reached through several neighbours appears once in a view. Multiple
 parents, reciprocal pairs, back-edges, and cycles are legal; a self-loop on one
-ref is refused by `bd link`.
+ref is refused by `bdg link`.
 
 A bare id used as a graph anchor resolves to the highest existing version of
 that id; commands that resolve a selector inside a view use the version present
@@ -85,21 +85,21 @@ the first component. A component always has a representative, even when it
 contains a cycle.
 
 ```sh
-bd graph                    # text render from the default anchor
-bd graph 1-1                # the same component, anchored at 1-1
-bd graph 1-1 --depth 1      # rings 0 and 1
-bd graph 1-1 --rings 2:3    # ring 0 plus rings 2 and 3
-bd graph --type supports    # follow one edge kind
-bd graph --format dot       # Graphviz DOT
-bd graph --format svg --out graph.svg  # rendered SVG (needs Graphviz)
-bd show 4-1+1               # the node plus one link hop
-bd views                    # one representative per component
+bdg graph                    # text render from the default anchor
+bdg graph 1-1                # the same component, anchored at 1-1
+bdg graph 1-1 --depth 1      # rings 0 and 1
+bdg graph 1-1 --rings 2:3    # ring 0 plus rings 2 and 3
+bdg graph --type supports    # follow one edge kind
+bdg graph --format dot       # Graphviz DOT
+bdg graph --format svg --out graph.svg  # rendered SVG (needs Graphviz)
+bdg show 4-1+1               # the node plus one link hop
+bdg views                    # one representative per component
 ```
 
-`bd graph --format svg` pipes the flat DOT through Graphviz `dot`, so it needs
-the `dot` binary on `PATH`; `bd graph --format dot` is the dependency-free
-fallback. Both accept `--out PATH`; without it they print to stdout. `bd graph`
-is the only view renderer; there is no separate `bd tree` command.
+`bdg graph --format svg` pipes the flat DOT through Graphviz `dot`, so it needs
+the `dot` binary on `PATH`; `bdg graph --format dot` is the dependency-free
+fallback. Both accept `--out PATH`; without it they print to stdout. `bdg graph`
+is the only view renderer; there is no separate `bdg tree` command.
 
 ## Ring layout
 
@@ -110,33 +110,33 @@ sections sorted by `(id, version)`. The canonical global key is
 `(distance, kind_rank, link type, id, version)`, where `kind_rank` is
 `child: 0`, `parent: 1`.
 
-`bd work` materializes this as a **flat** directory: one symlink per
+`bdg work` materializes this as a **flat** directory: one symlink per
 materialized ref, named after the store file, plus a root `INDEX.md` with ring
 sections and a `REFS.md` table sorted by `(distance, kind, ref)`. There are no
 node directories. `REF+N` materializes rings `0..N`; the view stays the full
-component. `bd pack REF --out DIR` writes the same flat view as regular files
+component. `bdg pack REF --out DIR` writes the same flat view as regular files
 with one ring-section `INDEX.md`.
 
 The active node of the work area is the view ref in the `REFS.md` header
-(`# References — view REF[+N]`). `bd current`, `bd edit`, `bd current --status`,
-and `bd work --repair` read it; there is no separate state file.
+(`# References — view REF[+N]`). `bdg current`, `bdg edit`, `bdg current --status`,
+and `bdg work --repair` read it; there is no separate state file.
 
 ## Authored out-edges, derived in-edges
 
 ```sh
-bd out 1-1      # the declared tokens of 1-1, sorted, no inference
-bd in 4-1       # computed parents of 4-1, every line marked derived
+bdg out 1-1      # the declared tokens of 1-1, sorted, no inference
+bdg in 4-1       # computed parents of 4-1, every line marked derived
 ```
 
-`bd graph` prints, for each node, `← in:` (derived) and `→ out:` (authored).
-`bd show --links` prints one undirected neighbour row per edge with an arrow:
+`bdg graph` prints, for each node, `← in:` (derived) and `→ out:` (authored).
+`bdg show --links` prints one undirected neighbour row per edge with an arrow:
 `→` child, `←` parent.
 
 ## Checks
 
-`bd check` runs structural validation and the graph checks; there is no separate
+`bdg check` runs structural validation and the graph checks; there is no separate
 `audit` command. It exits non-zero when any error is present. The default anchor
-is the same as `bd graph`.
+is the same as `bdg graph`.
 
 Cycles, back-edges, and reciprocal edges are never errors.
 `graph-orphan` now means a node outside the anchor's component, not a node
@@ -144,13 +144,13 @@ without an incoming edge.
 
 | Code | Level | Meaning |
 | --- | --- | --- |
-| `contains-removed` | error | a node still declares `contains`; run `bd migrate` |
-| `links-removed` | error | a node still declares front-matter `links`; run `bd migrate` |
+| `contains-removed` | error | a node still declares `contains`; run `bdg migrate` |
+| `links-removed` | error | a node still declares front-matter `links`; run `bdg migrate` |
 | `bare-ref` | error | a data ref is a bare id; use a full `<id>-<version>` ref |
 | `invalid-ref` | error | a data ref or CLI selector is malformed |
 | `inline-malformed` | error | a `[[...]]` fragment does not match `[[REF, TYPE]]`; a type-first token is `reversed components` |
 | `inline-duplicate` | warning | one node declares the same type and target twice |
-| `inline-title-missing` | warning | a token is bare; run `bd retitle` to fill the title |
+| `inline-title-missing` | warning | a token is bare; run `bdg retitle` to fill the title |
 | `invalid-freshness` | error | the `freshness:` map or an entry has the wrong shape |
 | `link-title-stale` | warning | a cached token title differs from the target's live title |
 | `graph-dangling-link` | error | a link target does not exist |
@@ -169,36 +169,36 @@ without an incoming edge.
 | `invalid-id` | error | front-matter `id` is not an integer |
 | `id-filename-mismatch` | error | front-matter `id` differs from the filename |
 | `bad-frontmatter` | error | the document cannot be parsed |
-| `missing-nodes-dir` | error | neither `nodes/` nor `.bd_tree/nodes/` exists |
+| `missing-nodes-dir` | error | neither `nodes/` nor `bdg_graph/nodes/` exists |
 | `view-root-missing` | error | the requested view ref does not exist |
 
 ## Pack
 
-`bd pack REF --out DIR` writes a read-only copy of one view:
+`bdg pack REF --out DIR` writes a read-only copy of one view:
 
 - node files as regular files at their flat basename, using the store file's
   name;
 - one root `INDEX.md` with ring sections and links to each real node file;
 - no node directories and no per-folder indexes.
 
-`bd work` writes the same flat structure with symlinks instead of copies. The
+`bdg work` writes the same flat structure with symlinks instead of copies. The
 output is deterministic and byte-identical across runs. `--force` writes into a
 non-empty directory; `--clean` removes the output first. `--fresh` writes only
 fresh node bodies, plus `STALE.md` and `AGENTS.md`.
 
 ```sh
-bd pack 1-1 --out /tmp/bd-graph
-bd pack 1-1 --fresh --out /tmp/bd-context
+bdg pack 1-1 --out /tmp/bdg-graph
+bdg pack 1-1 --fresh --out /tmp/bdg-context
 ```
 
-Three visual paths cover the same store: the default `bd graph` text render
-draws ring sections; `bd graph --format dot --out graph.dot` writes the flat DOT
-graph; and `bd graph --format svg --out graph.svg` renders that flat graph
+Three visual paths cover the same store: the default `bdg graph` text render
+draws ring sections; `bdg graph --format dot --out graph.dot` writes the flat DOT
+graph; and `bdg graph --format svg --out graph.svg` renders that flat graph
 through Graphviz without keeping the `.dot` source.
 
 ## Migration
 
-An older store is converted by `bd migrate`:
+An older store is converted by `bdg migrate`:
 
 1. Classic bare `nodes/<id>.md` files become `<id>-<version>.md`.
 2. `contains: [c0, c1, ...]` becomes one typed token per child in a trailing
@@ -216,16 +216,16 @@ An older store is converted by `bd migrate`:
    `layer`, `stage`, `order`) and from the ROOT node (`band_layout`,
    `band_order`).
 
-`bd migrate --dry-run` prints the plan without writing; `bd migrate` applies it
-atomically; `--root` selects the store. After migration `bd check` passes, and
-`bd retitle` refreshes every cache in the store (or a view) from the live
+`bdg migrate --dry-run` prints the plan without writing; `bdg migrate` applies it
+atomically; `--root` selects the store. After migration `bdg check` passes, and
+`bdg retitle` refreshes every cache in the store (or a view) from the live
 titles. There is no placement flag; migration is idempotent, and a token-only
 store is left untouched.
 
 ```sh
-bd migrate --root docs/breakdown --dry-run
-bd migrate --root docs/breakdown
-bd retitle --root docs/breakdown
+bdg migrate --root docs/breakdown --dry-run
+bdg migrate --root docs/breakdown
+bdg retitle --root docs/breakdown
 ```
 
 ## Scale notes
@@ -257,20 +257,20 @@ fan-in (`8-1`), and a verification core (`12-1`) that reaches `11-1` one ring
 later. `4-1` and `8-1` each appear once despite their multiple neighbours.
 
 ```sh
-bd check
-bd graph                    # ring sections from 1-1
-bd graph --format svg --out /tmp/bd-graph.svg
-bd out 1-1
-bd in 4-1
-bd path 10-1
-bd work 1-1
-bd edit 4-1
-bd pack 1-1 --out /tmp/bd-graph
+bdg check
+bdg graph                    # ring sections from 1-1
+bdg graph --format svg --out /tmp/bdg-graph.svg
+bdg out 1-1
+bdg in 4-1
+bdg path 10-1
+bdg work 1-1
+bdg edit 4-1
+bdg pack 1-1 --out /tmp/bdg-graph
 ```
 
-The repository `.bd_root` pointer names `examples`, so plain `bd` finds it from
+The repository `.bdg_root` pointer names `examples`, so plain `bdg` finds it from
 the repo root. An explicit root works too:
 
 ```sh
-bd --root examples graph
+bdg --root examples graph
 ```

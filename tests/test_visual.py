@@ -8,10 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from bd_tree import graph as graph_module
-from bd_tree.cli import main
-from bd_tree.errors import BreakdownError
-from bd_tree.graph import (
+from bdg import graph as graph_module
+from bdg.cli import main
+from bdg.errors import BreakdownError
+from bdg.graph import (
     build_graph,
     graph_view,
     render_dot,

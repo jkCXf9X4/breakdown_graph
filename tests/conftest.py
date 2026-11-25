@@ -1,4 +1,4 @@
-"""Shared fixtures for the bd_tree test suite.
+"""Shared fixtures for the bdg test suite.
 
 Fixture contract (the write unit consumes this — follow it):
 
@@ -47,13 +47,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
-from bd_tree.frontmatter import (  # noqa: E402
+from bdg.frontmatter import (  # noqa: E402
     body_hash,
     parse_document,
     render_document,
     rewrite_freshness,
 )
-from bd_tree.inline import render_token, retitle_tokens  # noqa: E402
+from bdg.inline import render_token, retitle_tokens  # noqa: E402
 
 
 def _qualify(value: Any, version: int) -> Any:

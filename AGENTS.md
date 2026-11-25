@@ -1,44 +1,44 @@
 # Agent operating rules
 
-This repository is both a tool (`bd_tree`, command `bd`) and a reference example
+This repository is both a tool (`bdg`, command `bdg`) and a reference example
 project. Read [`README.md`](README.md) and [`docs/DESIGN.md`](docs/DESIGN.md)
 before changing behaviour. The design document is authoritative for the model;
 this file is the short operating protocol.
 
 ## First session
 
-1. Locate the store: plain `bd` works from the repo root because the committed
-   `.bd_root` pointer names `examples` (the project root; the store is
-   `examples/.bd_tree`, an undirected graph with `ROOT` `1-1`). Equivalent:
-   `export BD_ROOT=examples`, or pass `--root`. Install once from the clone with
-   `pip install -e '.[test]'`, then use `bd`. Without installing, run from the
-   repo root with `PYTHONPATH=src python3 -m bd_tree`.
+1. Locate the store: plain `bdg` works from the repo root because the committed
+   `.bdg_root` pointer names `examples` (the project root; the store is
+   `examples/bdg_graph`, an undirected graph with `ROOT` `1-1`). Equivalent:
+   `export BDG_ROOT=examples`, or pass `--root`. Install once from the clone with
+   `pip install -e '.[test]'`, then use `bdg`. Without installing, run from the
+   repo root with `PYTHONPATH=src python3 -m bdg`.
 2. Confirm the baseline:
 
    ```sh
    python3 -m pytest -q
-   bd check                    # 12 nodes, 0 errors, 0 warnings
-   bd stale                    # 0 stale edges
+   bdg check                    # 12 nodes, 0 errors, 0 warnings
+   bdg stale                    # 0 stale edges
    ```
 
-3. See the shape: `bd check`, `bd graph 1-1`, `bd graph`, `bd out 1-1`,
-   `bd in 4-1`, `bd views`. The default example is one component of twelve nodes
+3. See the shape: `bdg check`, `bdg graph 1-1`, `bdg graph`, `bdg out 1-1`,
+   `bdg in 4-1`, `bdg views`. The default example is one component of twelve nodes
    (`1-1`..`12-1`), rings 0 through 4 from `1-1`; run the commands in
    `examples/README.md`.
-4. For a solution: `bd solution new NAME`, `cd` into the printed worktree
-   project directory, then `bd work` with the printed default-view ref.
-5. For edits: prefer `bd edit REF` for the path inside `bd_work/`; direct edits
-   to `.bd_tree/nodes/<ref>.md` are an escape hatch only. Change structure with
-   `bd link` / `bd unlink`. There is no `contain`/`uncontain`: `contains` is
-   retired and `bd migrate` converts an older store.
-6. Validate: `bd check` validates the store and its selected view, graph checks
-   included. Run `bd stale` too.
+4. For a solution: `bdg solution new NAME`, `cd` into the printed worktree
+   project directory, then `bdg work` with the printed default-view ref.
+5. For edits: prefer `bdg edit REF` for the path inside `bdg_work/`; direct edits
+   to `bdg_graph/nodes/<ref>.md` are an escape hatch only. Change structure with
+   `bdg link` / `bdg unlink`. There is no `contain`/`uncontain`: `contains` is
+   retired and `bdg migrate` converts an older store.
+6. Validate: `bdg check` validates the store and its selected view, graph checks
+   included. Run `bdg stale` too.
 
 ## Two jobs
 
 **Working in a store.** The store is data. Browse with `graph`/`show`/`find`;
-edit through `bd work`; keep the store's `nodes/` flat; commit node files, never
-`bd_work/`.
+edit through `bdg work`; keep the store's `nodes/` flat; commit node files, never
+`bdg_work/`.
 
 **Changing the tool.** Read [`docs/DEVELOPING.md`](docs/DEVELOPING.md). Work
 through the loader, view, checker, and exporter boundaries. Add a test for every
@@ -46,7 +46,7 @@ behaviour change and update the docs listed at the bottom.
 
 ## Core invariants
 
-- The files under a store's `nodes/` directory (`.bd_tree/nodes/` in a project
+- The files under a store's `nodes/` directory (`bdg_graph/nodes/` in a project
   layout) are the only source of truth.
 - A filename is identity and version: `<id>-<version>.md`, version >= 1. There
   is no bare `<id>.md`; versions of one id are peers.
@@ -55,12 +55,12 @@ behaviour change and update the docs listed at the bottom.
   on the command line is a selector resolved inside the selected view; it is
   never written to data.
 - There is one topology: typed body tokens `(TITLE)[[REF, TYPE]]`, with the
-  cached title as a prefix. A bare `[[REF, TYPE]]` is valid but `bd check`
+  cached title as a prefix. A bare `[[REF, TYPE]]` is valid but `bdg check`
   warns `inline-title-missing`. In-edges are derived by reversing authored
   tokens; nothing else is marked `[derived]`. A back-reference is an authored
   token in the other node, with its own type. `contains` and front-matter
-  `links` are not data: a node that still declares either fails `bd check`
-  (`contains-removed`, `links-removed`); `bd migrate` converts it.
+  `links` are not data: a node that still declares either fails `bdg check`
+  (`contains-removed`, `links-removed`); `bdg migrate` converts it.
 - **A view is undirected.** It is the weakly connected component of its anchor
   over authored links, walked in both directions. Membership is not directional;
   multiple parents, reciprocal edges, back-edges, and cycles are legal.
@@ -71,8 +71,8 @@ behaviour change and update the docs listed at the bottom.
   `(distance, kind_rank, link type, id, version)` with
   `child: 0, parent: 1`.
 - **Direction is a label, not a filter.** `→` child, `←` parent.
-  `bd out`/`bd in` stay directional; `bd graph`, `bd show`, `bd work`, and
-  `bd find` use the whole component. `bd clone --subtree` copies the
+  `bdg out`/`bdg in` stay directional; `bdg graph`, `bdg show`, `bdg work`, and
+  `bdg find` use the whole component. `bdg clone --subtree` copies the
   undirected neighbourhood (optionally rings `0..N` via `--depth`) and rewires
   links among the copies.
 - **No placement keys.** There is no authored position, ordinal, or ROOT layout
@@ -82,27 +82,27 @@ behaviour change and update the docs listed at the bottom.
   (`id`, `legacy`, `freshness`) are reserved. The link assertion is the body
   token grammar `(TITLE)[[REF, TYPE]]`. Authors write bare tokens; the cached
   title is generated by the tool from the target's live title and is never
-  edited by hand. `bd check` verifies it (`link-title-stale`,
-  `inline-title-missing`) and `bd retitle` regenerates it. Two forms are legal:
+  edited by hand. `bdg check` verifies it (`link-title-stale`,
+  `inline-title-missing`) and `bdg retitle` regenerates it. Two forms are legal:
   inline in prose, and `- (TITLE)[[REF, TYPE]]` lines in a trailing `## Links`
   section. `name` and `title` are presentation metadata; `title` supplies the
   template slug. A node's path in the work area is the store file's basename
   unless `--path-template` overrides it.
-- A self-loop on one ref is refused by `bd link`. A back-edge, a reciprocal
+- A self-loop on one ref is refused by `bdg link`. A back-edge, a reciprocal
   edge, and a longer cycle are legal and produce no error.
 - Git owns the solution boundary: one branch/worktree per solution. The flat store
-  is the merge unit; `bd work` is a layout inside one checkout, never a branch
+  is the merge unit; `bdg work` is a layout inside one checkout, never a branch
   mechanism.
 - **The work area is flat.** Node `.md` files are symlinks at their store
-  basename in `<project>/bd_work/`; `INDEX.md`, `AGENTS.md`, and `REFS.md` are
+  basename in `<project>/bdg_work/`; `INDEX.md`, `AGENTS.md`, and `REFS.md` are
   regular generated files. Those three names are reserved in every directory.
   Never copy node content into a work folder and never introduce a sync layer.
-- A project has exactly one writable work area, `<project>/bd_work/`. It holds
-  one view at a time; `bd work REF` replaces its contents. Read-only `bd pack`
-  projections and `bd graph --format` renders are not a second work area.
+- A project has exactly one writable work area, `<project>/bdg_work/`. It holds
+  one view at a time; `bdg work REF` replaces its contents. Read-only `bdg pack`
+  projections and `bdg graph --format` renders are not a second work area.
 - **The active node is the work area's view ref in `REFS.md`**, in the header
-  `# References — view REF[+N]`. `bd current`, `bd edit`, `bd current --status`,
-  and `bd work --repair` read it. There is no extra state file.
+  `# References — view REF[+N]`. `bdg current`, `bdg edit`, `bdg current --status`,
+  and `bdg work --repair` read it. There is no extra state file.
 - A view never crosses a branch, and neither does a version. Versions are node
   files inside one checkout; branches are git. Never resolve a ref through a
   branch name, never add a branch or per-node active-version selector, and never
@@ -111,40 +111,40 @@ behaviour change and update the docs listed at the bottom.
   versions of one id are reachable. There is no per-node pointer.
 - No JSON, TOML, lock, or state data files. Two exceptions, both one line of
   text: a store-level `ROOT` file holding one ref (e.g. `1-1`), and a
-  folder-level `.bd_root` pointer holding one store path, naming the store a
+  folder-level `.bdg_root` pointer holding one store path, naming the store a
   working folder belongs to. Nothing else goes in either file. Derived output is
   disposable and gitignored. Writers serialize on a transient advisory lock in
   the system temp directory; it never enters the store or git.
 - The default anchor is `ROOT` when present, else the lowest member of the first
   component; an explicit ref where a command takes one wins over both.
-  `bd check --view REF` only narrows reporting. A declared but missing ref is
+  `bdg check --view REF` only narrows reporting. A declared but missing ref is
   `root-ref-missing`; malformed content is `invalid-root`. This default is
   separate from the view held by the work area, which changes only with
-  `bd work REF`.
+  `bdg work REF`.
 
 ## Where to work
 
-- Solutions: `bd solution new NAME` (thin wrapper over
+- Solutions: `bdg solution new NAME` (thin wrapper over
   `git worktree add ../NAME -b NAME`); one worktree per solution.
-- Writable layout: `bd work REF` writes the single `<project>/bd_work/` area;
-  a different REF replaces its contents. `bd work REF+N` (or `--depth N`)
+- Writable layout: `bdg work REF` writes the single `<project>/bdg_work/` area;
+  a different REF replaces its contents. `bdg work REF+N` (or `--depth N`)
   materializes only rings `0..N` — the view stays the whole component, the area
-  holds a ring prefix. `bd current` reports the area and its view, including
+  holds a ring prefix. `bdg current` reports the area and its view, including
   `+N`; `--path` and `--view` narrow the output, and it errors if no area
   exists.
 - Agent sessions work in that one area and read exactly one view. Switch with
-  `bd work REF` (drop the `+N` to materialize the whole view); never keep
-  parallel work folders side by side. `bd current --status` and
-  `bd work --repair` inspect the view actually in the area, not the requested or
-  default view. `bd views` lists component representatives and marks the store
+  `bdg work REF` (drop the `+N` to materialize the whole view); never keep
+  parallel work folders side by side. `bdg current --status` and
+  `bdg work --repair` inspect the view actually in the area, not the requested or
+  default view. `bdg views` lists component representatives and marks the store
   default and the work-area anchor.
-- Find and edit inside the area: `bd edit REF` prints the absolute path of a ref
+- Find and edit inside the area: `bdg edit REF` prints the absolute path of a ref
   in the active view and errors if it is absent.
-- Read-only projections: `bd pack REF --out DIR` (or `--fresh`), plus
-  `bd graph REF --format dot|svg`; they are disposable, never the work area.
-- Switching trees: `bd root REF` changes the store default anchor, `bd work REF`
-  changes the work-area view, or clone and swap with `bd clone REF` then
-  `bd replace REF NEW`. `bd replace` repoints inbound links, or repoints `ROOT`
+- Read-only projections: `bdg pack REF --out DIR` (or `--fresh`), plus
+  `bdg graph REF --format dot|svg`; they are disposable, never the work area.
+- Switching trees: `bdg root REF` changes the store default anchor, `bdg work REF`
+  changes the work-area view, or clone and swap with `bdg clone REF` then
+  `bdg replace REF NEW`. `bdg replace` repoints inbound links, or repoints `ROOT`
   when REF is the root, and leaves the old file as a peer. These are the only
   switches; edges pin full refs.
 - Never hand-edit generated `INDEX.md`, `AGENTS.md`, or `REFS.md` inside a work
@@ -154,63 +154,63 @@ behaviour change and update the docs listed at the bottom.
 
 | Task | Command |
 | --- | --- |
-| New store | `bd init DIR` (graph root, no placement key) |
-| Add a node | `bd new [--parent REF] [--type breaks_down] [--field K=V ...]`; no parent starts a new component |
-| Clone and replace a node | `bd clone OLD` then `bd replace OLD NEW` |
-| Replace a version in place | `bd replace OLD NEW` |
-| Add an edge | `bd link FROM TO --type supports [--propagates]`; appends a titled token to the source, cycles and back-edges legal |
-| Add a back-reference | `bd link TO FROM --type supported_by`; author it on the other node, never a derived opposite |
-| Remove an edge | `bd unlink FROM TO [--type T]` |
-| Refresh cached titles | `bd retitle [REF] [--dry-run]` |
-| Browse the graph | `bd graph [REF] [--depth N] [--rings A:B] [--type T] [--format text\|dot\|svg]` |
-| Read a node and rings | `bd show REF+2 --max-chars 800` (rings 0..2) |
-| Shortest chain | `bd path REF` (shortest undirected path from the anchor) |
-| Search | `bd find TEXT`, `bd find 'RE' --regex`; add `--view REF` or `--all` |
-| Show the work area | `bd current [--path\|--view]` |
-| List components | `bd views` |
-| Switch/edit the work area | `bd work REF[+N]`, then open `bd edit REF` |
-| Repair symlinks | `bd current --status` / `bd work --repair` |
-| Switch the default anchor | `bd root REF`, `bd root --clear` |
-| Show versions | `bd versions ID`, `bd delete REF` |
-| Clone a node or component | `bd clone REF [--version N] [--subtree] [--depth N]` |
-| New solution | `bd solution new NAME` |
-| Convert an old store | `bd migrate [--dry-run] [--type T]` (`contains`, front-matter `links`, classic bare files, retired placement keys) |
-| Validate | `bd check`, `bd stale` |
-| Pack a view | `bd pack REF --out DIR`; `--fresh` for fresh nodes plus `AGENTS.md` and `STALE.md` |
+| New store | `bdg init DIR` (graph root, no placement key) |
+| Add a node | `bdg new [--parent REF] [--type breaks_down] [--field K=V ...]`; no parent starts a new component |
+| Clone and replace a node | `bdg clone OLD` then `bdg replace OLD NEW` |
+| Replace a version in place | `bdg replace OLD NEW` |
+| Add an edge | `bdg link FROM TO --type supports [--propagates]`; appends a titled token to the source, cycles and back-edges legal |
+| Add a back-reference | `bdg link TO FROM --type supported_by`; author it on the other node, never a derived opposite |
+| Remove an edge | `bdg unlink FROM TO [--type T]` |
+| Refresh cached titles | `bdg retitle [REF] [--dry-run]` |
+| Browse the graph | `bdg graph [REF] [--depth N] [--rings A:B] [--type T] [--format text\|dot\|svg]` |
+| Read a node and rings | `bdg show REF+2 --max-chars 800` (rings 0..2) |
+| Shortest chain | `bdg path REF` (shortest undirected path from the anchor) |
+| Search | `bdg find TEXT`, `bdg find 'RE' --regex`; add `--view REF` or `--all` |
+| Show the work area | `bdg current [--path\|--view]` |
+| List components | `bdg views` |
+| Switch/edit the work area | `bdg work REF[+N]`, then open `bdg edit REF` |
+| Repair symlinks | `bdg current --status` / `bdg work --repair` |
+| Switch the default anchor | `bdg root REF`, `bdg root --clear` |
+| Show versions | `bdg versions ID`, `bdg delete REF` |
+| Clone a node or component | `bdg clone REF [--version N] [--subtree] [--depth N]` |
+| New solution | `bdg solution new NAME` |
+| Convert an old store | `bdg migrate [--dry-run] [--type T]` (`contains`, front-matter `links`, classic bare files, retired placement keys) |
+| Validate | `bdg check`, `bdg stale` |
+| Pack a view | `bdg pack REF --out DIR`; `--fresh` for fresh nodes plus `AGENTS.md` and `STALE.md` |
 
 ## Commands
 
-Commands assume `bd` is installed (`pip install -e '.[test]'`); without
-installing, prefix each with `PYTHONPATH=src python3 -m bd_tree` instead of `bd`.
+Commands assume `bdg` is installed (`pip install -e '.[test]'`); without
+installing, prefix each with `PYTHONPATH=src python3 -m bdg` instead of `bdg`.
 
 ```sh
-export BD_ROOT=examples
+export BDG_ROOT=examples
 python3 -m pytest -q
-bd check                    # 12 nodes, 0 errors, 0 warnings
-bd stale                    # 0 stale edges
-bd graph 1-1                # rings 0..4 from 1-1
-bd graph                    # same view from ROOT 1-1
-bd graph 1-1 --rings 2:3    # ring 0 plus rings 2 and 3
-bd out 1-1                  # authored out-edges, sorted
-bd in 4-1                   # derived in-edges
-bd path 10-1                # shortest undirected chain from 1-1
-bd views                    # component representatives
-bd work 1-1                 # single flat <project>/bd_work area
-bd current                  # <project>/bd_work (view 1-1)
-bd work 1-1+1               # same area, rings 0..1 only
-bd pack 1-1 --out /tmp/bd-graph
-bd pack 1-1 --fresh --out /tmp/bd-context
+bdg check                    # 12 nodes, 0 errors, 0 warnings
+bdg stale                    # 0 stale edges
+bdg graph 1-1                # rings 0..4 from 1-1
+bdg graph                    # same view from ROOT 1-1
+bdg graph 1-1 --rings 2:3    # ring 0 plus rings 2 and 3
+bdg out 1-1                  # authored out-edges, sorted
+bdg in 4-1                   # derived in-edges
+bdg path 10-1                # shortest undirected chain from 1-1
+bdg views                    # component representatives
+bdg work 1-1                 # single flat <project>/bdg_work area
+bdg current                  # <project>/bdg_work (view 1-1)
+bdg work 1-1+1               # same area, rings 0..1 only
+bdg pack 1-1 --out /tmp/bdg-graph
+bdg pack 1-1 --fresh --out /tmp/bdg-context
 
 # structural edits (substitute real refs)
-bd new --parent 1-1 --type breaks_down --field title="A new claim"
-bd link FROM TO --type supports   # legal even as a back-edge or cycle
-bd link TO FROM --type supported_by   # back-reference: authored on the other node
-bd unlink FROM TO
-bd retitle --dry-run         # cached titles that need regeneration, whole store
+bdg new --parent 1-1 --type breaks_down --field title="A new claim"
+bdg link FROM TO --type supports   # legal even as a back-edge or cycle
+bdg link TO FROM --type supported_by   # back-reference: authored on the other node
+bdg unlink FROM TO
+bdg retitle --dry-run         # cached titles that need regeneration, whole store
 
-bd current --path           # print that directory; read-only, no build
-bd edit REF                 # path of a ref in the active view
-bd solution list
+bdg current --path           # print that directory; read-only, no build
+bdg edit REF                 # path of a ref in the active view
+bdg solution list
 ```
 
 ## Code style
@@ -221,13 +221,13 @@ bd solution list
 - Structural errors raise `BreakdownError`; check reporting uses `Issue`.
 - Preserve arbitrary front-matter fields and body bytes unless the command
   explicitly rewrites them. Token maintenance may add or remove `## Links`
-  lines; `bd replace` and `bd clone --subtree` rewrite token refs in place, and
-  `bd replace` sets the cached title from the new node's live title.
+  lines; `bdg replace` and `bdg clone --subtree` rewrite token refs in place, and
+  `bdg replace` sets the cached title from the new node's live title.
 
 ## Commit style
 
 Short conventional prefixes, matching history: `feat:`, `fix:`, `chore:`,
-`docs:`. One concern per commit. Do not commit caches, `bd_work/`, packed
+`docs:`. One concern per commit. Do not commit caches, `bdg_work/`, packed
 views, or generated output.
 
 ## Docs map
@@ -244,6 +244,6 @@ views, or generated output.
 - [`docs/GRAPH-LAYOUT.md`](docs/GRAPH-LAYOUT.md) — component membership, BFS
   rings, direction labels, tie-breaks, flat work area, worked examples, command
   map, and test map.
-- [`docs/breakdown/`](docs/breakdown/) — product breakdown as a second `bd`
-  project (store `docs/breakdown/.bd_tree/`). Run `bd graph --root docs/breakdown`,
-  or `bd work 1-1` from that directory.
+- [`docs/breakdown/`](docs/breakdown/) — product breakdown as a second `bdg`
+  project (store `docs/breakdown/bdg_graph/`). Run `bdg graph --root docs/breakdown`,
+  or `bdg work 1-1` from that directory.

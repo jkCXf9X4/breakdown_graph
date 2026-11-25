@@ -6,8 +6,8 @@ import shutil
 
 import pytest
 
-from bd_tree.cli import main
-from bd_tree.graph import build_graph, graph_view, render_dot, render_svg
+from bdg.cli import main
+from bdg.graph import build_graph, graph_view, render_dot, render_svg
 
 DOT = shutil.which("dot")
 needs_dot = pytest.mark.skipif(DOT is None, reason="Graphviz 'dot' is not installed")

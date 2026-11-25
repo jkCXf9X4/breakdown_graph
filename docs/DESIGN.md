@@ -42,7 +42,7 @@ present.
    exactly one such area at a time; switching views replaces its contents.
 6. **No sidecar state.** No JSON manifests, TOML view configs, persistent lock
    files, or active-branch files; the only pointers are the store-level `ROOT`,
-   one ref on one line, and the folder-level `.bd_root`, one store path on one
+   one ref on one line, and the folder-level `.bdg_root`, one store path on one
    line. The active view of the work area is recorded in its generated
    `REFS.md`, not in a separate file. Everything else is in the node files or
    derived. A writer's advisory lock is transient and lives in the system temp
@@ -68,21 +68,21 @@ nodes/5-2.md        version 2 of node 5
   peers with no privileged version.
 - A ref in data is always the full `5-1`; the filename is the authority. A
   front-matter `id`, when present, must match the logical id.
-- A bare id on the command line (`bd show 5`) is a selector resolved inside the
+- A bare id on the command line (`bdg show 5`) is a selector resolved inside the
   selected view; it is never written to data.
 
-In a project these files live under `.bd_tree/nodes/`; the project root is the
-directory containing `.bd_tree/`. Classic stores with `<dir>/nodes/` remain
+In a project these files live under `bdg_graph/nodes/`; the project root is the
+directory containing `bdg_graph/`. Classic stores with `<dir>/nodes/` remain
 valid and have project root `<dir>`. Store resolution accepts either the project
 root or the store root, and discovery walks up recognising both `nodes/` and
-`.bd_tree/nodes`, plus an optional folder-level `.bd_root` pointer naming the
+`bdg_graph/nodes`, plus an optional folder-level `.bdg_root` pointer naming the
 store. If neither appears upward, it scans below the current directory to depth
 3 (sorted, pruned, symlinks not followed) and uses the store only when exactly
 one is found; several candidates are a refusal. Precedence is `--root`,
-`BD_ROOT`, then the upward walk from the current directory (at each directory a
-store there first, then a `.bd_root`), then the downward scan. `ROOT` and
-`.bd_root` are different files with different jobs: `ROOT` is the store-level
-default-view ref; `.bd_root` is a one-line folder-level pointer that names a
+`BDG_ROOT`, then the upward walk from the current directory (at each directory a
+store there first, then a `.bdg_root`), then the downward scan. `ROOT` and
+`.bdg_root` are different files with different jobs: `ROOT` is the store-level
+default-view ref; `.bdg_root` is a one-line folder-level pointer that names a
 store.
 
 ### 3.2 Node body and front matter
@@ -117,28 +117,28 @@ The intent breaks down into (Structural claims)[[2-1, breaks_down]].
   `[[`. `REF` comes first and is a full `id-version` ref, never a bare id;
   `TYPE` comes second and matches `[A-Za-z][A-Za-z0-9_-]*`; `TITLE` is
   non-empty and excludes `)` and newlines; at most one space may sit on each
-  side of the comma. A bare `[[REF, TYPE]]` is valid but `bd check` warns
+  side of the comma. A bare `[[REF, TYPE]]` is valid but `bdg check` warns
   `inline-title-missing`. A type-first token is malformed (`inline-malformed`,
-  reason `reversed components`), and `bd migrate` normalizes either component
+  reason `reversed components`), and `bdg migrate` normalizes either component
   order to ref-first.
 - **Two forms:** a token inside prose, or a `- (TITLE)[[REF, TYPE]]` line in a
-  trailing `## Links` section. `bd new --parent` appends to the parent,
-  `bd link` appends to the source, `bd unlink` removes, `bd replace` rewrites
-  inbound refs and titles, and `bd clone --subtree` rewrites refs in place.
+  trailing `## Links` section. `bdg new --parent` appends to the parent,
+  `bdg link` appends to the source, `bdg unlink` removes, `bdg replace` rewrites
+  inbound refs and titles, and `bdg clone --subtree` rewrites refs in place.
 - **Cached title is tool-generated.** Authors write the bare token; the tool
-  fills the prefix from the target's live title. `bd new --parent`, `bd link`,
-  `bd replace`, `bd migrate`, and `bd retitle` write it. Rendering always uses
-  the live title; `bd check` compares the cache exactly (`link-title-stale`) or
-  warns when it is absent (`inline-title-missing`), and `bd retitle`
+  fills the prefix from the target's live title. `bdg new --parent`, `bdg link`,
+  `bdg replace`, `bdg migrate`, and `bdg retitle` write it. Rendering always uses
+  the live title; `bdg check` compares the cache exactly (`link-title-stale`) or
+  warns when it is absent (`inline-title-missing`), and `bdg retitle`
   regenerates it. Never hand-edit the title.
 - **Ignored:** fenced code blocks, inline code spans, and the `\[[` escape.
   Indented code blocks and HTML comments are not handled.
 - **Back-references are authored.** There is no derived opposite: if `3-1`
   writes `[[8-1, verifies]]` and `8-1` should acknowledge it, `8-1` authors its
-  own token with its own type. `bd in` still derives the reverse list from
+  own token with its own type. `bdg in` still derives the reverse list from
   authored tokens and marks it `[derived]`.
 - **Front-matter `links` is retired.** A node that still declares it is
-  `links-removed`; `bd migrate` moves the list into the body as tokens.
+  `links-removed`; `bdg migrate` moves the list into the body as tokens.
 
 Freshness pins live in one top-level map, keyed by target ref:
 
@@ -154,7 +154,7 @@ freshness:
 - The hash is computed over the body with reserved token lines and the
   `## Links` heading stripped, so appending or removing a token does not
   invalidate a pin.
-- `bd stale` reads this map and `bd stale --fix` rewrites it; a malformed entry
+- `bdg stale` reads this map and `bdg stale --fix` rewrites it; a malformed entry
   is `invalid-freshness`.
 
 ### 3.3 The graph
@@ -168,7 +168,7 @@ in-edges are derived by reversing them and are never written to a node file.
 - A view is the **weakly connected component** of one anchor over authored
   links, walked in both directions. A node reached through several neighbours
   appears once. Multiple parents, reciprocal pairs, back-edges, and cycles are
-  legal. Only a self-loop on one ref is refused by `bd link`.
+  legal. Only a self-loop on one ref is refused by `bdg link`.
 - **Distance** is the undirected BFS hop count from the anchor. It is the only
   ordering primitive: ring 0 is the anchor, ring 1 is split into children and
   parents, and deeper rings are numbered.
@@ -177,30 +177,30 @@ in-edges are derived by reversing them and are never written to a node file.
   reciprocal pair is a `child` from each side. Direction never filters
   membership or creates a validation error.
 - **No derived opposite exists.** Nothing is marked `[derived]` in the store;
-  `bd in` derives the reverse list from authored tokens and labels every line
+  `bdg in` derives the reverse list from authored tokens and labels every line
   `[derived]`. A back-reference is an ordinary token in the other node.
 - Tokens are expected in ascending target-ref order; `graph-unsorted-links`
-  warns otherwise. `bd link` appends in call order and rewrites no existing
+  warns otherwise. `bdg link` appends in call order and rewrites no existing
   line, so add targets monotonically or re-sort the section. Fan-out above 200
   warns and suggests an intermediate header.
 - A node that still declares `contains` is an error (`contains-removed`) telling
-  the user to run `bd migrate`. The key is not part of the model.
+  the user to run `bdg migrate`. The key is not part of the model.
 
 ### 3.4 Views
 
 A view is the weakly connected component of one anchor over authored tokens.
-`bd pack`, `bd work`, and `bd graph` take an anchor ref. The default anchor is
+`bdg pack`, `bdg work`, and `bdg graph` take an anchor ref. The default anchor is
 the store's `ROOT` file when present, else
 the lowest member of the first component; an explicit ref where a command takes
 one wins over both.
-`bd check --view REF` only narrows reporting. `bd root REF` writes the file,
-`bd root --clear` removes it, and `bd root` prints `<ref>  (ROOT|lowest)`. A
+`bdg check --view REF` only narrows reporting. `bdg root REF` writes the file,
+`bdg root --clear` removes it, and `bdg root` prints `<ref>  (ROOT|lowest)`. A
 declared but missing ref is `root-ref-missing`; malformed content is
 `invalid-root`. This default anchor is separate from the view the work area
-holds: `bd root` changes the default used by commands, while `bd work REF`
-replaces the contents of `<project>/bd_work/`. `bd current` reports the area and
-the view actually there. `bd check` validates the store and the selected view,
-graph checks included. `bd diff A B` compares components by
+holds: `bdg root` changes the default used by commands, while `bdg work REF`
+replaces the contents of `<project>/bdg_work/`. `bdg current` reports the area and
+the view actually there. `bdg check` validates the store and the selected view,
+graph checks included. `bdg diff A B` compares components by
 logical id. A view is not a substitute for a git branch: a version of the root
 node with its own out-links gives an alternative component inside the same
 checkout, and that component is the realization. Many components can exist in
@@ -211,36 +211,36 @@ axes, deliberately separate:
   decides when to merge or discard it.
 - **Merge unit: the flat `nodes/` store.** One file per node version and no
   nested output keep conflicts local to the version that changed.
-- **Within a checkout: views.** Shape edges with `bd link`/`bd unlink` (and
-  `bd new --parent`). A structural edit changes only the source file: body
+- **Within a checkout: views.** Shape edges with `bdg link`/`bdg unlink` (and
+  `bdg new --parent`). A structural edit changes only the source file: body
   bytes and arbitrary front matter are preserved, except the appended or
-  removed token lines in its `## Links` section (and `bd replace`, which
+  removed token lines in its `## Links` section (and `bdg replace`, which
   rewrites token refs in place).
 
 ### 3.5 Versions
 
 - Every node file is a version: `5-1.md`, `5-2.md`, and so on are peers, each
   immutable by convention, not enforcement. No version is privileged.
-- `bd clone 5-1` copies a ref to the next free version of the same logical id
+- `bdg clone 5-1` copies a ref to the next free version of the same logical id
   (or to `--version N`) and keeps the source file's link tokens; it wires
-  nothing into the current component. `bd clone 5-1 --subtree` clones the whole
+  nothing into the current component. `bdg clone 5-1 --subtree` clones the whole
   weak component of the source and rewrites the cloned token refs whose target
   was also cloned; `--depth N` narrows that to BFS rings `0..N` and implies
   `--subtree`, so edges leaving the prefix still point at the originals. The
   original stays untouched, and `--version` cannot be combined with `--subtree`
   or `--depth`.
-  `bd replace OLD NEW` is the separate wiring step: it repoints inbound links,
+  `bdg replace OLD NEW` is the separate wiring step: it repoints inbound links,
   or repoints `ROOT` when OLD is the store root; OLD's file stays as a peer.
-  Clone and swap in one logical flow with `bd clone 5-1 --subtree` then
-  `bd replace 5-1 <printed new root ref>`. If OLD is outside the default view,
-  `bd replace` errors. Several parents are legal; a reachable duplicate version
+  Clone and swap in one logical flow with `bdg clone 5-1 --subtree` then
+  `bdg replace 5-1 <printed new root ref>`. If OLD is outside the default view,
+  `bdg replace` errors. Several parents are legal; a reachable duplicate version
   warns (`graph-duplicate-version`).
-  `bd delete 5-2` deletes a version, refusing an effective `ROOT` or a ref that
+  `bdg delete 5-2` deletes a version, refusing an effective `ROOT` or a ref that
   is an inbound target of any link unless `--force`.
 - An edge pins a full ref; a view warns when two versions of one id are
-  reachable. There is no per-node pointer. Use `bd clone REF` then
-  `bd replace REF NEW` for the common clone-and-swap path. Switch whole trees
-  with `bd work REF` (the work area) or `bd root REF` (the store default).
+  reachable. There is no per-node pointer. Use `bdg clone REF` then
+  `bdg replace REF NEW` for the common clone-and-swap path. Switch whole trees
+  with `bdg work REF` (the work area) or `bdg root REF` (the store default).
   Switching needs no copy step.
 
 Version references in link tokens are exact full refs (`6-2`, not `6`); this
@@ -266,8 +266,8 @@ The full model, comparison table, and decision rule are in
 
 Git answers "what changed", not "what depends on it". Pins answer the second
 question: a propagating edge stores the target body hash at reconciliation;
-`bd stale` compares pins with current target bodies in the same view; and
-`bd stale --fix` rewrites pins after an intentional review. One evidence node
+`bdg stale` compares pins with current target bodies in the same view; and
+`bdg stale --fix` rewrites pins after an intentional review. One evidence node
 supporting two claims can be fresh for one edge and stale for the other;
 freshness is per edge, not per node.
 
@@ -286,16 +286,16 @@ The project keeps exactly one writable work area:
 
 ```text
 <project>/
-├── .bd_tree/        store: nodes/, ROOT — source of truth, tracked
-├── bd_work/         the single writable work area — derived, ignored
+├── bdg_graph/        store: nodes/, ROOT — source of truth, tracked
+├── bdg_work/         the single writable work area — derived, ignored
 └── ...
 ```
 
-`bd_work/` is the single output of `bd work`. In a classic `<dir>/nodes/` store
-the project root is `<dir>`, so the work area is still `<dir>/bd_work/`.
+`bdg_work/` is the single output of `bdg work`. In a classic `<dir>/nodes/` store
+the project root is `<dir>`, so the work area is still `<dir>/bdg_work/`.
 
 ```text
-bd_work/4-1.md -> ../.bd_tree/nodes/4-1.md
+bdg_work/4-1.md -> ../bdg_graph/nodes/4-1.md
 ```
 
 - Each node `.md` is a relative symlink to its node file; editing the link edits
@@ -303,41 +303,41 @@ bd_work/4-1.md -> ../.bd_tree/nodes/4-1.md
   materialized ref, named after the store file. `INDEX.md`, `AGENTS.md`, and
   `REFS.md` are regular generated files. All views share one store, so an edit
   is visible in every view that includes the node.
-- `bd work REF` writes the single `<project>/bd_work`. A different ref replaces
+- `bdg work REF` writes the single `<project>/bdg_work`. A different ref replaces
   the content of that area: stale links are removed, and the generated
   `INDEX.md`, `REFS.md`, and `AGENTS.md` are rewritten for the new view. With no
-  REF, `bd work` uses the default anchor. Never keep two writable work folders
+  REF, `bdg work` uses the default anchor. Never keep two writable work folders
   side by side.
 - The view is the whole component of one ref; the work area may materialize
-  only rings `0..N`. `bd work REF+N` (the same display suffix as `bd show`) or
-  `bd work REF --depth N` prunes the materialized prefix after the view is
+  only rings `0..N`. `bdg work REF+N` (the same display suffix as `bdg show`) or
+  `bdg work REF --depth N` prunes the materialized prefix after the view is
   resolved; `N=0` leaves the anchor alone and `--depth` overrides a suffix. The
   generated `REFS.md`, `INDEX.md`, and `AGENTS.md` carry `REF+N`, so
-  `bd current`, `bd current --status`, `bd work --repair`, and `bd edit` recover
-  the materialized depth; `bd edit` rejects a ref outside that prefix. A rebuild
-  with a different depth, including a plain `bd work REF`, replaces the area and
+  `bdg current`, `bdg current --status`, `bdg work --repair`, and `bdg edit` recover
+  the materialized depth; `bdg edit` rejects a ref outside that prefix. A rebuild
+  with a different depth, including a plain `bdg work REF`, replaces the area and
   removes links that are no longer materialized.
 - The active node of the area is the view ref in the `REFS.md` header
   (`# References — view REF[+N]`). `work.area()` reads `REFS.md` first and
   falls back to `INDEX.md`; there is no separate state file.
-- `bd current` is the read-only query for that area: it prints
-  `<project>/bd_work (view <ref>)`, `--path` prints only the path, and `--view`
+- `bdg current` is the read-only query for that area: it prints
+  `<project>/bdg_work (view <ref>)`, `--path` prints only the path, and `--view`
   only the ref; it errors when no area exists.
-  `bd edit REF` prints the absolute path of a ref in the active view and errors
-  if it is not there. `bd views` lists component representatives and marks the
+  `bdg edit REF` prints the absolute path of a ref in the active view and errors
+  if it is not there. `bdg views` lists component representatives and marks the
   store default with `*` and the work-area anchor.
 - File naming is flat: each node uses the store file's basename.
   `--path-template` overrides the layout; the placeholders are `{ref}`, `{id}`,
   `{version}`, `{distance}`, `{slug}`, `{title}`, plus any front-matter key.
   `{slug}` is the title slug, else the ref. `group`, `section`, `folder`, and
   `home` place nothing.
-- `bd current --status` classifies paths as `ok`, `missing`, `wrong-target`,
-  `detached`, `stray`, or `stale-ref`; `bd work --repair` refuses invalid front
+- `bdg current --status` classifies paths as `ok`, `missing`, `wrong-target`,
+  `detached`, `stray`, or `stale-ref`; `bdg work --repair` refuses invalid front
   matter or a mismatched `id`, then writes the detached file wholesale — its
   body, including link tokens, is taken as edited. Both inspect the view
   actually in the area, not the requested or default view.
 - Switching with detached (edited but unsynced) files is refused: they would be
-  lost. Run `bd work --repair` first to keep them, or `--clean` to discard
+  lost. Run `bdg work --repair` first to keep them, or `--clean` to discard
   them.
 - Generated files: one root `INDEX.md` with ring sections (`## Active`,
   `## Distance 1 — children`, …), `REFS.md` (path, ref, kind, distance, title),
@@ -355,8 +355,8 @@ bd_work/4-1.md -> ../.bd_tree/nodes/4-1.md
 A full tree is too large to dump into an agent context: it displaces the rest of
 the conversation, and the oldest parts are dropped. An agent therefore gets a
 bounded, navigable subset, and the tool enforces the boundary: it holds exactly
-one writable layout, the one the current `bd_work/` names. Switching views is
-`bd work REF`, which replaces the area's contents instead of accumulating a
+one writable layout, the one the current `bdg_work/` names. Switching views is
+`bdg work REF`, which replaces the area's contents instead of accumulating a
 second folder.
 
 Two work folders at once would defeat that rule. They make the current view
@@ -364,24 +364,24 @@ ambiguous, let edits land through whichever link an agent happens to open, and
 leave two generated files claiming authority. The store is what scales; the
 context is not, and one work area is the interface that keeps them apart.
 
-Read-only projections remain: `bd pack REF --out DIR` (the
+Read-only projections remain: `bdg pack REF --out DIR` (the
 component projection with one ring-section index for review or publishing),
-`bd pack REF --fresh --out DIR` (fresh nodes only, plus `STALE.md`, for an agent
-that must not write), and `bd graph REF --format dot|svg` (Graphviz). They are
+`bdg pack REF --fresh --out DIR` (fresh nodes only, plus `STALE.md`, for an agent
+that must not write), and `bdg graph REF --format dot|svg` (Graphviz). They are
 disposable copies and renders, not a second work area; an agent session reads
 exactly one of them. A snapshot may be made many times because it is never
 writable.
 
-`bd solution` is a thin wrapper over `git worktree` (`new`, `list`, `remove`).
+`bdg solution` is a thin wrapper over `git worktree` (`new`, `list`, `remove`).
 It stores no state and creates no layout: git remains authoritative for which
-branch is checked out where; `bd work` remains the layout inside one checkout.
+branch is checked out where; `bdg work` remains the layout inside one checkout.
 
 ## 6. Schema-agnostic by construction
 
 Nothing in the tool knows a project's layer names. The only reserved vocabulary
 is structural: the front-matter keys `id`, `legacy`, and `freshness`, plus the
 body token grammar `(TITLE)[[REF, TYPE]]`; a bare token is legal and its
-tool-generated title is filled by `bd retitle`. `name` and
+tool-generated title is filled by `bdg retitle`. `name` and
 `title` are presentation metadata; `title` supplies the template slug. `group`,
 `section`, `folder`, and `home` are ordinary front matter: preserved, never
 read, with no effect on placement or validation.
@@ -389,7 +389,7 @@ read, with no effect on placement or validation.
 Consequences: any workflow can define fields (`phase`, `status`, `stream`); the
 graph orders nodes by undirected distance from the anchor; path templates read
 any front-matter field; dot styling is chosen by arbitrary fields (`--color-by`,
-`--shape-by`); and `bd check --require FIELD` is the escape hatch when a project
+`--shape-by`); and `bdg check --require FIELD` is the escape hatch when a project
 wants a schema.
 
 ## 7. Established decisions
@@ -404,19 +404,19 @@ wants a schema.
    as `(TITLE)[[REF, TYPE]]` tokens in its body; in-edges are derived. A view
    is the weakly connected component of the anchor, and distance is undirected
    BFS.
-   Direction survives as a label. `contains` is retired; `bd migrate` converts
+   Direction survives as a label. `contains` is retired; `bdg migrate` converts
    an older store, including front-matter `links`.
 5. **Views as components, not branches.** No branch names, branch directories,
    or global selector.
 6. **Direction is a label; back-references are authored.** Membership is
    undirected; several parents and reciprocal edges are legal. There is no
    derived opposite: a node that should acknowledge an edge authors its own
-   token with its own type. Only `bd in` derives the reverse list, marked
+   token with its own type. Only `bdg in` derives the reverse list, marked
    `[derived]`.
 7. **A cached token title is a tool-generated prefix.** `(TITLE)` saves a
    lookup but rendering always uses the target's live title. Authors write the
-   bare token; `bd check` reports `inline-title-missing` or `link-title-stale`,
-   and `bd retitle` regenerates the cache.
+   bare token; `bdg check` reports `inline-title-missing` or `link-title-stale`,
+   and `bdg retitle` regenerates the cache.
 8. **Freshness is a per-node map.** Pins and `propagates` live in the
    `freshness:` front-matter map keyed by target ref, not inside edge objects;
    the pinned hash ignores reserved tokens and the `## Links` heading.
@@ -426,30 +426,30 @@ wants a schema.
 11. **Work trees with symlinks are the primary interface.** Flat, no sync-back,
    and exactly one writable work area.
 12. **No JSON/TOML/lock/state sidecars.** The exceptions are the store-level
-    `ROOT` file (one ref on one line) and the folder-level `.bd_root` pointer
+    `ROOT` file (one ref on one line) and the folder-level `.bdg_root` pointer
     (one store path on one line). The work-area view lives in generated
     `REFS.md`. Derived output is disposable. The write lock is not a sidecar: it
     is transient and lives outside the store.
 13. **Repair requires valid front matter.** A detached file is written only
     when it parses and its `id` matches; its body, including link tokens, is
     taken as edited.
-14. **Git owns solutions; `bd work` owns layout.** Worktrees isolate branches;
-    the single `bd_work/` area shapes the current view inside one branch.
-    Structural edits go through `bd link` / `bd unlink` and `bd clone` /
-    `bd replace`.
+14. **Git owns solutions; `bdg work` owns layout.** Worktrees isolate branches;
+    the single `bdg_work/` area shapes the current view inside one branch.
+    Structural edits go through `bdg link` / `bdg unlink` and `bdg clone` /
+    `bdg replace`.
 15. **Branches and versions are disjoint layers.** Branches isolate whole
     checkouts; versions are peer files for single nodes. No cross-branch refs,
     no branch selector, no per-node active-version selector, and no copy step
     across branches. The one store-level pointer is `ROOT`, a single full ref
-    line naming the default view anchor; a folder-level `.bd_root` pointer names
+    line naming the default view anchor; a folder-level `.bdg_root` pointer names
     a store for discovery only. See
     [`BRANCHES-AND-VERSIONS.md`](BRANCHES-AND-VERSIONS.md).
-16. **One work area at a time.** `<project>/bd_work/` holds exactly one view;
-    `bd work REF` switches it by replacing the contents. Two writable folders
-    never exist at once. Read-only `bd pack` projections and
-    `bd graph --format` renders are not a second work area. The area's view is
-    independent of the store default anchor: `bd root` sets the default,
-    `bd work` sets what is in the area.
+16. **One work area at a time.** `<project>/bdg_work/` holds exactly one view;
+    `bdg work REF` switches it by replacing the contents. Two writable folders
+    never exist at once. Read-only `bdg pack` projections and
+    `bdg graph --format` renders are not a second work area. The area's view is
+    independent of the store default anchor: `bdg root` sets the default,
+    `bdg work` sets what is in the area.
 17. **Flat ring layout is the only layout.** The work area holds one symlink per
     node at its store basename, plus one ring-section `INDEX.md` and one
     `REFS.md`. `group`, `section`, `folder`, and `home` are inert.
@@ -463,12 +463,12 @@ wants a schema.
     label. The cost is that distance is graph nearness, not semantic order, and a
     cycle has no privileged entry point. The gain is one fewer schema, no
     order-refusal class, legal cycles, and a work area that is a simple flat ring
-    projection. Existing stores are converted by `bd migrate`, which strips the
+    projection. Existing stores are converted by `bdg migrate`, which strips the
     retired placement fields.
 19. **2026-11-25: link declarations moved from front matter into body tokens,
     and symmetric masters were retired.** `links: [{to, type}]` split the
     assertion from the sentence it belonged to; a body token keeps the edge next
-    to the prose and lets `bd link` append one line without rewriting a YAML
+    to the prose and lets `bdg link` append one line without rewriting a YAML
     list. Symmetry is no longer inferred: each node authors every edge it
     asserts, so a back-reference is an ordinary token and no `inverse`,
     `[derived]` opposite, or one-master rule survives. The cached `(TITLE)` is
@@ -483,10 +483,10 @@ wants a schema.
     `[[REF, TYPE]](TITLE)`) made the
     parenthetical read as prose, so it stopped being a token; the prefix
     `(TITLE)[[REF, TYPE]]` keeps the cache adjacent to the token and leaves the
-    sentence around it intact. Authors write bare tokens; `bd new --parent`,
-    `bd link`, `bd replace`, `bd migrate`, and `bd retitle` fill the cache from
-    the target's live title. `bd check` reports `inline-title-missing` for a
-    bare token and `link-title-stale` for a mismatch, and `bd retitle`
+    sentence around it intact. Authors write bare tokens; `bdg new --parent`,
+    `bdg link`, `bdg replace`, `bdg migrate`, and `bdg retitle` fill the cache from
+    the target's live title. `bdg check` reports `inline-title-missing` for a
+    bare token and `link-title-stale` for a mismatch, and `bdg retitle`
     regenerates every cache in scope. Cost: title maintenance is a tool
     operation, not a manual edit. Gain: one command repairs the whole store and
     the suffix text is no longer mistaken for authored prose.
@@ -503,7 +503,7 @@ wants a schema.
 - **Containment as a second topology.** An ordered `contains` list duplicated
   the link relation, forced per-store detection and dispatch, and made
   `section` a second placement language. Removed: one typed-link topology;
-  `bd migrate` converts an older store.
+  `bdg migrate` converts an older store.
 - **Front-matter `links` as the authoring surface.** It kept edges in a YAML
   block away from the sentence that asserts them, and a scalar link had to
   borrow the target's `type`. Body tokens are the authored assertion; a node
@@ -511,7 +511,7 @@ wants a schema.
 - **Symmetric master with a derived opposite.** One file owned a two-way
   relation, but the relation could not be read from the other node, and
   validation needed `symmetric`/`inverse`, one-master, and
-  propagation-refusal rules. Retired: each node authors its own token; `bd in`
+  propagation-refusal rules. Retired: each node authors its own token; `bdg in`
   still derives the reverse list.
 - **Per-link freshness keys.** `propagates`/`pinned` inside an edge object made
   every token append rewrite the YAML list. The top-level `freshness:` map
@@ -537,18 +537,18 @@ wants a schema.
   alternatives implicitly stays rejected: refs and diffs must show the choice.
   A single store-level `ROOT` line is accepted as the default view anchor; it
   names the full ref a bare command starts from and selects no version for any
-  other node (§7.15). A folder-level `.bd_root` pointer is accepted only for
+  other node (§7.15). A folder-level `.bdg_root` pointer is accepted only for
   store discovery and selects no view or version.
 - **`use` selection maps for cross-branch mixes.** A solution is a branch;
   mixing is a merge or `git restore --source`; a selector would be a second
   branch mechanism.
-- **Symlink worktrees as solution isolation.** `bd work` is a layout inside one
+- **Symlink worktrees as solution isolation.** `bdg work` is a layout inside one
   checkout; isolation belongs to `git worktree`, or branch switching and view
   refresh get entangled.
 
 ## 9. Migration
 
-`bd migrate` is the only conversion path. It keeps the classic-store path (bare
+`bdg migrate` is the only conversion path. It keeps the classic-store path (bare
 `nodes/<id>.md` files become `<id>-<version>.md`) and converts a containment
 or front-matter-link store in place:
 
@@ -569,12 +569,12 @@ or front-matter-link store in place:
 5. `--dry-run` reports the plan; the default applies atomically. `--root` works.
 
 There is no placement flag and no symmetry flag: the token carries only its
-type and ref. `bd retitle` is the explicit post-migration refresh: it
+type and ref. `bdg retitle` is the explicit post-migration refresh: it
 regenerates every cache in the store (or a view) from live titles, and leaves
 unresolved targets untouched.
 
-A store that still declares `contains` fails `bd check` with `contains-removed`
-until it is migrated. After migration `bd check` passes.
+A store that still declares `contains` fails `bdg check` with `contains-removed`
+until it is migrated. After migration `bdg check` passes.
 
 ## 10. Invariants
 
@@ -589,7 +589,7 @@ These are enforced or assumed:
 4. Direction is a label: `child` or `parent`. It orders ring 1 but never filters
    membership.
 5. Cycles, back-edges, and reciprocal pairs are legal. A self-loop on one ref is
-   refused by `bd link`.
+   refused by `bdg link`.
 6. There is one edge relation: typed body tokens. Multiple parents are legal,
    and every node authors its own back-reference. No derived opposite exists;
    only reversed in-edges are marked `[derived]`.
@@ -605,19 +605,19 @@ These are enforced or assumed:
     node-local file in one branch; a solution is a git branch and worktree;
     neither substitutes for the other, and no ref resolves through a branch.
 14. One worktree per solution. A project has exactly one writable work area,
-    `<project>/bd_work/`, holding one view at a time; it is disposable and
+    `<project>/bdg_work/`, holding one view at a time; it is disposable and
     ignored. Read-only projections are separate and never a second work area.
     The active view is recorded in the generated `REFS.md`, not in extra state.
 15. Structural edits preserve body bytes and all unrelated front matter, except
-    the appended or removed token lines in a `## Links` section; `bd replace`
-    and `bd clone --subtree` rewrite token refs in place.
+    the appended or removed token lines in a `## Links` section; `bdg replace`
+    and `bdg clone --subtree` rewrite token refs in place.
 16. `contains` is not data. A node that declares it is an error and is migrated,
     not interpreted.
 17. Front-matter `links` is not data either: a node that declares it is
     `links-removed` and is migrated into body tokens.
 18. A cached token title is a tool-generated prefix. Authors write bare
-    tokens; all rendering reads the live title; `bd check` reports
-    `inline-title-missing` or `link-title-stale`, and `bd retitle` regenerates
+    tokens; all rendering reads the live title; `bdg check` reports
+    `inline-title-missing` or `link-title-stale`, and `bdg retitle` regenerates
     the cache.
 19. Freshness pins live in the `freshness:` map keyed by target ref; the pinned
     body hash excludes reserved tokens and the `## Links` heading.
@@ -627,26 +627,26 @@ These are enforced or assumed:
 - Node versions do not sync across branches; git merges sync solutions.
 - No three-way merge between node versions; synthesis is manual.
 - One worktree per solution; switching branches can leave a layout pointing
-  at paths absent from the new branch, so rebuild and run `bd current --status`.
+  at paths absent from the new branch, so rebuild and run `bdg current --status`.
 - Distance is a graph metric, not a semantic order. A deeply linked but
   important node can sit in a high ring.
 - Cycles shorten distances deterministically but have no privileged entry.
 - Concurrent writers to one store serialize on an advisory lock in the system
-  temp directory, so `bd new` allocates distinct ids and no writer loses a
+  temp directory, so `bdg new` allocates distinct ids and no writer loses a
   sibling. The lock is per host and per resolved path; separate checkouts still
-  conflict in git, and edits made outside `bd` are not serialized.
+  conflict in git, and edits made outside `bdg` are not serialized.
 - Symlinks require a POSIX filesystem; Windows needs developer mode.
-- Editors that replace symlinks need `bd current --status` / `bd work --repair`.
-- `bd check` validates the store and the selected view, costing more on large
+- Editors that replace symlinks need `bdg current --status` / `bdg work --repair`.
+- `bdg check` validates the store and the selected view, costing more on large
   stores.
 - There is no CI configuration yet; packaging is a `pyproject.toml` with the
-  `bd` console script.
+  `bdg` console script.
 
 ## 12. Open questions
 
 1. Are versions immutable snapshots enforced by convention, or should the tool
    create a new version on every edit?
-2. Should `bd replace` run automatically after `bd clone`, or stay a separate
+2. Should `bdg replace` run automatically after `bdg clone`, or stay a separate
    command?
 3. Do we need field selectors inside a component in addition to distance
    filters?

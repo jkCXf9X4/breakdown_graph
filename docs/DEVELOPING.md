@@ -6,22 +6,22 @@ This guide is for changing the tool itself. To use the tool, read
 ## Quick start
 
 ```sh
-git clone https://github.com/jkCXf9X4/breakdown-tree
-cd breakdown-tree
+git clone https://github.com/jkCXf9X4/breakdown_graph
+cd breakdown_graph
 pip install -e '.[test]'
 python3 -m pytest -q
-bd check
+bdg check
 ```
 
 Requirements: Python 3.10+, PyYAML, pytest. Graphviz `dot` only for graph
 rendering.
 Install once with `pip install -e '.[test]'` from the clone; without installing,
-run from the repo root with `PYTHONPATH=src python3 -m bd_tree`.
+run from the repo root with `PYTHONPATH=src python3 -m bdg`.
 
 ## The data flow
 
 ```
-.bd_tree/nodes/*.md
+bdg_graph/nodes/*.md
    │
    ├─ loader.load(root) ──────────────► Store   (every file, every edge)
    │                                      │
@@ -50,7 +50,7 @@ run from the repo root with `PYTHONPATH=src python3 -m bd_tree`.
 - `graph.build_graph` builds `out` from authored tokens and `inn` by reversing
   them; the reversed entries are display-only and are never stored.
 - `Store.node_edges(ref)` and `View.node_edges(ref)` return authored out-edges;
-  `graph.build_graph(...).inn` is the reversed list that `bd in` renders.
+  `graph.build_graph(...).inn` is the reversed list that `bdg in` renders.
 - `View` is one component: every member once, plus `distance`, the undirected
   BFS hop count from the view ref. `View.edges` holds authored links whose two
   ends are both in the component; reversed in-edges never enter.
@@ -72,7 +72,7 @@ refs are full `id-version`; a bare id is a CLI selector resolved inside the
 selected view (`current_ref(view, id)`).
 
 A node that still declares `contains` is not parsed as another topology. The
-loader/checker surface it as `contains-removed`, and `bd migrate` is the only
+loader/checker surface it as `contains-removed`, and `bdg migrate` is the only
 conversion path.
 
 ## Module map
@@ -87,13 +87,13 @@ conversion path.
 | `freshness.py` | Pins, stale edges, pin repair |
 | `navigate.py` | `show`, `find`, `path` renderers over undirected neighbours |
 | `exporter.py` | Pack projections (graph and fresh context), flat paths, path templates |
-| `work.py` | Single flat `<project>/bd_work/` area, `current`/`views`/`edit`, switching, `--status`, `--repair`, git context |
+| `work.py` | Single flat `<project>/bdg_work/` area, `current`/`views`/`edit`, switching, `--status`, `--repair`, git context |
 | `solutions.py` | Thin `git worktree` lifecycle wrapper |
 | `ops.py` | `init`, `new` (seeds empty `title`/`summary`), `link`, `unlink`, `clone`, `replace`, `delete`, `diff`, `migrate`, `retitle` |
 | `api.py` | Public Python functions |
 | `cli.py` | argparse wiring and output formatting |
 
-Data comes from the store's `nodes/` directory (`.bd_tree/nodes/` in a project
+Data comes from the store's `nodes/` directory (`bdg_graph/nodes/` in a project
 layout); there are no hidden stores, caches, or state files. The one exception
 is the store-level `ROOT` file: one ref on one line. The work-area view is read
 from the generated `REFS.md`, not from extra state.
@@ -117,8 +117,8 @@ Issue   level, code, message, node, path
 `Node.version` is always `>= 1`; `Node.ref` is the canonical `id-version` and
 `node_path` always emits the suffix. `Link.raw` is the token text that declared
 the edge; a node's `pinned`/`propagates` values come from its `freshness:` map.
-`bd clone` copies the source file, so the clone keeps its tokens; `bd clone
---subtree` also rewrites cloned token refs, and `bd replace OLD NEW` is the
+`bdg clone` copies the source file, so the clone keeps its tokens; `bdg clone
+--subtree` also rewrites cloned token refs, and `bdg replace OLD NEW` is the
 separate wiring step: it repoints inbound tokens, or repoints `ROOT` when OLD is
 the store root, leaving OLD's file as a peer.
 
@@ -170,7 +170,7 @@ There is one topology and one order: undirected BFS distance from the anchor.
    independently; a second walk can disagree on a cycle.
 3. Put adjacency, rings, checks, and flat pack paths in `graph.py`. In
    `navigate.py`, render through `render_show`, `render_path`, or
-   `walk_neighbors`; there is no `bd tree` and no second child relation.
+   `walk_neighbors`; there is no `bdg tree` and no second child relation.
 4. If the command materializes files, reuse `graph.layout_paths` and
    `exporter._ring_layout` rather than constructing names; the work area is
    flat and uses store basenames.
@@ -179,13 +179,13 @@ There is one topology and one order: undirected BFS distance from the anchor.
    walking through hidden nodes.
 6. Direction is a label. A new renderer may show `→`/`←`, but must not use
    direction to include or exclude a node unless the command is explicitly
-   directional (`bd out`, `bd in`).
+   directional (`bdg out`, `bdg in`).
 7. Add a temporary-store test with the smallest graph that distinguishes the new
    rule; include a cycle and a reciprocal pair where relevant.
 
 ## Add a pack projection
 
-`bd pack` materializes a view through a function in `exporter.py`: `api.pack`
+`bdg pack` materializes a view through a function in `exporter.py`: `api.pack`
 calls the default graph projection, or the fresh-context projection with
 `--fresh`. A new mode is a new function plus a branch in `api.pack` and a CLI
 option.
@@ -215,7 +215,7 @@ Rules:
 - Be deterministic; sort by `(distance, id, version)` where the view matters,
   and by `(id, version)` otherwise.
 - Never write outside `out`.
-- Wire the new mode into `bd pack` and add a test.
+- Wire the new mode into `bdg pack` and add a test.
 
 ## Add a structural edit
 
@@ -225,7 +225,7 @@ Structural edits change body tokens and freshness front matter, not prose.
 - `inline.append_token` / `remove_token` / `repoint_token` maintain the trailing
   `## Links` section and leave every other body byte alone. `retitle_tokens`
   rewrites the cached title prefix in place; `ops.retitle` is the store-wide
-  driver behind `bd retitle`.
+  driver behind `bdg retitle`.
 - `rewrite_freshness(raw_fm, freshness)` replaces only the `freshness:` map.
 - `document.with_raw_fm(new_fm)` reconstructs the file with the body untouched.
 - `render_document(meta, body)` is for new files or an intended full front-matter
@@ -244,7 +244,7 @@ Checklist:
    only place that reads them.
 4. Preserve every token and title cache byte you are not deliberately touching;
    `append_token` is a no-op for an identical line, `remove_token` deletes the
-   section when it becomes empty, and a title change belongs in `bd retitle`
+   section when it becomes empty, and a title change belongs in `bdg retitle`
    or `retitle_tokens`, never in hand-written prose.
 5. Preserve unrelated front matter and the body outside the edited section.
 6. Test that all other body bytes are unchanged.
@@ -271,7 +271,7 @@ python3 -m pytest -q
   grouping, a cycle appearing once, status/repair, and the single area.
 - `test_export.py`, `test_dot_render.py`, and `test_visual.py` cover the
   read-only projections and rendering.
-- `test_examples.py` runs the example at `examples/` (store under `.bd_tree/`)
+- `test_examples.py` runs the example at `examples/` (store under `bdg_graph/`)
   through check, graph traversal, and flat packing, asserting twelve nodes, one
   component, and a clean store.
 - `test_refs.py` covers the filename/ref grammar: full refs, selectors, and
@@ -283,8 +283,8 @@ python3 -m pytest -q
 - Root tests cover the precedence: explicit ref where a command takes one >
   `ROOT` > the lowest component member. They also cover `root-ref-missing`,
   `invalid-root`, and `check --view` narrowing only the report.
-- `contains-removed` tests declare `contains` and assert `bd check` fails with a
-  message pointing at `bd migrate`.
+- `contains-removed` tests declare `contains` and assert `bdg check` fails with a
+  message pointing at `bdg migrate`.
 - Migration tests convert `contains` and front-matter `links` to sorted body
   tokens, rewrite legacy suffix tokens to the prefix form, fill missing titles,
   move per-link freshness into the `freshness:` map, strip retired placement
@@ -299,33 +299,33 @@ Before a commit:
 
 ```sh
 python3 -m pytest -q
-bd check                         # examples: 12 nodes
-bd stale                         # stale or untracked propagating edges
-bd work 1-1                      # flat work area, 12 symlinks
+bdg check                         # examples: 12 nodes
+bdg stale                         # stale or untracked propagating edges
+bdg work 1-1                      # flat work area, 12 symlinks
 git diff --check
 ```
 
 ## Debugging
 
-- `PYTHONPATH=src python3 -m bd_tree ...` is identical to `bd`.
-- `BD_ROOT`/`--root` choose the store (default: nearest parent with `nodes/`,
-  `.bd_tree/nodes/`, or a `.bd_root` pointer; else a unique store below cwd).
-- `bd root` shows or switches the default anchor; `bd root --clear` removes
+- `PYTHONPATH=src python3 -m bdg ...` is identical to `bdg`.
+- `BDG_ROOT`/`--root` choose the store (default: nearest parent with `nodes/`,
+  `bdg_graph/nodes/`, or a `.bdg_root` pointer; else a unique store below cwd).
+- `bdg root` shows or switches the default anchor; `bdg root --clear` removes
   `ROOT`. It does not rewrite the work area.
-- `bd views` lists components and marks the default and the work-area anchor;
-  `bd current` reports the work area and the view actually in it.
-- `bd check --view REF` narrows reporting to one component; the default anchor is
+- `bdg views` lists components and marks the default and the work-area anchor;
+  `bdg current` reports the work area and the view actually in it.
+- `bdg check --view REF` narrows reporting to one component; the default anchor is
   `ROOT`, else the lowest component member.
-- `bd graph`, `bd show`, `bd path`, `bd out REF`, `bd in REF`, and `bd check`
-  quickly show what the loader sees. `bd graph 1-1 --rings A:B` shows one
+- `bdg graph`, `bdg show`, `bdg path`, `bdg out REF`, `bdg in REF`, and `bdg check`
+  quickly show what the loader sees. `bdg graph 1-1 --rings A:B` shows one
   ring window while still traversing through the rest.
-- `bd show REF+N` caps each body at 4000 characters unless `--max-chars` is
+- `bdg show REF+N` caps each body at 4000 characters unless `--max-chars` is
   given; `--max-chars 0` prints full bodies.
-- `bd find` defaults to the anchor's component; `--regex` treats the query as a
+- `bdg find` defaults to the anchor's component; `--regex` treats the query as a
   pattern, `--view REF` narrows, and `--all` searches the whole store. Output
   stays capped.
-- `bd current --status` diagnoses symlink problems without touching the store
-  and inspects the view actually in the area; `bd edit REF` resolves a ref
+- `bdg current --status` diagnoses symlink problems without touching the store
+  and inspects the view actually in the area; `bdg edit REF` resolves a ref
   inside that view.
 - `pdb` works normally; the CLI is a thin argparse layer.
 
@@ -344,7 +344,7 @@ Common mistakes:
 
 ## Invariants to protect
 
-1. The store's `nodes/` directory (`.bd_tree/nodes/` in a project layout) is the
+1. The store's `nodes/` directory (`bdg_graph/nodes/` in a project layout) is the
    only source of truth.
 2. Filename is identity and version: every file is `<id>-<version>.md`, version
    >= 1; a bare `<id>.md` is invalid.
@@ -353,7 +353,7 @@ Common mistakes:
 4. Direction is a label: `child` or `parent`. It orders ring 1 but never
    filters membership.
 5. Cycles, back-edges, and reciprocal pairs are legal; a self-loop on one ref is
-   refused by `bd link`.
+   refused by `bdg link`.
 6. Body tokens are typed and kept in target-ref order; in-edges are derived by
    reversing them. Multiple parents are legal, and every node authors its own
    back-reference. No derived opposite exists.
@@ -362,17 +362,17 @@ Common mistakes:
 9. Arbitrary front matter survives edits and projections.
 10. Body bytes survive structural edits, except the token lines in `## Links`.
 11. No JSON/TOML/lock/state data files; the only pointers are the store-level
-    `ROOT`, one full ref on one line, and the folder-level `.bd_root`, one store
+    `ROOT`, one full ref on one line, and the folder-level `.bdg_root`, one store
     path on one line. The work-area view is in `REFS.md`. The transient write
     lock lives outside the store.
 12. A view never crosses a branch, and neither does a version; solutions are git
     worktrees. An edge pins a full ref.
 13. Generated files are disposable and never committed.
-14. A project has exactly one writable work area, `<project>/bd_work/`, holding
-    one view at a time. It is flat. Its view changes only with `bd work`, not
-    with `bd root`. Read-only projections never become a second work area.
+14. A project has exactly one writable work area, `<project>/bdg_work/`, holding
+    one view at a time. It is flat. Its view changes only with `bdg work`, not
+    with `bdg root`. Read-only projections never become a second work area.
 15. One topology. `contains` is not data: a node declaring it is an error
-    (`contains-removed`) until `bd migrate` converts it.
+    (`contains-removed`) until `bdg migrate` converts it.
 
 ## Style and commits
 
@@ -401,11 +401,11 @@ Keep examples executable. Run them before committing.
 
 ## Not built yet
 
-- No CI or generic importer. `bd migrate` converts a classic bare-file store and
-  a containment store in place. Packaging is `pyproject.toml` plus the `bd`
+- No CI or generic importer. `bdg migrate` converts a classic bare-file store and
+  a containment store in place. Packaging is `pyproject.toml` plus the `bdg`
   console script.
 - No three-way node merge; solutions merge with git.
 - Writes to one store serialize on an advisory lock outside the store
-  (`src/bd_tree/fsutil.py`); readers take none, because writers publish
+  (`src/bdg/fsutil.py`); readers take none, because writers publish
   atomically.
 - No Windows-specific symlink path.

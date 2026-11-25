@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from bd_tree.api import (
+from bdg.api import (
     check,
     clone,
     delete,
@@ -16,9 +16,9 @@ from bd_tree.api import (
     retitle,
     versions,
 )
-from bd_tree.cli import main
-from bd_tree.errors import BreakdownError
-from bd_tree.frontmatter import parse_document, render_document
+from bdg.cli import main
+from bdg.errors import BreakdownError
+from bdg.frontmatter import parse_document, render_document
 
 
 def _split_section(text):

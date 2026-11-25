@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from bd_tree.cli import main
-from bd_tree.frontmatter import render_document
-from bd_tree.loader import load
-from bd_tree.navigate import (
+from bdg.cli import main
+from bdg.frontmatter import render_document
+from bdg.loader import load
+from bdg.navigate import (
     NavigationError,
     parse_ref_depth,
     render_find,
@@ -124,7 +124,7 @@ def test_show_no_body_and_max_chars_and_fields(write, tmp_path):
     assert "abcdefghij" not in stripped
 
     clipped = render_show(store, "1-1", max_chars=5)
-    assert "abcde ... [truncated; bd show 1-1]" in clipped
+    assert "abcde ... [truncated; bdg show 1-1]" in clipped
 
     selected = render_show(store, "1-1", fields=["layer"])
     assert "layer: intent" in selected
@@ -146,15 +146,15 @@ def test_show_auto_cap_by_depth(write, tmp_path):
 
     capped = render_show(store, "1-1", depth=1)
     assert body not in capped
-    assert "[truncated; bd show 1-1]" in capped
-    assert "[truncated; bd show 2-1]" in capped
+    assert "[truncated; bdg show 1-1]" in capped
+    assert "[truncated; bdg show 2-1]" in capped
 
     explicit_full = render_show(store, "1-1", depth=1, max_chars=0)
     assert body in explicit_full
     assert "[truncated" not in explicit_full
 
     explicit_cap = render_show(store, "1-1", max_chars=10)
-    assert "xxxxxxxxxx ... [truncated; bd show 1-1]" in explicit_cap
+    assert "xxxxxxxxxx ... [truncated; bdg show 1-1]" in explicit_cap
 
 
 def test_path_command_prints_shortest_path_with_arrows(write, tmp_path, capsys):

@@ -4,10 +4,10 @@ __pycache__/
 .ruff_cache/
 
 # derived views and exports
-docs/breakdown/bd_work/
+docs/breakdown/bdg_work/
 build/
 dist/
 *.egg-info/
 
 # writable work area (generated symlinks + INDEX/AGENTS/REFS)
-bd_work/
+bdg_work/

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from bd_tree.loader import (
+from bdg.loader import (
     FilenameError,
     is_bare_ref,
     is_full_ref,

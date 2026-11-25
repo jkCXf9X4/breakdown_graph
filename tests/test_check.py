@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from bd_tree.api import check, load, load_view
-from bd_tree.frontmatter import (
+from bdg.api import check, load, load_view
+from bdg.frontmatter import (
     parse_document,
     render_document,
     rewrite_freshness,
 )
-from bd_tree.inline import token_title
+from bdg.inline import token_title
 
 
 def _set_freshness(nodes, ref, map_):

@@ -6,8 +6,8 @@ import re
 import shutil
 from pathlib import Path
 
-from bd_tree import api
-from bd_tree.graph import (
+from bdg import api
+from bdg.graph import (
     audit,
     build_graph,
     graph_view,
@@ -24,7 +24,7 @@ ROOT_HINTS = ("band_layout", "band_order")
 
 
 def _example_store(tmp_path: Path) -> Path:
-    shutil.copytree(EXAMPLES / ".bd_tree", tmp_path / ".bd_tree")
+    shutil.copytree(EXAMPLES / "bdg_graph", tmp_path / "bdg_graph")
     return tmp_path
 
 
@@ -37,8 +37,8 @@ def _relative_files(out: Path) -> set[str]:
 
 
 def test_example_store_is_a_clean_graph():
-    hidden = api.load(EXAMPLES / ".bd_tree")
-    assert hidden.root == (EXAMPLES / ".bd_tree").resolve()
+    hidden = api.load(EXAMPLES / "bdg_graph")
+    assert hidden.root == (EXAMPLES / "bdg_graph").resolve()
     assert hidden.project_root == EXAMPLES.resolve()
     store = api.load(EXAMPLES)
     assert store.root == hidden.root
@@ -129,7 +129,7 @@ def test_example_nodes_declare_no_placement_keys():
 
 def test_example_work_is_flat_and_edit_resolves(tmp_path):
     root = _example_store(tmp_path)
-    out = root / "bd_work"
+    out = root / "bdg_work"
     result = api.work(root, "1-1")
 
     assert result.nodes == 12 and result.symlinks == 12
@@ -239,7 +239,7 @@ def test_migration_strips_placement_keys_and_keeps_the_graph(write, tmp_path):
 
 
 def test_breakdown_store_checks_clean_after_migration(tmp_path):
-    shutil.copytree(DOCS_BREAKDOWN / ".bd_tree", tmp_path / ".bd_tree")
+    shutil.copytree(DOCS_BREAKDOWN / "bdg_graph", tmp_path / "bdg_graph")
     api.migrate(tmp_path)
 
     result = api.check(tmp_path)

@@ -1,12 +1,12 @@
 # Example project
 
-This folder is a complete `bd` project and the default store (`.bd_tree/`,
+This folder is a complete `bdg` project and the default store (`bdg_graph/`,
 `ROOT` `1-1`). The store has twelve nodes and no `contains`: typed body tokens
 are the one edge relation. Each linked node writes its outgoing edges inline in
 prose, for example `(Structural claims)[[2-1, breaks_down]]`; tooling writes the
 same token as a `- (TITLE)[[REF, TYPE]]` line under `## Links`. Authors write
 the bare token; the cached title is tool-generated from the target's live title
-and refreshed by `bd retitle`, never hand-edited. In-edges are derived by
+and refreshed by `bdg retitle`, never hand-edited. In-edges are derived by
 reversing authored tokens. There is no placement key: the view is the weakly
 connected component of the anchor, and ordering is the undirected BFS hop count
 from that anchor.
@@ -28,32 +28,32 @@ reaches `11-1` one hop later, which is why `11-1` is ring 4 while `12-1` is ring
 membership is the whole component.
 
 ```sh
-bd check                                  # 0 errors, 0 warnings
-bd stale                                  # 0 stale edges
-bd retitle --dry-run                      # would retitle 0 tokens in 0 nodes
-bd graph                                  # ring sections from 1-1
-bd graph 1-1 --depth 1                    # rings 0 and 1
-bd graph 1-1 --rings 2:3                  # ring 0 plus rings 2 and 3
-bd graph --format svg --out /tmp/bd-graph.svg  # rendered SVG (needs Graphviz)
-bd out 1-1                                # authored out-edges, sorted
-bd in 4-1                                 # derived in-edges for a two-parent node
-bd path 10-1                              # shortest undirected chain from 1-1
-bd views                                  # one line per component
-bd work 1-1                               # single flat work area
-bd edit 4-1                               # path of 4-1 in the active view
-bd pack 1-1 --out /tmp/bd-graph
+bdg check                                  # 0 errors, 0 warnings
+bdg stale                                  # 0 stale edges
+bdg retitle --dry-run                      # would retitle 0 tokens in 0 nodes
+bdg graph                                  # ring sections from 1-1
+bdg graph 1-1 --depth 1                    # rings 0 and 1
+bdg graph 1-1 --rings 2:3                  # ring 0 plus rings 2 and 3
+bdg graph --format svg --out /tmp/bdg-graph.svg  # rendered SVG (needs Graphviz)
+bdg out 1-1                                # authored out-edges, sorted
+bdg in 4-1                                 # derived in-edges for a two-parent node
+bdg path 10-1                              # shortest undirected chain from 1-1
+bdg views                                  # one line per component
+bdg work 1-1                               # single flat work area
+bdg edit 4-1                               # path of 4-1 in the active view
+bdg pack 1-1 --out /tmp/bdg-graph
 ```
 
-`bd work 1-1` writes `examples/bd_work/` as a flat directory: one symlink per
+`bdg work 1-1` writes `examples/bdg_work/` as a flat directory: one symlink per
 node at its store basename (`1-1.md`, `2-1.md`, …), plus generated `INDEX.md`,
 `REFS.md`, and `AGENTS.md`. `INDEX.md` has `## Active`, `## Distance 1 — children`, then `## Distance 2`
 through `## Distance 4`. `REFS.md` is the
 path/ref/kind/distance/title table and its header names the active view.
 
-The `/tmp/bd-graph` pack holds the same twelve node files plus one root
+The `/tmp/bdg-graph` pack holds the same twelve node files plus one root
 `INDEX.md` with the same ring sections. It is a disposable copy, never a work
-area. `bd_work/` is ignored by `examples/.gitignore`.
+area. `bdg_work/` is ignored by `examples/.gitignore`.
 
 The commands assume the package is installed (`pip install -e '.[test]'` from
-the clone). From the repository root, `bd` finds this store through the committed
-`.bd_root` pointer.
+the clone). From the repository root, `bdg` finds this store through the committed
+`.bdg_root` pointer.

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from bd_tree.api import check, current_ref, default_root, load_view, resolve_ref
-from bd_tree.errors import BreakdownError
+from bdg.api import check, current_ref, default_root, load_view, resolve_ref
+from bdg.errors import BreakdownError
 
 
 def _tree(write, tmp_path):
@@ -182,7 +182,7 @@ def test_neighbors_lists_both_directions_with_kind(write, tmp_path):
     nodes = tmp_path / "nodes"
     write(nodes, 1, links=[{"to": "2", "type": "breaks_down"}])
     write(nodes, 2)
-    from bd_tree.loader import load
+    from bdg.loader import load
 
     store = load(tmp_path)
     assert [(n.ref, n.kind, n.link.type) for n in store.neighbors("1-1")] == [
@@ -198,7 +198,7 @@ def test_components_are_one_per_weak_component(write, tmp_path):
     write(nodes, 1, links=[{"to": "2", "type": "x"}])
     write(nodes, 2, links=[{"to": "1", "type": "x"}])
     write(nodes, 5)
-    from bd_tree.loader import load
+    from bdg.loader import load
 
     store = load(tmp_path)
     assert store.components() == [["1-1", "2-1"], ["5-1"]]
@@ -211,7 +211,7 @@ def test_declared_root_still_wins_over_components(write, tmp_path):
     write(nodes, 1)
     write(nodes, 5)
     (tmp_path / "ROOT").write_text("5-1\n", encoding="utf-8")
-    from bd_tree.loader import load
+    from bdg.loader import load
 
     store = load(tmp_path)
     assert store.root_ref == "5-1"

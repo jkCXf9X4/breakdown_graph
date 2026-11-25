@@ -4,9 +4,9 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from bd_tree import ops
-from bd_tree.api import link, load, new_node
-from bd_tree.fsutil import lock_path
+from bdg import ops
+from bdg.api import link, load, new_node
+from bdg.fsutil import lock_path
 
 
 def slow_loader(monkeypatch, delay: float = 0.05) -> None:
