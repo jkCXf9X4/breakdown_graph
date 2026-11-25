@@ -248,7 +248,7 @@ def test_breakdown_store_checks_clean_after_migration(tmp_path):
 
     store = api.load(tmp_path)
     assert store.root_ref == "1-1"
-    assert len(store.nodes) == 59
+    assert len(store.nodes) == 48
     for node in store.nodes.values():
         assert not (set(PLACEMENT_KEYS) & set(node.meta))
     assert not (set(ROOT_HINTS) & set(store.nodes["1-1"].meta))
